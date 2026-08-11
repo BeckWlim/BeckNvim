@@ -1,0 +1,14 @@
+# Local tooling and agent settings
+.agents/
+.claude/settings.local.json
+.codex/
+
+# Neovim runtime files
+nvim.log
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
