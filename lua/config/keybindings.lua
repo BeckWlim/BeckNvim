@@ -89,7 +89,32 @@ vim.api.nvim_create_autocmd({"QuitPre"}, {
 })
 
 
-vim.keymap.set('n', '<Space>e', vim.diagnostic.open_float, { noremap=true, silent=true, desc = "Show diagnostic float" })
+local function open_diagnostic_float()
+  local float_bufnr, float_winid = vim.diagnostic.open_float({ focus = true })
+  if not float_bufnr or not float_winid then
+    return
+  end
+
+  -- A bare `y` normally waits for a motion. In a diagnostic float, make it a
+  -- direct copy command and bypass the synchronous OSC 52 paste callback.
+  vim.keymap.set('n', 'y', function()
+    local lines = vim.api.nvim_buf_get_lines(float_bufnr, 0, -1, false)
+    vim.fn.setreg('"', lines, 'l')
+    require('vim.ui.clipboard.osc52').copy('+')(lines)
+    vim.notify('Diagnostic copied to clipboard')
+  end, {
+    buffer = float_bufnr,
+    nowait = true,
+    silent = true,
+    desc = 'Copy diagnostic',
+  })
+
+  if vim.api.nvim_win_is_valid(float_winid) then
+    vim.api.nvim_set_current_win(float_winid)
+  end
+end
+
+vim.keymap.set('n', '<Space>e', open_diagnostic_float, { noremap=true, silent=true, desc = "Show diagnostic float" })
 vim.keymap.set('n', '[d', vim.diagnostic.goto_prev, { noremap=true, silent=true, desc = "Previous diagnostic" })
 vim.keymap.set('n', ']d', vim.diagnostic.goto_next, { noremap=true, silent=true, desc = "Next diagnostic" })
 vim.keymap.set('n', '<Space>q', vim.diagnostic.setloclist, { noremap=true, silent=true, desc = "Diagnostic list" })
@@ -99,7 +124,7 @@ vim.keymap.set('n', '<Space>rn', vim.lsp.buf.rename, { noremap=true, silent=true
 vim.keymap.set('n', 'K', vim.lsp.buf.hover, { noremap=true, silent=true, desc = "Show hover documentation" })
 
 -- Toggle diagnostics related to unavailable third-party dependencies/type stubs.
-local check_third_party_libraries = true
+local check_third_party_libraries = false
 vim.keymap.set('n', '<Space>lp', function()
   check_third_party_libraries = not check_third_party_libraries
   local severities = check_third_party_libraries and {
@@ -107,7 +132,8 @@ vim.keymap.set('n', '<Space>lp', function()
     reportMissingModuleSource = 'warning',
     reportMissingTypeStubs = 'warning',
   } or {
-    reportMissingImports = 'none',
+    -- Missing imports usually indicate a real environment/runtime problem.
+    reportMissingImports = 'error',
     reportMissingModuleSource = 'none',
     reportMissingTypeStubs = 'none',
   }

@@ -31,6 +31,26 @@ return {
             })
 
             vim.lsp.config("basedpyright", {
+              -- Project config files override language-server analysis settings.
+              -- Keep this low-value rule out of Neovim diagnostics regardless.
+              handlers = {
+                ["textDocument/publishDiagnostics"] = function(err, result, ctx, config)
+                  if result and result.diagnostics then
+                    result = vim.tbl_extend("force", {}, result, {
+                      diagnostics = vim.tbl_filter(function(diagnostic)
+                        return diagnostic.code ~= "reportUnannotatedClassAttribute"
+                      end, result.diagnostics),
+                    })
+                  end
+
+                  return vim.lsp.handlers["textDocument/publishDiagnostics"](
+                    err,
+                    result,
+                    ctx,
+                    config
+                  )
+                end,
+              },
               root_markers = {
                 "pyrightconfig.json",
                 "basedpyrightconfig.json",
@@ -54,12 +74,15 @@ return {
               settings = {
                 basedpyright = {
                   analysis = {
-                    -- 默认使用第三方库源码推导类型，并报告第三方导入问题。
+                    -- 保留基础类型检查，避免 recommended 模式产生过多提示。
+                    typeCheckingMode = "basic",
+                    -- 仍使用第三方库源码补全类型，但不提示缺少源码或类型桩。
                     useLibraryCodeForTypes = true,
                     diagnosticSeverityOverrides = {
                       reportMissingImports = "error",
-                      reportMissingModuleSource = "warning",
-                      reportMissingTypeStubs = "warning",
+                      reportMissingModuleSource = "none",
+                      reportMissingTypeStubs = "none",
+                      reportUnannotatedClassAttribute = "none",
                     },
                   },
                 },
