@@ -26,7 +26,26 @@ vim.keymap.set('n', '<Space>o', '<C-o>', { silent = true, desc = 'Jump back' })
 vim.keymap.set('n', '<Space>p', '<C-i>', { silent = true, desc = 'Jump forward' })
 
 -- Treesitter-aware code folding
-vim.keymap.set('n', '<Space>zz', 'za', { silent = true, desc = 'Toggle code fold' })
+local function toggle_code_fold()
+  local bufnr = vim.api.nvim_get_current_buf()
+  local was_closed = vim.fn.foldclosed(vim.fn.line('.')) ~= -1
+  local count = vim.v.count > 0 and tostring(vim.v.count) or ''
+
+  vim.cmd.normal({ args = { count .. 'za' }, bang = true })
+
+  -- Opening a fold exposes a range which was skipped by the decoration
+  -- provider. Invalidate that buffer's cached decorations so Treesitter
+  -- highlights the newly visible lines on the next redraw.
+  if was_closed then
+    vim.schedule(function()
+      if vim.api.nvim_buf_is_valid(bufnr) and vim.treesitter.highlighter.active[bufnr] then
+        vim.api.nvim__redraw({ buf = bufnr, valid = false, flush = true })
+      end
+    end)
+  end
+end
+
+vim.keymap.set('n', '<Space>zz', toggle_code_fold, { silent = true, desc = 'Toggle code fold' })
 vim.keymap.set('n', '<Space>zc', 'zM', { silent = true, desc = 'Close all code folds' })
 vim.keymap.set('n', '<Space>zo', 'zR', { silent = true, desc = 'Open all code folds' })
 
@@ -117,7 +136,17 @@ end
 vim.keymap.set('n', '<Space>e', open_diagnostic_float, { noremap=true, silent=true, desc = "Show diagnostic float" })
 vim.keymap.set('n', '[d', vim.diagnostic.goto_prev, { noremap=true, silent=true, desc = "Previous diagnostic" })
 vim.keymap.set('n', ']d', vim.diagnostic.goto_next, { noremap=true, silent=true, desc = "Next diagnostic" })
-vim.keymap.set('n', '<Space>q', vim.diagnostic.setloclist, { noremap=true, silent=true, desc = "Diagnostic list" })
+local function toggle_diagnostic_list()
+  local loclist_winid = vim.fn.getloclist(0, { winid = 0 }).winid
+
+  if loclist_winid and loclist_winid ~= 0 then
+    vim.api.nvim_win_close(loclist_winid, true)
+  else
+    vim.diagnostic.setloclist({ open = true })
+  end
+end
+
+vim.keymap.set('n', '<Space>q', toggle_diagnostic_list, { noremap=true, silent=true, desc = "Toggle diagnostic list" })
 vim.keymap.set('n', '<Space>i', vim.lsp.buf.implementation, { noremap=true, silent=true, desc = "Go to implementation" })
 vim.keymap.set('n', '<Space>D', vim.lsp.buf.type_definition, { noremap=true, silent=true, desc = "Go to type definition" })
 vim.keymap.set('n', '<Space>rn', vim.lsp.buf.rename, { noremap=true, silent=true, desc = "Rename symbol" })

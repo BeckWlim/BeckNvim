@@ -2,7 +2,59 @@ return {
     {
         'nvim-lualine/lualine.nvim',
         config = function()
-            require('lualine').setup()
+            local project_markers = {
+                ".git",
+                "pyproject.toml",
+                "package.json",
+                "Cargo.toml",
+                "go.mod",
+                "CMakeLists.txt",
+                "Makefile",
+            }
+
+            local function project_root(bufnr, filename)
+                -- Prefer the most specific LSP workspace containing this file.
+                local root
+                for _, client in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
+                    local client_root = client.config.root_dir
+                    if type(client_root) == "string"
+                        and vim.fs.relpath(client_root, filename)
+                        and (not root or #client_root > #root)
+                    then
+                        root = client_root
+                    end
+                end
+
+                return root or vim.fs.root(filename, project_markers) or vim.fn.getcwd()
+            end
+
+            local function project_relative_path()
+                local bufnr = vim.api.nvim_get_current_buf()
+                local filename = vim.api.nvim_buf_get_name(bufnr)
+                if filename == "" then
+                    return "[No Name]"
+                end
+
+                filename = vim.fs.normalize(filename)
+                local relative = vim.fs.relpath(project_root(bufnr, filename), filename) or filename
+
+                if vim.bo[bufnr].modified then
+                    relative = relative .. " [+]"
+                end
+                if vim.bo[bufnr].readonly then
+                    relative = relative .. " [RO]"
+                end
+
+                return relative
+            end
+
+            require('lualine').setup({
+                sections = {
+                    lualine_c = {
+                        { project_relative_path },
+                    },
+                },
+            })
         end
     },
     {

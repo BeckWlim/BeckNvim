@@ -26,18 +26,23 @@ vim.opt.pumheight = 10
 
 vim.opt.guifont = "Hack Nerd Font:h14"
 
--- Use OSC 52 for clipboard integration in local and remote terminals.
-vim.g.clipboard = {
-  name = "OSC 52",
-  copy = {
-    ["+"] = require("vim.ui.clipboard.osc52").copy("+"),
-    ["*"] = require("vim.ui.clipboard.osc52").copy("*"),
-  },
-  paste = {
-    ["+"] = require("vim.ui.clipboard.osc52").paste("+"),
-    ["*"] = require("vim.ui.clipboard.osc52").paste("*"),
-  },
-}
+-- Let local sessions use the native clipboard provider. Sending every yank
+-- through OSC 52 makes large visual selections noticeably slower because the
+-- text has to be encoded and handled by the terminal. Remote sessions still
+-- need OSC 52 so their clipboard reaches the local terminal.
+if vim.env.SSH_TTY or vim.env.SSH_CONNECTION then
+  vim.g.clipboard = {
+    name = "OSC 52",
+    copy = {
+      ["+"] = require("vim.ui.clipboard.osc52").copy("+"),
+      ["*"] = require("vim.ui.clipboard.osc52").copy("*"),
+    },
+    paste = {
+      ["+"] = require("vim.ui.clipboard.osc52").paste("+"),
+      ["*"] = require("vim.ui.clipboard.osc52").paste("*"),
+    },
+  }
+end
 
 -- Use Treesitter syntax nodes as fold boundaries. Keep files expanded when
 -- they are opened; folds are created only when requested by the user.

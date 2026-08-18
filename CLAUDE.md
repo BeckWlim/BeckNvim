@@ -31,7 +31,9 @@ lua/
 ## Key Configuration Details
 
 ### OSC 52 Clipboard (`lua/config/options.lua`)
-Uses OSC 52 escape sequences for clipboard integration over SSH/remote connections. This bypasses the system clipboard (`unnamedplus`) and sends copy/paste through the terminal directly.
+Local sessions use Neovim's native clipboard provider, while SSH sessions use
+OSC 52 to send copy/paste through the terminal. The `unnamedplus` option keeps
+normal yanks synchronized with the selected backend.
 
 ### LSP Setup
 - **Mason** manages LSP server installations. `ensure_installed` in `lua/plugins/lsp.lua` lists auto-installed servers, including `basedpyright` for Python.

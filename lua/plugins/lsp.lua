@@ -91,9 +91,27 @@ return {
             vim.lsp.enable("basedpyright")
 
             vim.lsp.config("clangd", {
-              cmd = { "clangd" },
+              cmd = {
+                "clangd",
+                -- clangd 会从项目祖先目录自动发现 build/compile_commands.json。
+                -- 优先保证当前文件的诊断和跳转；后台索引只在空闲 CPU 上运行。
+                "--background-index",
+                "--background-index-priority=background",
+                -- 机器内存有限，避免 clangd 按全部 CPU 核心并发解析大型翻译单元。
+                "-j=2",
+                "--pch-storage=disk",
+              },
               filetypes = { "c", "cpp" },
-              root_markers = { ".clangd", "compile_commands.json", ".git" },
+              root_markers = {
+                -- 优先把包含 build/compile_commands.json 的目录识别为项目根目录。
+                function(name, path)
+                  return name == "build"
+                    and vim.uv.fs_stat(vim.fs.joinpath(path, name, "compile_commands.json")) ~= nil
+                end,
+                ".clangd",
+                "compile_commands.json",
+                ".git",
+              },
             })
             vim.lsp.enable("clangd")
         end
