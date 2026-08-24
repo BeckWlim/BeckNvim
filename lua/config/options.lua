@@ -23,6 +23,7 @@ vim.opt.cmdheight = 1
 vim.opt.wrap = false
 vim.opt.hidden = true
 vim.opt.pumheight = 10
+vim.opt.autoread = true
 
 vim.opt.guifont = "Hack Nerd Font:h14"
 

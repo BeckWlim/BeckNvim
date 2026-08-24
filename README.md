@@ -37,13 +37,17 @@ nvim
 ## 目录结构
 
 ```text
-init.lua                  启动入口
-lua/config/lazy.lua       lazy.nvim 引导与插件加载
-lua/config/options.lua    通用编辑器选项
-lua/config/keybindings.lua 全局按键映射
-lua/plugins/              按功能拆分的插件配置
-lazy-lock.json            插件版本锁文件
+init.lua                    启动入口，仅调用 config.setup()
+lua/config/init.lua         配置装配顺序
+lua/config/project.lua      统一的项目根目录和路径边界
+lua/config/keybindings.lua  全局按键装配
+lua/config/*.lua            可独立测试的功能模块
+lua/plugins/*.lua           轻量 lazy.nvim 插件声明
+tests/                      无插件依赖的回归测试
+lazy-lock.json              插件版本锁文件
 ```
+
+详细的模块边界和扩展方式见 [架构说明](docs/architecture.md)。
 
 ## 常用按键
 
@@ -77,6 +81,9 @@ Leader 键使用 Neovim 默认值 `\\`。下表中的 `<Space>` 是实际的空�
 | `<Space>f k` | 搜索按键映射 |
 | `<Space>f s` | 搜索当前文件符号 |
 | `<Space>f w` | 搜索项目符号 |
+
+Python 项目的 `<Space>fw` 使用 ripgrep 动态搜索 `class`、`def` 和 `async def`，
+不依赖 basedpyright 完成全项目索引；其他语言继续使用已连接 LSP 的 workspace symbols。
 
 Telescope 搜索结果中可用 `<C-v>` 垂直分屏、`<C-x>` 水平分屏打开。
 
@@ -116,7 +123,19 @@ Telescope 搜索结果中可用 `<C-v>` 垂直分屏、`<C-x>` 水平分屏打�
 
 - 主题和补全菜单颜色：`lua/plugins/theme.lua`
 - 缩进、剪贴板和显示选项：`lua/config/options.lua`
-- LSP 与补全：`lua/plugins/lsp.lua`
-- 搜索和代码编辑插件：`lua/plugins/coding.lua`
+- LSP 行为：`lua/config/lsp.lua`
+- 补全行为：`lua/config/completion.lua`
+- Telescope 与项目符号：`lua/config/telescope.lua`、`lua/config/workspace_symbols.lua`
+- 插件依赖和加载条件：`lua/plugins/`
 
-配置默认通过 OSC 52 与系统剪贴板交互，适合 SSH 和远程终端场景。
+本地会话使用系统剪贴板；SSH 会话通过 OSC 52 与本地终端剪贴板交互。
+
+## 检查
+
+不加载用户插件即可运行核心回归测试：
+
+```bash
+nvim --headless -u NONE -i NONE -l tests/run.lua
+```
+
+仓库包含 `.luarc.json`，可直接使用 Lua Language Server 做静态检查。
