@@ -15,6 +15,8 @@ end
 
 local function setup_mappings()
   local builtin = require('telescope.builtin')
+  local lsp_locations = require('config.lsp_locations')
+  local type_hierarchy = require('config.type_hierarchy')
   local workspace_symbols = require('config.workspace_symbols')
   local function map(lhs, rhs, description, extra_options)
     local options = vim.tbl_extend('force', {
@@ -36,8 +38,11 @@ local function setup_mappings()
   map('<Space>fk', builtin.keymaps, 'Search keymaps')
   map('<Space>fs', builtin.lsp_document_symbols, 'Document symbols')
   map('<Space>fw', workspace_symbols.open, 'Project workspace symbols')
-  map('gr', builtin.lsp_references, 'Find references', { nowait = true })
-  map('gI', builtin.lsp_implementations, 'Go to implementation')
+  map('<Space>cd', type_hierarchy.open_subtypes, 'Find derived classes')
+  map('<Space>cb', type_hierarchy.open_supertypes, 'Find base classes')
+  map('<Space>ci', type_hierarchy.open_implementations, 'Find method implementations')
+  map('gr', lsp_locations.references, 'Find references', { nowait = true })
+  map('gI', lsp_locations.implementations, 'Find implementations')
 end
 
 function M.setup()
@@ -68,6 +73,7 @@ function M.setup()
   })
   pcall(telescope.load_extension, 'fzf')
   telescope.load_extension('ui-select')
+  require('config.python.hierarchy_index').setup()
   workspace_symbols.setup()
   setup_mappings()
 end

@@ -48,7 +48,7 @@ end
 -- Use Treesitter syntax nodes as fold boundaries. Keep files expanded when
 -- they are opened; folds are created only when requested by the user.
 vim.opt.foldmethod = "expr"
-vim.opt.foldexpr = "v:lua.vim.treesitter.foldexpr()"
+vim.opt.foldexpr = "v:lua.require'config.folds'.expression()"
 vim.opt.foldenable = true
 vim.opt.foldlevel = 99
 vim.opt.foldlevelstart = 99

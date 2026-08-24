@@ -1,10 +1,33 @@
 local M = {
   cold_time_ms = 700,
+  endpoint = 'https://api.mymemory.translated.net/get',
+  max_query_bytes = 500,
+  proxy_environment = {
+    http_proxy = 'http://172.25.160.1:7890',
+    https_proxy = 'http://172.25.160.1:7890',
+    ALL_PROXY = 'socks5://172.25.160.1:7890',
+  },
 }
 
 local chinese_pattern = vim.regex([=[[\u4e00-\u9fff]]=])
 local result_namespace = vim.api.nvim_create_namespace('translation_query_result')
 local active_query_state
+
+local function stop_process(process)
+  if not process then
+    return
+  end
+  pcall(function()
+    process:kill(15)
+  end)
+end
+
+local function stop_requests(query_state)
+  stop_process(query_state.translation_process)
+  stop_process(query_state.dictionary_process)
+  query_state.translation_process = nil
+  query_state.dictionary_process = nil
+end
 
 local function stop_timer(query_state)
   if not query_state.timer:is_closing() then
@@ -30,6 +53,7 @@ local function close_query()
     vim.cmd('stopinsert')
   end
   stop_timer(query_state)
+  stop_requests(query_state)
   if vim.api.nvim_win_is_valid(query_state.winid) then
     vim.api.nvim_win_close(query_state.winid, true)
   end
@@ -55,6 +79,9 @@ local function clean_markup(raw_text)
     raw_text
       :gsub('<[^>]->', '')
       :gsub('&quot;', '"')
+      :gsub('&#39;', "'")
+      :gsub('&lt;', '<')
+      :gsub('&gt;', '>')
       :gsub('&amp;', '&')
   )
 end
@@ -70,6 +97,26 @@ local function append_detail(detail_lines, raw_text)
   end
 end
 
+local function append_text_values(detail_lines, text_values)
+  if type(text_values) == 'string' then
+    append_detail(detail_lines, text_values)
+    return
+  end
+  if type(text_values) ~= 'table' then
+    return
+  end
+
+  local linked_text = text_values['#text']
+  if type(linked_text) == 'string' then
+    append_detail(detail_lines, linked_text)
+    return
+  end
+
+  for _, text_value in ipairs(text_values) do
+    append_text_values(detail_lines, text_value)
+  end
+end
+
 local function append_translation_groups(detail_lines, translation_groups)
   if type(translation_groups) ~= 'table' then
     return
@@ -82,13 +129,7 @@ local function append_translation_groups(detail_lines, translation_groups)
     if type(translation_items) == 'table' then
       for _, translation_item in ipairs(translation_items) do
         local text_values = nested_value(translation_item, { 'l', 'i' }, 1)
-        if type(text_values) == 'string' then
-          append_detail(detail_lines, text_values)
-        elseif type(text_values) == 'table' then
-          for _, text_value in ipairs(text_values) do
-            append_detail(detail_lines, text_value)
-          end
-        end
+        append_text_values(detail_lines, text_values)
       end
     end
   end
@@ -123,6 +164,10 @@ function M.dictionary_lines(response_document)
   end
 
   local chinese_word = nested_value(response_document, { 'ce_new', 'word', 1 }, 1)
+  local contemporary_chinese_word = nested_value(response_document, { 'ce', 'word', 1 }, 1)
+  if type(contemporary_chinese_word) == 'table' then
+    append_translation_groups(detail_lines, contemporary_chinese_word.trs)
+  end
   if type(chinese_word) == 'table' then
     append_translation_groups(detail_lines, chinese_word.trs)
   end
@@ -163,6 +208,29 @@ function M.dictionary_lines(response_document)
   return detail_lines
 end
 
+function M.translation_candidates(response_document)
+  if type(response_document) ~= 'table' then
+    return {}
+  end
+
+  local candidate_lines = {}
+  local primary_translation = nested_value(
+    response_document,
+    { 'responseData', 'translatedText' },
+    1
+  )
+  append_detail(candidate_lines, primary_translation)
+
+  if type(response_document.matches) == 'table' then
+    for _, match_document in ipairs(response_document.matches) do
+      if type(match_document) == 'table' then
+        append_detail(candidate_lines, match_document.translation)
+      end
+    end
+  end
+  return candidate_lines
+end
+
 local function show_result(query_state, result_lines, highlight_group)
   if not query_is_active(query_state) then
     return
@@ -188,7 +256,10 @@ end
 
 local function render_current_result(query_state)
   local rendered_lines = {}
-  if query_state.translation_lines then
+  if query_state.translation_error then
+    table.insert(rendered_lines, '翻译失败')
+    table.insert(rendered_lines, query_state.translation_error)
+  elseif query_state.translation_lines then
     table.insert(rendered_lines, '翻译')
     vim.list_extend(rendered_lines, query_state.translation_lines)
   else
@@ -227,25 +298,133 @@ local function request_dictionary(query_state, input_text, request_text)
     '--data-urlencode',
     'q=' .. normalized_text,
   }
-  vim.system(dictionary_command, { text = true }, function(completed_process)
-    vim.schedule(function()
-      if not query_is_active(query_state)
-        or query_state.latest_request_text ~= request_text
-        or completed_process.code ~= 0 then
-        return
-      end
+  local dictionary_process
+  local request_started = pcall(function()
+    dictionary_process = vim.system(dictionary_command, {
+      text = true,
+      env = M.proxy_environment,
+    }, function(completed_process)
+      vim.schedule(function()
+        if not query_is_active(query_state)
+          or query_state.latest_request_text ~= request_text
+          or completed_process.code ~= 0 then
+          return
+        end
 
-      local decode_succeeded, response_document = pcall(
-        vim.json.decode,
-        completed_process.stdout
-      )
-      if not decode_succeeded then
-        return
-      end
-      query_state.dictionary_lines = M.dictionary_lines(response_document)
-      render_current_result(query_state)
+        local decode_succeeded, response_document = pcall(
+          vim.json.decode,
+          completed_process.stdout
+        )
+        if not decode_succeeded then
+          return
+        end
+        query_state.dictionary_lines = M.dictionary_lines(response_document)
+        render_current_result(query_state)
+      end)
     end)
   end)
+  if request_started then
+    query_state.dictionary_process = dictionary_process
+  end
+end
+
+local function concise_process_error(completed_process)
+  local raw_error = vim.trim(completed_process.stderr or '')
+  if raw_error == '' then
+    raw_error = ('curl exited with code %d'):format(completed_process.code)
+  end
+  local single_line_error = raw_error:gsub('[\r\n]+', ' ')
+  return vim.fn.strcharpart(single_line_error, 0, 240)
+end
+
+local function request_translation(query_state, input_text, request_text, target_language)
+  local normalized_text = vim.trim(input_text)
+  if #normalized_text > M.max_query_bytes then
+    query_state.translation_error = ('输入超过后端的 %d-byte 限制。'):format(
+      M.max_query_bytes
+    )
+    render_current_result(query_state)
+    return
+  end
+
+  local source_language = target_language == 'en' and 'zh-CN' or 'en'
+  local translation_command = {
+    'curl',
+    '--silent',
+    '--show-error',
+    '--fail',
+    '--connect-timeout',
+    '5',
+    '--max-time',
+    '15',
+    '--retry',
+    '2',
+    '--retry-all-errors',
+    '--retry-max-time',
+    '15',
+    '--get',
+    M.endpoint,
+    '--data-urlencode',
+    'q=' .. normalized_text,
+    '--data-urlencode',
+    'langpair=' .. source_language .. '|' .. target_language,
+  }
+
+  local translation_process
+  local request_started, start_error = pcall(function()
+    translation_process = vim.system(translation_command, {
+      text = true,
+      env = M.proxy_environment,
+    }, function(completed_process)
+      vim.schedule(function()
+        if not query_is_active(query_state)
+          or query_state.latest_request_text ~= request_text then
+          return
+        end
+
+        if completed_process.code ~= 0 then
+          query_state.translation_error = concise_process_error(completed_process)
+          render_current_result(query_state)
+          return
+        end
+
+        local decode_succeeded, response_document = pcall(
+          vim.json.decode,
+          completed_process.stdout
+        )
+        if not decode_succeeded or type(response_document) ~= 'table' then
+          query_state.translation_error = '翻译服务返回了无法解析的响应。'
+          render_current_result(query_state)
+          return
+        end
+
+        local response_status = tonumber(response_document.responseStatus)
+        if response_status and response_status ~= 200 then
+          query_state.translation_error = tostring(
+            response_document.responseDetails or '翻译服务拒绝了请求。'
+          )
+          render_current_result(query_state)
+          return
+        end
+
+        local translation_lines = M.translation_candidates(response_document)
+        if #translation_lines == 0 then
+          query_state.translation_error = '翻译服务没有返回候选表达。'
+        else
+          query_state.translation_lines = translation_lines
+          query_state.translation_error = nil
+        end
+        render_current_result(query_state)
+      end)
+    end)
+  end)
+
+  if request_started then
+    query_state.translation_process = translation_process
+  else
+    query_state.translation_error = vim.fn.strcharpart(tostring(start_error), 0, 240)
+    render_current_result(query_state)
+  end
 end
 
 function M.target_for(input_text)
@@ -255,29 +434,31 @@ function M.target_for(input_text)
   return 'zh-CN'
 end
 
+function M.enable_proxy()
+  for environment_name, environment_value in pairs(M.proxy_environment) do
+    vim.env[environment_name] = environment_value
+  end
+end
+
 function M.translate(input_text)
   if vim.trim(input_text) == '' then
     return false
   end
 
   local target_language = M.target_for(input_text)
-  local command_text = input_text
-  if command_text:sub(1, 2) == '--' then
-    command_text = ' ' .. command_text
-  end
-
   local query_state = active_query_state
-  if query_state then
-    query_state.latest_request_text = command_text
-    query_state.translation_lines = nil
-    query_state.dictionary_lines = nil
-    render_current_result(query_state)
-    request_dictionary(query_state, input_text, command_text)
+  if not query_state then
+    return false
   end
 
-  vim.cmd.Translate({
-    args = { '--target=' .. target_language, command_text },
-  })
+  stop_requests(query_state)
+  query_state.latest_request_text = input_text
+  query_state.translation_lines = nil
+  query_state.translation_error = nil
+  query_state.dictionary_lines = nil
+  render_current_result(query_state)
+  request_dictionary(query_state, input_text, input_text)
+  request_translation(query_state, input_text, input_text, target_language)
   return true
 end
 
@@ -289,7 +470,9 @@ local function schedule_translation(query_state)
   query_state.timer:stop()
   query_state.latest_request_text = nil
   query_state.translation_lines = nil
+  query_state.translation_error = nil
   query_state.dictionary_lines = nil
+  stop_requests(query_state)
   local input_text = query_text(query_state)
   if vim.trim(input_text) == '' then
     show_result(query_state, { '输入中文或英文，停顿后自动翻译。' }, 'Comment')
@@ -341,7 +524,10 @@ function M.open()
     timer = debounce_timer,
     latest_request_text = nil,
     translation_lines = nil,
+    translation_error = nil,
     dictionary_lines = nil,
+    translation_process = nil,
+    dictionary_process = nil,
   }
   active_query_state = query_state
   show_result(query_state, { '输入中文或英文，停顿后自动翻译。' }, 'Comment')
@@ -379,42 +565,11 @@ function M.open()
         active_query_state = nil
       end
       stop_timer(query_state)
+      stop_requests(query_state)
     end,
   })
 
   vim.cmd('startinsert')
-end
-
----@param translator { original: string[], translation: string[] }
-function M.render(translator)
-  local query_state = active_query_state
-  if not query_state or translator.original[1] ~= query_state.latest_request_text then
-    return
-  end
-  query_state.translation_lines = translator.translation
-  render_current_result(query_state)
-end
-
-function M.options()
-  return {
-    default = {
-      cmds = {
-        source = 'auto',
-        target = 'zh-CN',
-        handle = 'query-panel',
-        engine = 'google',
-      },
-      cache = true,
-    },
-    translator = {
-      handle = {
-        {
-          name = 'query-panel',
-          render = M.render,
-        },
-      },
-    },
-  }
 end
 
 return M

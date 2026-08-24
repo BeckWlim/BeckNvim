@@ -1,0 +1,168 @@
+local original_actions = package.loaded['telescope.actions']
+local original_config = package.loaded['telescope.config']
+local original_finders = package.loaded['telescope.finders']
+local original_make_entry = package.loaded['telescope.make_entry']
+local original_pickers = package.loaded['telescope.pickers']
+local original_query_picker = package.loaded['config.query_picker']
+local original_lsp_locations = package.loaded['config.lsp_locations']
+local original_buf_request_all = vim.lsp.buf_request_all
+local original_get_client_by_id = vim.lsp.get_client_by_id
+local original_get_clients = vim.lsp.get_clients
+local original_locations_to_items = vim.lsp.util.locations_to_items
+local original_make_position_params = vim.lsp.util.make_position_params
+
+local picker_opened = false
+local initial_result_count = -1
+local close_called = false
+local latest_results = {}
+local latest_title = ''
+local mapped_actions = { i = {}, n = {} }
+local request_callbacks = {}
+local cancelled_methods = {}
+local prompt_buffer = vim.api.nvim_create_buf(false, true)
+local source_buffer = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_set_current_buf(source_buffer)
+vim.api.nvim_buf_set_name(source_buffer, vim.fs.joinpath(vim.fn.getcwd(), 'reference_test.py'))
+vim.api.nvim_buf_set_lines(source_buffer, 0, -1, false, {
+  'def use_value():',
+  '    value = create_value()',
+  '    print(value)',
+})
+vim.bo[source_buffer].filetype = 'python'
+vim.api.nvim_win_set_cursor(0, { 2, 4 })
+
+package.loaded['telescope.actions'] = {
+  close = function()
+    close_called = true
+  end,
+}
+package.loaded['telescope.config'] = {
+  values = {
+    generic_sorter = function()
+      return {}
+    end,
+    qflist_previewer = function()
+      return {}
+    end,
+  },
+}
+package.loaded['telescope.finders'] = {
+  new_table = function(specification)
+    return specification.results
+  end,
+}
+package.loaded['telescope.make_entry'] = {
+  gen_from_quickfix = function()
+    return function(entry)
+      return entry
+    end
+  end,
+}
+package.loaded['telescope.pickers'] = {
+  new = function(_, specification)
+    initial_result_count = #specification.finder
+    latest_title = specification.prompt_title
+    return {
+      layout = {
+        prompt = {
+          border = {
+            change_title = function(_, title)
+              latest_title = title
+            end,
+          },
+        },
+      },
+      find = function()
+        picker_opened = true
+        specification.attach_mappings(prompt_buffer, function(mode, lhs, action)
+          mapped_actions[mode][lhs] = action
+        end)
+      end,
+      refresh = function(_, finder)
+        latest_results = finder
+      end,
+    }
+  end,
+}
+package.loaded['config.query_picker'] = nil
+package.loaded['config.lsp_locations'] = nil
+
+rawset(vim.lsp, 'get_clients', function(options)
+  if options and (options.method == 'textDocument/references'
+    or options.method == 'textDocument/documentHighlight'
+  ) then
+    return { { id = 1, offset_encoding = 'utf-16' } }
+  end
+  return {}
+end)
+rawset(vim.lsp, 'get_client_by_id', function()
+  return { id = 1, offset_encoding = 'utf-16' }
+end)
+rawset(vim.lsp, 'buf_request_all', function(_, method, _, callback)
+  request_callbacks[method] = callback
+  return function()
+    cancelled_methods[method] = true
+  end
+end)
+vim.lsp.util.make_position_params = function(_window, _offset_encoding)
+  return { textDocument = {}, position = {} }
+end
+vim.lsp.util.locations_to_items = function(locations, _offset_encoding)
+  return vim.tbl_map(function(location)
+    return {
+      filename = vim.uri_to_fname(location.uri),
+      lnum = location.range.start.line + 1,
+      col = location.range.start.character + 1,
+      text = 'value',
+    }
+  end, locations)
+end
+
+local lsp_locations = require('config.lsp_locations')
+lsp_locations.references()
+assert(picker_opened, 'references picker did not open before the LSP request')
+assert(initial_result_count == 0, 'references picker did not start empty')
+assert(#latest_results == 1, 'Python local references were not populated synchronously')
+assert(latest_results[1].lnum == 3, 'Python local scan found the wrong reference')
+assert(latest_title:match('querying'), 'references picker did not expose query status')
+assert(vim.wait(1000, function()
+  return request_callbacks['textDocument/references'] ~= nil
+    and request_callbacks['textDocument/documentHighlight'] ~= nil
+end), 'reference requests were not started')
+
+request_callbacks['textDocument/documentHighlight']({
+  [1] = {
+    result = {
+      { range = { start = { line = 1, character = 4 }, ['end'] = { line = 1, character = 9 } } },
+      { range = { start = { line = 2, character = 10 }, ['end'] = { line = 2, character = 15 } } },
+    },
+  },
+})
+assert(#latest_results == 1, 'fast document references were not shown incrementally')
+assert(latest_results[1].lnum == 3, 'the declaration line was not excluded from references')
+assert(latest_title:match('1 results available'), 'partial result status was not shown')
+
+assert(type(mapped_actions.i.q) == 'function', 'insert-mode q did not cancel the query')
+assert(type(mapped_actions.n.q) == 'function', 'normal-mode q did not cancel the query')
+mapped_actions.i.q()
+assert(close_called, 'q did not close the query picker')
+assert(cancelled_methods['textDocument/references'], 'q did not cancel the full reference request')
+assert(
+  cancelled_methods['textDocument/documentHighlight'],
+  'q did not cancel the fast document-highlight request'
+)
+
+package.loaded['telescope.actions'] = original_actions
+package.loaded['telescope.config'] = original_config
+package.loaded['telescope.finders'] = original_finders
+package.loaded['telescope.make_entry'] = original_make_entry
+package.loaded['telescope.pickers'] = original_pickers
+package.loaded['config.query_picker'] = original_query_picker
+package.loaded['config.lsp_locations'] = original_lsp_locations
+rawset(vim.lsp, 'buf_request_all', original_buf_request_all)
+rawset(vim.lsp, 'get_client_by_id', original_get_client_by_id)
+rawset(vim.lsp, 'get_clients', original_get_clients)
+vim.lsp.util.locations_to_items = original_locations_to_items
+vim.lsp.util.make_position_params = original_make_position_params
+vim.api.nvim_buf_delete(prompt_buffer, { force = true })
+vim.api.nvim_buf_delete(source_buffer, { force = true })

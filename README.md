@@ -8,6 +8,7 @@ terminals, a file tree, and Markdown rendering included.
 
 - Neovim 0.11 or newer
 - Git
+- Python 3.10 or newer for the low-latency Python hierarchy index
 - `curl` for the translation component
 - [ripgrep](https://github.com/BurntSushi/ripgrep) for full-text and project-definition search
 - `make` and a C compiler for `telescope-fzf-native.nvim`
@@ -46,8 +47,12 @@ lua/
 │   ├── init.lua                  Configuration assembly order
 │   ├── project.lua               Shared project-root and path boundary logic
 │   ├── keybindings.lua           Global keymap assembly
+│   ├── translation.lua           Translation UI, engine, proxy, and dictionary parsing
+│   ├── query_picker.lua          Immediate, incremental, cancellable query sessions
+│   ├── lsp_locations.lua         Semantic LSP location queries
+│   ├── type_hierarchy.lua        Recursive class hierarchy and implementation pickers
 │   ├── workspace_symbols.lua     Project-definition finder
-│   ├── python/                   Python environment resolution
+│   ├── python/                   Python environment and hierarchy indexing
 │   └── audit/                    Project scan and diagnostic audit modules
 └── plugins/*.lua                 Lightweight lazy.nvim plugin specifications
 tests/                            Focused regression tests
@@ -112,16 +117,54 @@ Telescope results support `<C-v>` for a vertical split and `<C-x>` for a horizon
 
 | Key | Action |
 | --- | --- |
-| `gd` / `gD` | Go to a definition/declaration |
-| `gr` / `gI` | Find references/go to an implementation |
+| `gd` / `gD` | Find definitions/declarations |
+| `gr` / `gI` | Find references/implementations |
 | `K` | Show hover documentation |
-| `<Space>i` | Go to an implementation |
-| `<Space>D` | Go to a type definition |
+| `<Space>i` | Find implementations |
+| `<Space>D` | Find type definitions |
 | `<Space>rn` | Rename a symbol |
 | `<Space>e` | Show diagnostic details |
 | `[d` / `]d` | Move to the previous/next diagnostic |
 | `<Space>q` | Open the diagnostic list |
 | `<Space>lp` | Toggle BasedPyright third-party dependency diagnostics |
+| `<Space>cd` | Find all direct and indirect derived classes under the cursor |
+| `<Space>cb` | Find all direct and indirect base classes under the cursor |
+| `<Space>ci` | Find concrete implementations of the class or method under the cursor |
+
+#### Cancellable LSP Queries
+
+Definition, declaration, reference, type-definition, implementation, and class-hierarchy commands
+open an empty Telescope window immediately instead of waiting for the language server. The title
+shows whether the request is still running and how many partial results are available. While a
+request is active, `q` in either insert or normal mode cancels every outstanding LSP request and
+closes the picker; closing the picker through another action also cancels its work.
+
+For a Python identifier inside a function, `gr` first scans identifier nodes in the enclosing syntax
+scope and normally displays local candidates within a few milliseconds. It then starts the current
+document's semantic-highlight request in parallel with the full project reference request. The first
+semantic response replaces the provisional syntax candidates; subsequent results are deduplicated
+and merged into the already visible picker.
+
+#### Type Hierarchy and Implementations
+
+The class tools use language-server semantics instead of textual class-name matching, so aliases,
+imports, multiple inheritance, and cross-file relationships remain resolvable. With C++, clangd's
+native Type Hierarchy recursively supplies the complete base/derived tree and its depth. Because
+BasedPyright does not implement that protocol, Python files are indexed in the background with the
+standard-library AST parser. Queries then traverse the in-memory class graph without waiting for an
+LSP round trip; a warm query is expected to open within 100 ms. The index is prepared when a Python
+buffer opens, excludes virtual environments and build outputs, and refreshes after saving a Python
+file while continuing to serve the previous ready snapshot. LSP remains the fallback for symbols
+that are not present in the project index.
+
+On a Python method decorated with `@abstractmethod`, `<Space>ci` reads concrete overrides from the
+in-memory class graph and labels each result with its owning class, such as `SqlRepository.save`.
+On a class name—including a base-class reference inside a multiline inheritance list—it resolves
+that exact indexed class and lists its direct and indirect derived classes without an LSP fallback.
+For a C++ pure virtual method, clangd results are labeled similarly as `SqlRepository::save`. The
+abstract declaration itself is excluded. Class results appear incrementally during recursive LSP
+queries. All three pickers support preview, `<CR>` to open, `<C-v>` for a vertical split, and `<C-x>`
+for a horizontal split.
 
 `<Space>gf`, `<Space>gv`, and `<Space>gx` open referenced C/C++ includes, Python imports, and Lua
 modules in the current window, a vertical split, or a horizontal split.
@@ -141,12 +184,35 @@ modules in the current window, a vertical split, or a horizontal split.
 | `<Space>dvc` | Close Diffview |
 | `gcc` / `gc` | Comment the current line or selection |
 
+#### Translation Configuration
+
+The translation defaults are configured in `lua/config/translation.lua`. Its
+`proxy_environment` table is the single place to change the default proxy addresses:
+
+```lua
+proxy_environment = {
+  http_proxy = 'http://172.25.160.1:7890',
+  https_proxy = 'http://172.25.160.1:7890',
+  ALL_PROXY = 'socks5://172.25.160.1:7890',
+}
+```
+
+Each translation and dictionary subprocess explicitly receives these variables, so running a
+separate `proxy_on` shell function is unnecessary. Translation requests go directly to the
+[MyMemory REST API](https://mymemory.translated.net/doc/spec.php); the former smart-translate Bing
+adapter was removed because it also depended on a shared `script.google.com` Apps Script. Network
+errors and timeouts are captured and rendered inside the query window, never echoed into Neovim's
+command line. The same module owns the 500-byte backend limit, query window, debounce delay,
+translation candidates, and Youdao dictionary details.
+
 ## Customization
 
 - Theme and completion colors: `lua/plugins/theme.lua`
 - Indentation, clipboard, and display options: `lua/config/options.lua`
 - LSP behavior: `lua/config/lsp.lua`
 - Completion behavior: `lua/config/completion.lua`
+- Translation defaults and proxy: `lua/config/translation.lua`
+- Class hierarchy and method implementations: `lua/config/type_hierarchy.lua`
 - Telescope and project definitions: `lua/config/telescope.lua`,
   `lua/config/workspace_symbols.lua`
 - Plugin dependencies and loading conditions: `lua/plugins/`

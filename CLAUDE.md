@@ -12,7 +12,12 @@ newer is required.
   lightweight setup calls.
 - `lua/config/project.lua` is the source of truth for roots, markers, and path containment.
 - `lua/config/workspace_symbols.lua` owns Telescope project-definition search.
+- `lua/config/query_picker.lua` owns immediate, incremental, cancellable picker sessions.
+- `lua/config/lsp_locations.lua` owns semantic LSP location queries and fast local references.
+- `lua/config/type_hierarchy.lua` owns C++ LSP and Python indexed hierarchy pickers.
+- `lua/config/python/hierarchy_index.lua` owns the background Python AST index lifecycle.
 - `lua/config/lsp.lua` owns language-server behavior and BasedPyright diagnostic policy.
+- `lua/config/translation.lua` owns direct translation requests, proxy injection, and query UI.
 - `lua/config/audit/` contains project and diagnostic audit modules.
 
 ## Project Definition Contract
@@ -24,8 +29,11 @@ Result rows contain the definition name, symbol kind, and project-relative path;
 the source preview. Ripgrep callbacks schedule result delivery on Neovim's main loop, and picker
 readiness activates after Telescope setup.
 
-LSP navigation follows its own mapping path: native LSP operations serve `gd` and `gD`, and
-Telescope LSP pickers serve `gr` and `gI`.
+LSP navigation follows its own mapping path. Cancelable Telescope LSP sessions serve `gd`, `gD`,
+`gr`, `gI`, `<Space>i`, and `<Space>D`.
+They open before dispatching requests; `gr` merges document highlights before the full reference
+request completes, seeds Python function-local candidates from Treesitter, and replaces provisional
+candidates when semantic results arrive. `q` closes the picker after cancelling outstanding work.
 
 ## Engineering Boundaries
 

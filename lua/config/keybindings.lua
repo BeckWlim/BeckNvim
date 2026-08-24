@@ -8,6 +8,7 @@ function M.setup()
   local folds = require('config.folds')
   local navigation = require('config.navigation')
   local diagnostics = require('config.diagnostics')
+  local lsp_locations = require('config.lsp_locations')
 
   map('<Space>wi', '<C-w>k', 'Window up')
   map('<Space>wj', '<C-w>h', 'Window left')
@@ -43,6 +44,7 @@ function M.setup()
 
   map('<F3>', '<cmd>NvimTreeToggle<CR>', 'Toggle file tree')
   map('<Space>mp', '<cmd>RenderMarkdown toggle<CR>', 'Toggle markdown preview')
+  map('<Space>t', require('config.translation').open, 'Open translation query')
 
   diagnostics.setup()
   map('<Space>e', diagnostics.open_float, 'Show diagnostic float')
@@ -70,11 +72,11 @@ function M.setup()
     'Run project audit / show active log'
   )
 
-  map('<Space>i', vim.lsp.buf.implementation, 'Go to implementation')
-  map('<Space>D', vim.lsp.buf.type_definition, 'Go to type definition')
+  map('<Space>i', lsp_locations.implementations, 'Find implementations')
+  map('<Space>D', lsp_locations.type_definitions, 'Find type definitions')
   map('<Space>rn', vim.lsp.buf.rename, 'Rename symbol')
-  map('gd', vim.lsp.buf.definition, 'Go to definition')
-  map('gD', vim.lsp.buf.declaration, 'Go to declaration')
+  map('gd', lsp_locations.definitions, 'Find definitions')
+  map('gD', lsp_locations.declarations, 'Find declarations')
   map('K', vim.lsp.buf.hover, 'Show hover documentation')
   map(
     '<Space>lp',
