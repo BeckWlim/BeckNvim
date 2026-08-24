@@ -1,5 +1,25 @@
 local M = {}
 local project = require('config.project')
+local third_party_checks_enabled = false
+
+local function third_party_diagnostic_settings(enabled)
+  local severities = enabled and {
+    reportMissingImports = 'error',
+    reportMissingModuleSource = 'warning',
+    reportMissingTypeStubs = 'warning',
+  } or {
+    reportMissingImports = 'error',
+    reportMissingModuleSource = 'none',
+    reportMissingTypeStubs = 'none',
+  }
+  return {
+    basedpyright = {
+      analysis = {
+        diagnosticSeverityOverrides = severities,
+      },
+    },
+  }
+end
 
 local function basedpyright_root_markers()
   local markers = vim.deepcopy(project.python_markers)
@@ -42,14 +62,14 @@ local function configure_basedpyright()
         return
       end
 
-      local python_environment = require('config.python_environment').resolve(root_dir)
+      local python_environment = require('config.python.environment').resolve(root_dir)
       if python_environment then
         client_config.settings = vim.tbl_deep_extend('force', client_config.settings or {}, {
           python = { pythonPath = python_environment.python },
         })
       end
     end,
-    settings = {
+    settings = vim.tbl_deep_extend('force', {
       basedpyright = {
         analysis = {
           typeCheckingMode = 'basic',
@@ -57,14 +77,11 @@ local function configure_basedpyright()
           indexing = true,
           useLibraryCodeForTypes = true,
           diagnosticSeverityOverrides = {
-            reportMissingImports = 'error',
-            reportMissingModuleSource = 'none',
-            reportMissingTypeStubs = 'none',
             reportUnannotatedClassAttribute = 'none',
           },
         },
       },
-    },
+    }, third_party_diagnostic_settings(false)),
   })
 end
 
@@ -109,6 +126,28 @@ function M.setup()
     ensure_installed = { 'bashls', 'basedpyright', 'clangd', 'lua_ls', 'marksman', 'vimls' },
     automatic_enable = true,
   })
+end
+
+function M.toggle_third_party_checks()
+  third_party_checks_enabled = not third_party_checks_enabled
+  local updated_settings = third_party_diagnostic_settings(third_party_checks_enabled)
+  vim.lsp.config('basedpyright', { settings = updated_settings })
+
+  for _, client in ipairs(vim.lsp.get_clients({ name = 'basedpyright' })) do
+    local merged_settings = vim.tbl_deep_extend(
+      'force',
+      client.settings or {},
+      updated_settings
+    )
+    client.settings = merged_settings
+    client:notify('workspace/didChangeConfiguration', { settings = merged_settings })
+  end
+
+  vim.notify(
+    ('basedpyright third-party dependency diagnostics: %s'):format(
+      third_party_checks_enabled and 'enabled' or 'disabled'
+    )
+  )
 end
 
 return M

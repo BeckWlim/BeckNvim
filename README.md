@@ -1,22 +1,24 @@
-# Neovim 配置
+# Neovim Configuration
 
-一套面向日常开发的个人 Neovim 配置。使用 [lazy.nvim](https://github.com/folke/lazy.nvim)
-管理插件，内置代码补全、LSP、模糊搜索、Git 状态、终端、文件树和 Markdown 渲染。
+A personal Neovim configuration for daily development. Plugin management uses
+[lazy.nvim](https://github.com/folke/lazy.nvim), with completion, LSP, fuzzy search, Git tools,
+terminals, a file tree, and Markdown rendering included.
 
-## 环境要求
+## Requirements
 
-- Neovim 0.11 或更高版本
+- Neovim 0.11 or newer
 - Git
-- [ripgrep](https://github.com/BurntSushi/ripgrep)（Telescope 全文搜索）
-- `make` 和 C 编译器（编译 `telescope-fzf-native.nvim`）
-- Nerd Font（可选，用于完整显示图标；GUI 默认使用 Hack Nerd Font）
+- `curl` for the translation component
+- [ripgrep](https://github.com/BurntSushi/ripgrep) for full-text and project-definition search
+- `make` and a C compiler for `telescope-fzf-native.nvim`
+- A Nerd Font for the complete icon set; the GUI defaults to Hack Nerd Font
 
-LSP 服务器由 Mason 在首次启动后按需安装。目前配置了 Bash、C/C++、Lua、
-Markdown、Python 和 Vim script 支持。
+Mason installs the configured language servers on demand. The current setup covers Bash,
+C/C++, Lua, Markdown, Python, and Vim script.
 
-## 安装
+## Installation
 
-先备份已有配置，再克隆本仓库：
+Back up the existing configuration, clone this repository, and start Neovim:
 
 ```bash
 mv ~/.config/nvim ~/.config/nvim.bak
@@ -24,7 +26,7 @@ git clone <repository-url> ~/.config/nvim
 nvim
 ```
 
-首次启动时 lazy.nvim 会自动下载插件。随后可在 Neovim 中运行：
+Useful checks after the first startup:
 
 ```vim
 :Lazy check
@@ -32,110 +34,133 @@ nvim
 :checkhealth
 ```
 
-插件版本由 `lazy-lock.json` 锁定。使用 `:Lazy update` 更新后，请一并提交新的锁文件。
+Plugin versions are pinned in `lazy-lock.json`. Include the updated lockfile when applying
+`:Lazy update`.
 
-## 目录结构
+## Repository Layout
 
 ```text
-init.lua                    启动入口，仅调用 config.setup()
-lua/config/init.lua         配置装配顺序
-lua/config/project.lua      统一的项目根目录和路径边界
-lua/config/keybindings.lua  全局按键装配
-lua/config/*.lua            可独立测试的功能模块
-lua/plugins/*.lua           轻量 lazy.nvim 插件声明
-tests/                      无插件依赖的回归测试
-lazy-lock.json              插件版本锁文件
+init.lua                         Startup entry point; calls config.setup()
+lua/
+├── config/                       Reusable, testable feature modules
+│   ├── init.lua                  Configuration assembly order
+│   ├── project.lua               Shared project-root and path boundary logic
+│   ├── keybindings.lua           Global keymap assembly
+│   ├── workspace_symbols.lua     Project-definition finder
+│   ├── python/                   Python environment resolution
+│   └── audit/                    Project scan and diagnostic audit modules
+└── plugins/*.lua                 Lightweight lazy.nvim plugin specifications
+tests/                            Focused regression tests
+lazy-lock.json                    Pinned plugin versions
 ```
 
-详细的模块边界和扩展方式见 [架构说明](docs/architecture.md)。
+See [Architecture](docs/architecture.md) for module ownership and extension rules.
 
-## 常用按键
+## Keymaps
 
-Leader 键使用 Neovim 默认值 `\\`。下表中的 `<Space>` 是实际的空格键前缀，
-不是 Leader 键。
+The default leader remains `\`. Every `<Space>` entry below uses the literal space key as its
+prefix.
 
-### 窗口与跳转
+### Windows and Navigation
 
-| 按键 | 功能 |
+| Key | Action |
 | --- | --- |
-| `<Space>w i/j/k/l` | 切换到上/左/下/右窗口 |
-| `<Space>w v/s` | 垂直/水平分屏 |
-| `<Space>w q/o` | 关闭当前窗口/仅保留当前窗口 |
-| `<Tab>` / `<S-Tab>` | 下一个/上一个窗口 |
-| `<Space>r i/k/j/l` | 增高/降低/变窄/变宽窗口 |
-| `<Space>r =` | 均分窗口 |
-| `<Space>o` / `<Space>p` | 跳转列表后退/前进 |
-| `<Space>z z/c/o` | 切换折叠/关闭全部/打开全部折叠 |
+| `<Space>wi/wj/wk/wl` | Move to the upper/left/lower/right window |
+| `<Space>wv/ws` | Create a vertical/horizontal split |
+| `<Space>wq/wo` | Close the current window/keep only the current window |
+| `<Tab>` / `<S-Tab>` | Move to the next/previous window |
+| `<Space>ri/rk/rj/rl` | Increase/decrease height or width |
+| `<Space>r=` | Equalize window sizes |
+| `<Space>o` / `<Space>p` | Move backward/forward through the jump list |
+| `<Space>zz/zc/zo` | Toggle, close all, or open all folds |
 
-### 搜索
+### Search
 
-| 按键 | 功能 |
+| Key | Action |
 | --- | --- |
-| `<Space>f f` | 搜索项目文件 |
-| `<Space>f v` | 搜索文件并垂直分屏打开 |
-| `<Space>f g` | 全文搜索 |
-| `<Space>f b` | 搜索已打开的 buffer |
-| `<Space>b v` | 搜索 buffer 并垂直分屏打开 |
-| `<Space>f r` | 搜索最近文件 |
-| `<Space>f h` | 搜索帮助文档 |
-| `<Space>f k` | 搜索按键映射 |
-| `<Space>f s` | 搜索当前文件符号 |
-| `<Space>f w` | 搜索项目符号 |
+| `<Space>ff` | Find project files |
+| `<Space>fv` | Find a file and open it in a vertical split |
+| `<Space>fg` | Search project text |
+| `<Space>fb` | Find an open buffer |
+| `<Space>bv` | Find a buffer and open it in a vertical split |
+| `<Space>fr` | Find recent files |
+| `<Space>fh` | Search help tags |
+| `<Space>fk` | Search keymaps |
+| `<Space>fs` | Search symbols in the current file |
+| `<Space>fw` | Search definitions across the project |
 
-Python 项目的 `<Space>fw` 使用 ripgrep 动态搜索 `class`、`def` 和 `async def`，
-不依赖 basedpyright 完成全项目索引；其他语言继续使用已连接 LSP 的 workspace symbols。
+#### Project Definition Search
 
-Telescope 搜索结果中可用 `<C-v>` 垂直分屏、`<C-x>` 水平分屏打开。
+`<Space>fw` opens a dedicated Telescope definition picker with the following policy:
 
-### LSP 与诊断
+- Scope: Python, C/C++/CUDA, Lua, Shell, Vim script, and Markdown files under the project root.
+- Backend: language-specific ripgrep jobs run in parallel and feed one Telescope finder.
+- Query: two characters start a name-prefix search; longer input uses name containment.
+- Capacity: each query supplies up to 1,000 candidates, and further input narrows the result set.
+- Result row: definition name, symbol kind, and project-relative path.
+- Preview: the source location appears in the Telescope preview window.
+- State: each new query retires the previous finder generation and releases its search jobs.
+- Readiness: initialization completes on Neovim's main loop; an early invocation reports the loading
+  state and accepts a retry after startup settles.
 
-| 按键 | 功能 |
+This picker owns project-definition search. LSP navigation remains assigned to `gd`, `gD`, `gr`,
+and `gI`.
+
+Telescope results support `<C-v>` for a vertical split and `<C-x>` for a horizontal split.
+
+### LSP and Diagnostics
+
+| Key | Action |
 | --- | --- |
-| `gd` / `gD` | 跳转到定义/声明 |
-| `gr` / `gI` | 查找引用/跳转到实现 |
-| `K` | 显示悬浮文档 |
-| `<Space>i` | 跳转到实现 |
-| `<Space>D` | 跳转到类型定义 |
-| `<Space>rn` | 重命名符号 |
-| `<Space>e` | 显示诊断详情 |
-| `[d` / `]d` | 上一个/下一个诊断 |
-| `<Space>q` | 打开诊断列表 |
-| `<Space>lp` | 切换 BasedPyright 第三方依赖诊断 |
+| `gd` / `gD` | Go to a definition/declaration |
+| `gr` / `gI` | Find references/go to an implementation |
+| `K` | Show hover documentation |
+| `<Space>i` | Go to an implementation |
+| `<Space>D` | Go to a type definition |
+| `<Space>rn` | Rename a symbol |
+| `<Space>e` | Show diagnostic details |
+| `[d` / `]d` | Move to the previous/next diagnostic |
+| `<Space>q` | Open the diagnostic list |
+| `<Space>lp` | Toggle BasedPyright third-party dependency diagnostics |
 
-`<Space>gf`、`<Space>gv` 和 `<Space>gx` 用于在当前窗口、垂直分屏或水平分屏中
-跳转到 C/C++ `#include`、Python `import`、Lua `require` 引用的文件。
+`<Space>gf`, `<Space>gv`, and `<Space>gx` open referenced C/C++ includes, Python imports, and Lua
+modules in the current window, a vertical split, or a horizontal split.
 
-### 工具
+### Tools
 
-| 按键 | 功能 |
+| Key | Action |
 | --- | --- |
-| `<F3>` | 切换文件树 |
-| `<C-t>` | 切换水平终端 |
-| `<M-e>` | 快速包围 |
-| `<Space>mp` | 切换 Markdown 渲染 |
-| `<Space>dv` | 打开当前分支 Diffview |
-| `<Space>dvm` | 与 `main` 分支比较 |
-| `<Space>dvh` | 查看当前文件历史 |
-| `<Space>dvc` | 关闭 Diffview |
-| `gcc` / `gc` | 注释当前行/选中区域 |
+| `<F3>` | Toggle the file tree |
+| `<C-t>` | Toggle the horizontal terminal |
+| `<M-e>` | Apply a quick surround operation |
+| `<Space>t` | Open the centered live Chinese/English translation query (700 ms debounce) |
+| `<Space>mp` | Toggle Markdown rendering |
+| `<Space>dv` | Open Diffview for the current branch |
+| `<Space>dvm` | Compare the current branch with `main` |
+| `<Space>dvh` | Show history for the current file |
+| `<Space>dvc` | Close Diffview |
+| `gcc` / `gc` | Comment the current line or selection |
 
-## 个性化
+## Customization
 
-- 主题和补全菜单颜色：`lua/plugins/theme.lua`
-- 缩进、剪贴板和显示选项：`lua/config/options.lua`
-- LSP 行为：`lua/config/lsp.lua`
-- 补全行为：`lua/config/completion.lua`
-- Telescope 与项目符号：`lua/config/telescope.lua`、`lua/config/workspace_symbols.lua`
-- 插件依赖和加载条件：`lua/plugins/`
+- Theme and completion colors: `lua/plugins/theme.lua`
+- Indentation, clipboard, and display options: `lua/config/options.lua`
+- LSP behavior: `lua/config/lsp.lua`
+- Completion behavior: `lua/config/completion.lua`
+- Telescope and project definitions: `lua/config/telescope.lua`,
+  `lua/config/workspace_symbols.lua`
+- Plugin dependencies and loading conditions: `lua/plugins/`
 
-本地会话使用系统剪贴板；SSH 会话通过 OSC 52 与本地终端剪贴板交互。
+Local sessions use the system clipboard. SSH sessions use OSC 52 to communicate with the local
+terminal clipboard.
 
-## 检查
+## Validation
 
-不加载用户插件即可运行核心回归测试：
+Run the focused regression suite with a minimal Neovim runtime:
 
 ```bash
 nvim --headless -u NONE -i NONE -l tests/run.lua
 ```
 
-仓库包含 `.luarc.json`，可直接使用 Lua Language Server 做静态检查。
+The repository `.luarc.json` supplies the Lua Language Server configuration. Changes to plugin
+declarations or startup wiring also receive a full headless startup check and keymap verification.

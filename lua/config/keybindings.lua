@@ -63,14 +63,24 @@ function M.setup()
     })
   end, 'Next diagnostic')
   map('<Space>q', diagnostics.toggle_list, 'Toggle diagnostic list')
-  map('<Space>gq', require('config.diagnostic_audit').open, 'Find project files with diagnostics')
-  map('<Space>gs', require('config.project_audit').run_or_open, 'Run project audit / show active log')
+  map('<Space>gq', require('config.audit.diagnostic').open, 'Find project files with diagnostics')
+  map(
+    '<Space>gs',
+    require('config.audit.project').run_or_open,
+    'Run project audit / show active log'
+  )
 
   map('<Space>i', vim.lsp.buf.implementation, 'Go to implementation')
   map('<Space>D', vim.lsp.buf.type_definition, 'Go to type definition')
   map('<Space>rn', vim.lsp.buf.rename, 'Rename symbol')
+  map('gd', vim.lsp.buf.definition, 'Go to definition')
+  map('gD', vim.lsp.buf.declaration, 'Go to declaration')
   map('K', vim.lsp.buf.hover, 'Show hover documentation')
-  map('<Space>lp', require('config.python').toggle_third_party_checks, 'Toggle basedpyright third-party checks')
+  map(
+    '<Space>lp',
+    require('config.lsp').toggle_third_party_checks,
+    'Toggle basedpyright third-party checks'
+  )
 end
 
 return M

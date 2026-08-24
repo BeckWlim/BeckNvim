@@ -215,7 +215,7 @@ local function find_existing_task(overseer, name)
 end
 
 local function run_basedpyright(overseer, root)
-  local python_environment = require('config.python_environment').resolve(root)
+  local python_environment = require('config.python.environment').resolve(root)
   local path_analyzer = vim.fn.exepath('basedpyright')
   local analyzer = python_environment and python_environment.basedpyright
     or path_analyzer ~= '' and path_analyzer

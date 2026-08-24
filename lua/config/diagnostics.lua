@@ -45,7 +45,7 @@ function M.toggle_list()
 end
 
 function M.setup()
-  require('config.diagnostic_audit').setup()
+  require('config.audit.diagnostic').setup()
 end
 
 return M

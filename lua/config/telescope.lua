@@ -15,8 +15,13 @@ end
 
 local function setup_mappings()
   local builtin = require('telescope.builtin')
-  local function map(lhs, rhs, description)
-    vim.keymap.set('n', lhs, rhs, { silent = true, desc = description })
+  local workspace_symbols = require('config.workspace_symbols')
+  local function map(lhs, rhs, description, extra_options)
+    local options = vim.tbl_extend('force', {
+      silent = true,
+      desc = description,
+    }, extra_options or {})
+    vim.keymap.set('n', lhs, rhs, options)
   end
 
   map('<Space>ff', builtin.find_files, 'Find files')
@@ -30,15 +35,14 @@ local function setup_mappings()
   map('<Space>fh', builtin.help_tags, 'Search help')
   map('<Space>fk', builtin.keymaps, 'Search keymaps')
   map('<Space>fs', builtin.lsp_document_symbols, 'Document symbols')
-  map('<Space>fw', require('config.workspace_symbols').open, 'Project workspace symbols')
-  map('gr', builtin.lsp_references, 'Find references')
-  map('gd', builtin.lsp_definitions, 'Go to definition')
-  map('gD', vim.lsp.buf.declaration, 'Go to declaration')
+  map('<Space>fw', workspace_symbols.open, 'Project workspace symbols')
+  map('gr', builtin.lsp_references, 'Find references', { nowait = true })
   map('gI', builtin.lsp_implementations, 'Go to implementation')
 end
 
 function M.setup()
   local telescope = require('telescope')
+  local workspace_symbols = require('config.workspace_symbols')
   telescope.setup({
     defaults = {
       path_display = { 'smart' },
@@ -64,6 +68,7 @@ function M.setup()
   })
   pcall(telescope.load_extension, 'fzf')
   telescope.load_extension('ui-select')
+  workspace_symbols.setup()
   setup_mappings()
 end
 
