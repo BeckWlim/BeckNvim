@@ -13,6 +13,18 @@ local definition_cases = {
   { 'example.cpp', 'struct ProjectSymbol {', 'Type', 'ProjectSymbol' },
   { 'example.cpp', '#define SYMBOL_LIMIT 100', 'Macro', 'SYMBOL_LIMIT' },
   { 'example.cpp', 'static const int PROJECT_LIMIT = 10;', 'Variable', 'PROJECT_LIMIT' },
+  {
+    'example.cpp',
+    'auto MasterService::PutStart(int value) -> bool {',
+    'Function',
+    'MasterService::PutStart',
+  },
+  {
+    'example.cpp',
+    'WrappedMasterService::PutStart(int value) {',
+    'Function',
+    'WrappedMasterService::PutStart',
+  },
   { 'example.md', '## Project symbols', 'Section', 'Project symbols' },
 }
 
@@ -35,6 +47,8 @@ for _, expected_name in ipairs({
   'ProjectSymbol',
   'SYMBOL_LIMIT',
   'PROJECT_LIMIT',
+  'MasterService::PutStart',
+  'WrappedMasterService::PutStart',
   'Project symbols',
 }) do
   local commands = symbols.commands(expected_name, fixture_root)

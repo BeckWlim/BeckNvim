@@ -47,9 +47,17 @@ end
 
 function M.setup()
   local telescope = require('telescope')
+  local actions = require('telescope.actions')
   local workspace_symbols = require('config.workspace_symbols')
+  local contextual_previewer = require('config.grep_preview').new
   telescope.setup({
     defaults = {
+      grep_previewer = contextual_previewer,
+      qflist_previewer = contextual_previewer,
+      mappings = {
+        i = { ['<C-q>'] = actions.close },
+        n = { ['<C-q>'] = actions.close },
+      },
       path_display = { 'smart' },
       vimgrep_arguments = {
         'rg',

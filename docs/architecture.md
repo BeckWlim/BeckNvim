@@ -13,6 +13,8 @@ lua/
 │   ├── keybindings.lua           Global keymap assembly
 │   ├── query_picker.lua          Immediate, incremental, cancellable query sessions
 │   ├── lsp_locations.lua         Reference and location query orchestration
+│   ├── grep_preview.lua          Structural context for Telescope grep previews
+│   ├── treesitter_context.lua    Priority-aware pinned syntax context
 │   ├── type_hierarchy.lua        Recursive LSP class and implementation pickers
 │   ├── workspace_symbols.lua     Project-definition finder
 │   ├── python/                   Python environment and hierarchy indexing
@@ -28,6 +30,8 @@ lua/
 | `config/workspace_symbols.lua` | Project-wide definition search and Telescope result entries |
 | `config/query_picker.lua` | Empty-first Telescope lifecycle, incremental refresh, status, and cancellation |
 | `config/lsp_locations.lua` | Cancellable LSP definition, declaration, reference, type, and implementation queries |
+| `config/grep_preview.lua` | Telescope grep/LSP location preview loading, highlighting, and structural winbar context |
+| `config/treesitter_context.lua` | Structural and nearest-scope retention within the pinned-context budget |
 | `config/type_hierarchy.lua` | Recursive LSP type hierarchy and class-qualified method implementations |
 | `config/telescope.lua` | Telescope defaults and keymap assembly |
 | `config/lsp.lua` | Language-server configuration and BasedPyright diagnostic policy |
@@ -62,9 +66,11 @@ The query policy is shared across every supported language:
 
 LSP navigation has a separate ownership path through `config.lsp_locations`. Every location query
 opens its Telescope session before dispatching requests, streams available results, and cancels
-outstanding requests when the picker closes. For Python function-local identifiers, `gr` seeds the
-picker from the enclosing Treesitter scope, then replaces those provisional candidates with the
-first result from a document-highlight or complete project reference request.
+outstanding requests when the picker closes. Cancelled primary requests are retried once; auxiliary
+document-highlight failures do not turn a successful project reference request into a failed query.
+For Python function-local identifiers, `gr` seeds the picker from the enclosing Treesitter scope,
+then replaces those provisional candidates with the first successful document-highlight or complete
+project reference response.
 
 ## Type Hierarchy and Implementations
 

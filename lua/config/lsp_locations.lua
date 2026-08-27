@@ -22,6 +22,36 @@ local function location_key(location_item)
   )
 end
 
+local function lsp_error_message(lsp_error)
+  if type(lsp_error) == 'table' then
+    if type(lsp_error.message) == 'string' and lsp_error.message ~= '' then
+      return lsp_error.message
+    end
+    if type(lsp_error.code) == 'number' then
+      return ('LSP error %d'):format(lsp_error.code)
+    end
+  elseif type(lsp_error) == 'string' and lsp_error ~= '' then
+    return lsp_error
+  end
+  return 'no LSP response'
+end
+
+local function responses_are_retryable(response_documents)
+  local response_count = 0
+  local error_codes = vim.lsp.protocol.ErrorCodes
+  for _, response_document in pairs(response_documents) do
+    response_count = response_count + 1
+    local response_error = response_document.err
+    if type(response_error) ~= 'table'
+      or (response_error.code ~= error_codes.RequestCancelled
+        and response_error.code ~= error_codes.ServerCancelled)
+    then
+      return false
+    end
+  end
+  return response_count > 0
+end
+
 local function is_non_reference_identifier(identifier_node)
   local parent_node = identifier_node:parent()
   if not parent_node then
@@ -141,7 +171,13 @@ local function open_location_query(query)
   local items_by_key = {}
   local provisional_keys = {}
   local pending_request_count = 0
-  local error_count = 0
+  local primary_request_started = false
+  local primary_response_succeeded = false
+  local primary_error_messages = {}
+  local highlight_request_started = false
+  local highlight_response_succeeded = false
+  local highlight_error_messages = {}
+  local primary_retry_count = 0
   local picker_options = {}
   local session = query_picker.open({
     title = query.title,
@@ -190,15 +226,44 @@ local function open_location_query(query)
     end
   end
 
+  local function position_params(client)
+    local base_params = vim.lsp.util.make_position_params(source_window, client.offset_encoding)
+    if query.method == 'textDocument/references' then
+      return vim.tbl_extend('force', base_params, {
+        context = { includeDeclaration = true },
+      })
+    end
+    return base_params
+  end
+
+  local function request_primary(response_callback)
+    local cancel_primary = vim.lsp.buf_request_all(
+      source_buffer,
+      query.method,
+      position_params,
+      response_callback
+    )
+    session:add_cancel(cancel_primary)
+  end
+
   local function finish_request()
     pending_request_count = pending_request_count - 1
     local current_items = sorted_items(items_by_key)
     if pending_request_count == 0 then
-      if error_count > 0 and #current_items == 0 then
-        session:fail(('query failed (%d errors)'):format(error_count))
-      else
-        session:finish(current_items)
+      if primary_request_started and not primary_response_succeeded then
+        local primary_error = primary_error_messages[1] or 'no LSP response'
+        session:fail(('%s failed: %s'):format(query.title:lower(), primary_error))
+        return
       end
+      if not primary_request_started
+        and highlight_request_started
+        and not highlight_response_succeeded
+      then
+        local highlight_error = highlight_error_messages[1] or 'no LSP response'
+        session:fail(('document highlights failed: %s'):format(highlight_error))
+        return
+      end
+      session:finish(current_items)
       return
     end
     session:update(current_items, ('querying… %d results available'):format(#current_items))
@@ -208,13 +273,23 @@ local function open_location_query(query)
     if session:is_closed() then
       return
     end
+    if primary_retry_count == 0 and responses_are_retryable(response_documents) then
+      primary_retry_count = primary_retry_count + 1
+      session:update(
+        sorted_items(items_by_key),
+        'querying… retrying after LSP cancellation'
+      )
+      request_primary(collect_location_responses)
+      return
+    end
     for client_id, response_document in pairs(response_documents) do
       local client = vim.lsp.get_client_by_id(client_id)
       if response_document.err then
-        error_count = error_count + 1
-      elseif client then
+        table.insert(primary_error_messages, lsp_error_message(response_document.err))
+      else
+        primary_response_succeeded = true
         clear_provisional_items()
-        if response_document.result then
+        if client and response_document.result then
           local response_locations = vim.islist(response_document.result)
               and response_document.result
             or { response_document.result }
@@ -233,10 +308,11 @@ local function open_location_query(query)
     for client_id, response_document in pairs(response_documents) do
       local client = vim.lsp.get_client_by_id(client_id)
       if response_document.err then
-        error_count = error_count + 1
-      elseif client then
+        table.insert(highlight_error_messages, lsp_error_message(response_document.err))
+      else
+        highlight_response_succeeded = true
         clear_provisional_items()
-        if response_document.result then
+        if client and response_document.result then
           local highlight_locations = vim.tbl_map(function(document_highlight)
             return {
               uri = source_uri,
@@ -248,16 +324,6 @@ local function open_location_query(query)
       end
     end
     finish_request()
-  end
-
-  local function position_params(client)
-    local base_params = vim.lsp.util.make_position_params(source_window, client.offset_encoding)
-    if query.method == 'textDocument/references' then
-      return vim.tbl_extend('force', base_params, {
-        context = { includeDeclaration = true },
-      })
-    end
-    return base_params
   end
 
   vim.schedule(function()
@@ -282,6 +348,7 @@ local function open_location_query(query)
     end
 
     if #highlight_clients > 0 then
+      highlight_request_started = true
       pending_request_count = pending_request_count + 1
       local cancel_highlights = vim.lsp.buf_request_all(
         source_buffer,
@@ -293,14 +360,9 @@ local function open_location_query(query)
     end
 
     if #primary_clients > 0 then
+      primary_request_started = true
       pending_request_count = pending_request_count + 1
-      local cancel_primary = vim.lsp.buf_request_all(
-        source_buffer,
-        query.method,
-        position_params,
-        collect_location_responses
-      )
-      session:add_cancel(cancel_primary)
+      request_primary(collect_location_responses)
     end
   end)
 end

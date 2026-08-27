@@ -9,6 +9,7 @@ function M.setup()
   local navigation = require('config.navigation')
   local diagnostics = require('config.diagnostics')
   local lsp_locations = require('config.lsp_locations')
+  local treesitter_context = require('config.treesitter_context')
 
   map('<Space>wi', '<C-w>k', 'Window up')
   map('<Space>wj', '<C-w>h', 'Window left')
@@ -33,6 +34,7 @@ function M.setup()
   map('<Space>zz', folds.toggle, 'Toggle code fold')
   map('<Space>zc', 'zM', 'Close all code folds')
   map('<Space>zo', 'zR', 'Open all code folds')
+  map('<Space>cc', treesitter_context.go_to_nearest_context, 'Go to nearest enclosing context')
 
   map('<Space>gf', navigation.goto_referenced_file, 'Go to referenced file')
   map('<Space>gv', function()
@@ -64,7 +66,7 @@ function M.setup()
       end,
     })
   end, 'Next diagnostic')
-  map('<Space>q', diagnostics.toggle_list, 'Toggle diagnostic list')
+  map('<Space>q', diagnostics.open_picker, 'Find document diagnostics')
   map('<Space>gq', require('config.audit.diagnostic').open, 'Find project files with diagnostics')
   map(
     '<Space>gs',

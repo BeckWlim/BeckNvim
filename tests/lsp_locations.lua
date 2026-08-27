@@ -99,7 +99,8 @@ rawset(vim.lsp, 'get_client_by_id', function()
   return { id = 1, offset_encoding = 'utf-16' }
 end)
 rawset(vim.lsp, 'buf_request_all', function(_, method, _, callback)
-  request_callbacks[method] = callback
+  request_callbacks[method] = request_callbacks[method] or {}
+  table.insert(request_callbacks[method], callback)
   return function()
     cancelled_methods[method] = true
   end
@@ -130,7 +131,7 @@ assert(vim.wait(1000, function()
     and request_callbacks['textDocument/documentHighlight'] ~= nil
 end), 'reference requests were not started')
 
-request_callbacks['textDocument/documentHighlight']({
+request_callbacks['textDocument/documentHighlight'][1]({
   [1] = {
     result = {
       { range = { start = { line = 1, character = 4 }, ['end'] = { line = 1, character = 9 } } },
@@ -150,6 +151,102 @@ assert(cancelled_methods['textDocument/references'], 'q did not cancel the full 
 assert(
   cancelled_methods['textDocument/documentHighlight'],
   'q did not cancel the fast document-highlight request'
+)
+
+for method in pairs(request_callbacks) do
+  request_callbacks[method] = nil
+end
+latest_results = {}
+vim.api.nvim_buf_set_lines(source_buffer, 0, -1, false, {
+  'def process_batch_result_prefill():',
+  '    pass',
+})
+vim.api.nvim_win_set_cursor(0, { 1, 4 })
+lsp_locations.references()
+assert(vim.wait(1000, function()
+  return request_callbacks['textDocument/references'] ~= nil
+    and request_callbacks['textDocument/documentHighlight'] ~= nil
+end), 'function reference requests were not started')
+
+request_callbacks['textDocument/documentHighlight'][1]({
+  [1] = {
+    err = { code = -32803, message = 'auxiliary query failed' },
+  },
+})
+request_callbacks['textDocument/references'][1]({
+  [1] = {
+    result = {
+      {
+        range = {
+          start = { line = 0, character = 4 },
+          ['end'] = { line = 0, character = 32 },
+        },
+        uri = vim.uri_from_bufnr(source_buffer),
+      },
+    },
+  },
+})
+assert(#latest_results == 0, 'the source declaration was not excluded from references')
+assert(latest_title:match('no results'), 'an auxiliary error incorrectly failed references')
+assert(not latest_title:match('query failed'), 'references exposed the old generic failure')
+
+for method in pairs(request_callbacks) do
+  request_callbacks[method] = nil
+end
+latest_results = {}
+lsp_locations.references()
+assert(vim.wait(1000, function()
+  return request_callbacks['textDocument/references'] ~= nil
+    and request_callbacks['textDocument/documentHighlight'] ~= nil
+end), 'retryable reference requests were not started')
+
+request_callbacks['textDocument/documentHighlight'][1]({ [1] = { result = {} } })
+request_callbacks['textDocument/references'][1]({
+  [1] = {
+    err = { code = -32800, message = 'Request cancelled' },
+  },
+})
+assert(
+  vim.wait(1000, function()
+    return #request_callbacks['textDocument/references'] == 2
+  end),
+  'a cancelled reference request was not retried'
+)
+assert(latest_title:match('retrying'), 'the reference retry was not visible')
+request_callbacks['textDocument/references'][2]({
+  [1] = {
+    result = {
+      {
+        range = {
+          start = { line = 1, character = 4 },
+          ['end'] = { line = 1, character = 8 },
+        },
+        uri = vim.uri_from_bufnr(source_buffer),
+      },
+    },
+  },
+})
+assert(#latest_results == 1, 'the retried reference result was not shown')
+assert(latest_title:match('1 results'), 'the retried reference query did not finish')
+
+for method in pairs(request_callbacks) do
+  request_callbacks[method] = nil
+end
+lsp_locations.references()
+assert(vim.wait(1000, function()
+  return request_callbacks['textDocument/references'] ~= nil
+    and request_callbacks['textDocument/documentHighlight'] ~= nil
+end), 'failing reference requests were not started')
+
+request_callbacks['textDocument/documentHighlight'][1]({ [1] = { result = {} } })
+request_callbacks['textDocument/references'][1]({
+  [1] = {
+    err = { code = -32803, message = 'workspace unavailable' },
+  },
+})
+assert(
+  latest_title:match('references failed: workspace unavailable'),
+  'the primary LSP error was not exposed in the picker title'
 )
 
 package.loaded['telescope.actions'] = original_actions

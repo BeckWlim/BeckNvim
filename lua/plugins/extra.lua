@@ -39,12 +39,8 @@ return {
   {
     'nvim-treesitter/nvim-treesitter-context',
     dependencies = { 'nvim-treesitter/nvim-treesitter' },
-    opts = {
-      enable = true,
-      max_lines = 3,
-      multiline_threshold = 2,
-      mode = 'cursor',
-      trim_scope = 'outer',
-    },
+    config = function()
+      require('config.treesitter_context').setup()
+    end,
   },
 }

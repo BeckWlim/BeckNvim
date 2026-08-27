@@ -50,6 +50,7 @@ lua/
 │   ├── translation.lua           Translation UI, engine, proxy, and dictionary parsing
 │   ├── query_picker.lua          Immediate, incremental, cancellable query sessions
 │   ├── lsp_locations.lua         Semantic LSP location queries
+│   ├── treesitter_context.lua    Priority-aware pinned syntax context
 │   ├── type_hierarchy.lua        Recursive class hierarchy and implementation pickers
 │   ├── workspace_symbols.lua     Project-definition finder
 │   ├── python/                   Python environment and hierarchy indexing
@@ -78,6 +79,7 @@ prefix.
 | `<Space>r=` | Equalize window sizes |
 | `<Space>o` / `<Space>p` | Move backward/forward through the jump list |
 | `<Space>zz/zc/zo` | Toggle, close all, or open all folds |
+| `<Space>cc` | Jump to the nearest enclosing syntax context; repeat to move outward |
 
 ### Search
 
@@ -111,7 +113,21 @@ prefix.
 This picker owns project-definition search. LSP navigation remains assigned to `gd`, `gD`, `gr`,
 and `gI`.
 
-Telescope results support `<C-v>` for a vertical split and `<C-x>` for a horizontal split.
+Telescope results support `<C-v>` for a vertical split, `<C-x>` for a horizontal split, and
+`<C-q>` for immediately closing the picker from insert or normal mode.
+Grep previews, including `<Space>fg` and `<Space>fw`, pin the enclosing class/function hierarchy in
+their winbar, such as `Service › run`; conditional and loop blocks are intentionally omitted.
+LSP location previews use the same structural winbar, including reference results opened with `gr`.
+The winbar reuses the regular pinned-context background, bold foreground, muted hierarchy separator,
+and green lower boundary so preview and source-window context remain visually consistent.
+
+### Pinned Syntax Context
+
+The context window uses a six-line soft budget. Class, function, method, and comparable structural
+scopes always remain visible, as does the scope nearest the cursor. When those anchors and all
+intermediate block scopes do not fit, inner block scopes consume the remaining budget first and
+middle `if`, `with`, loop, or similar scopes may be omitted. Mandatory structural and nearest scopes
+may exceed the soft budget rather than disappear.
 
 ### LSP and Diagnostics
 
@@ -125,7 +141,7 @@ Telescope results support `<C-v>` for a vertical split and `<C-x>` for a horizon
 | `<Space>rn` | Rename a symbol |
 | `<Space>e` | Show diagnostic details |
 | `[d` / `]d` | Move to the previous/next diagnostic |
-| `<Space>q` | Open the diagnostic list |
+| `<Space>q` | Search diagnostics in the current file with Telescope |
 | `<Space>lp` | Toggle BasedPyright third-party dependency diagnostics |
 | `<Space>cd` | Find all direct and indirect derived classes under the cursor |
 | `<Space>cb` | Find all direct and indirect base classes under the cursor |

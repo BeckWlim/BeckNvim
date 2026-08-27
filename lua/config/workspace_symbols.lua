@@ -283,10 +283,11 @@ function M.commands(prompt, root)
     [=[\s*using\s+]=] .. simple_name_pattern .. [=[\s*=]=],
     [=[\s*typedef\b[^\r\n]*\b]=] .. simple_name_pattern .. [=[\s*;]=],
     [=[\s*#\s*define\s+]=] .. simple_name_pattern,
-    [=[\s*[\w_:<>,*&~]+(?:\s+[\w_:<>,*&~]+)+\s+]=]
+    [=[\s*(?=[\w:~]*::)]=] .. compound_name_pattern .. [=[\s*\(]=],
+    [=[\s*(?:[\w_:<>,*&~]+\s+)+]=]
       .. compound_name_pattern
       .. [=[\s*\(]=],
-    [=[\s*[\w_:<>,*&~]+(?:\s+[\w_:<>,*&~]+)+\s+]=]
+    [=[\s*(?:[\w_:<>,*&~]+\s+)+]=]
       .. simple_name_pattern
       .. [=[\s*(?:[=;\[])]=],
   }, '|')

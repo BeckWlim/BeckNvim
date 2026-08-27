@@ -35,13 +35,8 @@ function M.open_float()
   end
 end
 
-function M.toggle_list()
-  local loclist_winid = vim.fn.getloclist(0, { winid = 0 }).winid
-  if loclist_winid and loclist_winid ~= 0 then
-    vim.api.nvim_win_close(loclist_winid, true)
-    return
-  end
-  vim.diagnostic.setloclist({ open = true })
+function M.open_picker()
+  require('telescope.builtin').diagnostics({ bufnr = 0 })
 end
 
 function M.setup()

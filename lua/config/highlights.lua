@@ -25,6 +25,13 @@ local completion_kind_colors = {
   Reference = '#F8F8F2',
 }
 
+local context_colors = {
+  background = '#3A3D32',
+  border = '#A6E22E',
+  foreground = '#F8F8F2',
+  muted_foreground = '#A6A69C',
+}
+
 local function apply()
   vim.api.nvim_set_hl(0, 'Pmenu', { bg = '#232526', fg = '#DCDCDC' })
   vim.api.nvim_set_hl(0, 'PmenuSel', { bg = '#3A3D3F', fg = '#FFFFFF', bold = true })
@@ -34,17 +41,30 @@ local function apply()
   vim.api.nvim_set_hl(0, 'CmpItemAbbrMatchFuzzy', { fg = '#F92672' })
   vim.api.nvim_set_hl(0, 'CmpItemMenu', { fg = '#75715E' })
   vim.api.nvim_set_hl(0, 'TreesitterContext', {
-    bg = '#3A3D32',
-    fg = '#F8F8F2',
+    bg = context_colors.background,
+    fg = context_colors.foreground,
     bold = true,
   })
   vim.api.nvim_set_hl(0, 'TreesitterContextLineNumber', {
-    bg = '#3A3D32',
-    fg = '#A6A69C',
+    bg = context_colors.background,
+    fg = context_colors.muted_foreground,
   })
   vim.api.nvim_set_hl(0, 'TreesitterContextBottom', {
     underline = true,
-    sp = '#A6E22E',
+    sp = context_colors.border,
+  })
+  vim.api.nvim_set_hl(0, 'TreesitterContextPreview', {
+    bg = context_colors.background,
+    fg = context_colors.foreground,
+    bold = true,
+    underline = true,
+    sp = context_colors.border,
+  })
+  vim.api.nvim_set_hl(0, 'TreesitterContextPreviewSeparator', {
+    bg = context_colors.background,
+    fg = context_colors.muted_foreground,
+    underline = true,
+    sp = context_colors.border,
   })
 
   for kind, color in pairs(completion_kind_colors) do
