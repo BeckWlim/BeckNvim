@@ -120,3 +120,21 @@ assert(vim.api.nvim_win_get_cursor(0)[1] == 1, 'repeated context jump did not mo
 
 vim.treesitter.query.get = original_query_get
 vim.api.nvim_buf_delete(navigation_buffer, { force = true })
+
+local cpp_buffer = vim.api.nvim_create_buf(false, true)
+vim.bo[cpp_buffer].filetype = 'cpp'
+vim.api.nvim_buf_set_lines(cpp_buffer, 0, -1, false, {
+  'namespace project::detail {',
+  'template <typename T>',
+  'Result<T> Service<T>::run(const Input& input) const noexcept {',
+  '  return helper(input);',
+  '}',
+  '}',
+})
+
+local cpp_labels = treesitter_context.structural_context_labels(cpp_buffer, 3, 9)
+assert(
+  vim.deep_equal(cpp_labels, { 'project::detail', 'Service<T>::run' }),
+  'C++ structural labels did not reduce a qualified definition to its readable declarator'
+)
+vim.api.nvim_buf_delete(cpp_buffer, { force = true })

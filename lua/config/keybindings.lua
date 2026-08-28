@@ -45,6 +45,7 @@ function M.setup()
   end, 'Go to referenced file (horizontal split)')
 
   map('<F3>', '<cmd>NvimTreeToggle<CR>', 'Toggle file tree')
+  map('<Space>h', require('config.dashboard').open, 'Open dashboard')
   map('<Space>mp', '<cmd>RenderMarkdown toggle<CR>', 'Toggle markdown preview')
   map('<Space>t', require('config.translation').open, 'Open translation query')
 
@@ -80,6 +81,7 @@ function M.setup()
   map('gd', lsp_locations.definitions, 'Find definitions')
   map('gD', lsp_locations.declarations, 'Find declarations')
   map('K', vim.lsp.buf.hover, 'Show hover documentation')
+  map('<Space>k', require('config.type_information').toggle, 'Toggle type information')
   map(
     '<Space>lp',
     require('config.lsp').toggle_third_party_checks,

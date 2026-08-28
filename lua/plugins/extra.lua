@@ -10,10 +10,17 @@ return {
     event = 'VimEnter',
     dependencies = { 'nvim-tree/nvim-web-devicons' },
     opts = {
+      on_attach = require('config.filetree').on_attach,
       sort = { sorter = 'case_sensitive' },
       view = { width = 30 },
       renderer = { group_empty = true },
       filters = { dotfiles = true },
+      actions = {
+        change_dir = {
+          enable = true,
+          global = false,
+        },
+      },
     },
   },
   {
@@ -22,6 +29,9 @@ return {
       open_mapping = [[<C-t>]],
       start_in_insert = true,
       direction = 'horizontal',
+      on_open = function(terminal)
+        require('config.terminal').setup_buffer(terminal.bufnr)
+      end,
     },
   },
   {
@@ -41,6 +51,7 @@ return {
     dependencies = { 'nvim-treesitter/nvim-treesitter' },
     config = function()
       require('config.treesitter_context').setup()
+      require('config.syntax_visuals').setup_scopes()
     end,
   },
 }

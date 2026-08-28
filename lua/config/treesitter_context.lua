@@ -159,14 +159,48 @@ local function context_start(query, context_node, source_buffer)
   end
 end
 
+local function compact_node_text(source_buffer, syntax_node)
+  local node_text = vim.treesitter.get_node_text(syntax_node, source_buffer)
+  if type(node_text) ~= 'string' then
+    return ''
+  end
+  local single_line_text = vim.trim(node_text):gsub('%s+', ' ')
+  local compact_text = single_line_text:gsub('%s*::%s*', '::')
+  return compact_text
+end
+
+local function declarator_label(source_buffer, structural_node)
+  local declarator_nodes = structural_node:field('declarator')
+  local declarator_node = declarator_nodes[1]
+  if not declarator_node then
+    return ''
+  end
+
+  local name_node = declarator_node
+  while name_node do
+    local nested_declarator_nodes = name_node:field('declarator')
+    local nested_declarator_node = nested_declarator_nodes[1]
+    if not nested_declarator_node then
+      break
+    end
+    name_node = nested_declarator_node
+  end
+  return compact_node_text(source_buffer, name_node)
+end
+
 local function structural_node_label(source_buffer, structural_node)
   local name_nodes = structural_node:field('name')
   local name_node = name_nodes[1]
   if name_node then
-    local node_name = vim.treesitter.get_node_text(name_node, source_buffer)
-    if type(node_name) == 'string' and node_name ~= '' then
+    local node_name = compact_node_text(source_buffer, name_node)
+    if node_name ~= '' then
       return node_name
     end
+  end
+
+  local declaration_name = declarator_label(source_buffer, structural_node)
+  if declaration_name ~= '' then
+    return declaration_name
   end
 
   local node_start_row = structural_node:range()

@@ -13,6 +13,10 @@ lua/
 │   ├── keybindings.lua           Global keymap assembly
 │   ├── query_picker.lua          Immediate, incremental, cancellable query sessions
 │   ├── lsp_locations.lua         Reference and location query orchestration
+│   ├── detail_window.lua         Shared focused detail-window interactions
+│   ├── type_information.lua      Combined inferred-type and type-definition float
+│   ├── terminal.lua              ToggleTerm-local terminal-mode navigation
+│   ├── filetree.lua              Nvim-tree-local mapping policy
 │   ├── grep_preview.lua          Structural context for Telescope grep previews
 │   ├── treesitter_context.lua    Priority-aware pinned syntax context
 │   ├── type_hierarchy.lua        Recursive LSP class and implementation pickers
@@ -26,10 +30,16 @@ lua/
 
 | Module | Responsibility |
 | --- | --- |
-| `config/project.lua` | Project roots, path containment, and project markers |
+| `config/project.lua` | Project-root authority, path containment, markers, and cached Git-host detection |
+| `config/statusline.lua` | Explicit project identity and project-relative current-file state |
+| `config/dashboard.lua` | Bounded project drawer, project-relative MRU state, and dashboard actions |
 | `config/workspace_symbols.lua` | Project-wide definition search and Telescope result entries |
 | `config/query_picker.lua` | Empty-first Telescope lifecycle, incremental refresh, status, and cancellation |
 | `config/lsp_locations.lua` | Cancellable LSP definition, declaration, reference, type, and implementation queries |
+| `config/detail_window.lua` | Shared focus, same-key close, and copy behavior for detail windows |
+| `config/type_information.lua` | Toggleable hover inference and type-definition preview for LSP languages |
+| `config/terminal.lua` | ToggleTerm-local escape from terminal input to scrollable Normal mode |
+| `config/filetree.lua` | Nvim-tree mappings, window-switching Tab preservation, and project-boundary confirmation |
 | `config/grep_preview.lua` | Telescope grep/LSP location preview loading, highlighting, and structural winbar context |
 | `config/treesitter_context.lua` | Structural and nearest-scope retention within the pinned-context budget |
 | `config/type_hierarchy.lua` | Recursive LSP type hierarchy and class-qualified method implementations |
@@ -72,6 +82,14 @@ For Python function-local identifiers, `gr` seeds the picker from the enclosing 
 then replaces those provisional candidates with the first successful document-highlight or complete
 project reference response.
 
+`config.type_information` is deliberately outside that search path. `<Space>k` opens one focused
+plain-text detail float, requests hover inference and type-definition locations in parallel, and
+renders the responses in place. It never creates a Telescope candidate list. Definition rows and
+their source previews support direct `<CR>` jumps. `config.detail_window` gives both this float and
+the diagnostic detail float the same focus, wrapping, continuation marker, same-key close, `q`
+close, and `y` copy behavior. Cursor-line selection is enabled for the navigable type-definition
+list but omitted for diagnostic details, whose quick buttons render in a muted content line.
+
 ## Type Hierarchy and Implementations
 
 `config.type_hierarchy` owns three semantic navigation workflows:
@@ -102,9 +120,17 @@ Place plugin declarations in `plugins/` and feature behavior in a responsibility
 module. Extend project-definition support by adding the file globs, definition pattern, parser, and
 focused fixture to `config.workspace_symbols` and `tests/workspace_symbols.lua`.
 
-Project-root markers belong to `config/project.lua`. Language-specific server markers remain with
-their server configuration in `config/lsp.lua`. Mason installation coverage is maintained in the
-same LSP module.
+Project-root authority belongs to `config/project.lua`. Git repository roots outrank attached LSP
+roots; LSP roots outrank `.venv`, language manifest, and build-file fallbacks. Consumers must use
+this shared policy instead of maintaining their own marker order. Language-server startup markers
+remain with `config/lsp.lua`. Mason installation coverage is maintained in the same LSP module.
+
+`dashboard-nvim` remains responsible for the homepage buffer lifecycle. The local
+`dashboard.theme.project` module delegates its compact rendering and navigation to
+`config.dashboard`; recent files come from `vim.v.oldfiles`, are grouped through the shared project
+authority policy, and are capped before rendering. Activating a project updates the dashboard
+window's local working directory and context in place; it does not create an empty file buffer or
+open the file tree.
 
 Project audits share project context through `config.project`; each audit module owns its own task
 or diagnostic state.

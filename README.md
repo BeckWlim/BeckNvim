@@ -2,7 +2,9 @@
 
 A personal Neovim configuration for daily development. Plugin management uses
 [lazy.nvim](https://github.com/folke/lazy.nvim), with completion, LSP, fuzzy search, Git tools,
-terminals, a file tree, and Markdown rendering included.
+terminals, a file tree, Markdown rendering, rainbow delimiters, and a subtle current-scope background
+included. Within that grey code domain, the cursor line uses a stronger grey highlight for clear focus;
+scopes larger than 120 lines are left unshaded to avoid overwhelming the file.
 
 ## Requirements
 
@@ -46,6 +48,7 @@ lua/
 ├── config/                       Reusable, testable feature modules
 │   ├── init.lua                  Configuration assembly order
 │   ├── project.lua               Shared project-root and path boundary logic
+│   ├── dashboard.lua             Recent-project and recent-file start page
 │   ├── keybindings.lua           Global keymap assembly
 │   ├── translation.lua           Translation UI, engine, proxy, and dictionary parsing
 │   ├── query_picker.lua          Immediate, incremental, cancellable query sessions
@@ -78,6 +81,7 @@ prefix.
 | `<Space>ri/rk/rj/rl` | Increase/decrease height or width |
 | `<Space>r=` | Equalize window sizes |
 | `<Space>o` / `<Space>p` | Move backward/forward through the jump list |
+| `<Space>h` | Return to the dashboard for recent projects or files |
 | `<Space>zz/zc/zo` | Toggle, close all, or open all folds |
 | `<Space>cc` | Jump to the nearest enclosing syntax context; repeat to move outward |
 
@@ -95,6 +99,36 @@ prefix.
 | `<Space>fk` | Search keymaps |
 | `<Space>fs` | Search symbols in the current file |
 | `<Space>fw` | Search definitions across the project |
+
+### Project Root Policy
+
+Project roots use one shared authority order across the statusline, searches, audits, and file
+tree:
+
+1. The nearest ancestor containing `.git` is authoritative.
+2. Outside Git repositories, the most specific attached LSP root is used for an open buffer.
+3. Without either, the nearest workspace marker is used: `.venv`, Pyright configuration,
+   language manifests, or build-system files.
+4. The current working directory is the final fallback.
+
+The statusline renders a GitHub, GitLab, Bitbucket, generic Git, or workspace icon followed by the
+root name and project-relative file path. In nvim-tree,
+`<C-[>` moves the tree root out and `<C-]>` moves it into the selected node. Changes within the
+same detected project proceed immediately; crossing a project boundary asks for confirmation.
+
+`<Space>h` opens a compact project theme hosted by dashboard-nvim. A larger terminal Neovim mark and
+fixed `PROJECT DECK` title use a stable upper-page anchor, while the horizontal drawer of up to five
+recent projects extends the visual weight toward the center. The launch-directory project occupies the
+leftmost position, and project positions then remain fixed; `h/l` only moves the selection. The active project's ten
+most recent files appear below using project-relative paths, and `j/k` selects a file. The project
+containing Neovim's launch directory starts selected at the left of the drawer. `<Enter>`
+opens the selected file, or activates the selected project in the same homepage when the drawer is
+focused; project activation does not open or focus the file tree. The active project and its stable
+project-root path appear in a compact two-line footer with provider and folder icons, regardless of
+which project file opened the homepage. The project rows and key prompt share a fixed bottom anchor
+with two rows of breathing room. `q` closes the dashboard.
+The colors, restrained separators, selection background, and
+muted key hint reuse the same visual language as the diagnostic and type-information dialogs.
 
 #### Project Definition Search
 
@@ -136,6 +170,7 @@ may exceed the soft budget rather than disappear.
 | `gd` / `gD` | Find definitions/declarations |
 | `gr` / `gI` | Find references/implementations |
 | `K` | Show hover documentation |
+| `<Space>k` | Toggle inferred type and type-definition window |
 | `<Space>i` | Find implementations |
 | `<Space>D` | Find type definitions |
 | `<Space>rn` | Rename a symbol |
@@ -146,6 +181,21 @@ may exceed the soft budget rather than disappear.
 | `<Space>cd` | Find all direct and indirect derived classes under the cursor |
 | `<Space>cb` | Find all direct and indirect base classes under the cursor |
 | `<Space>ci` | Find concrete implementations of the class or method under the cursor |
+
+`<Space>k` is a plain-text detail view rather than a search picker. It focuses one floating window
+and fills it asynchronously with the current symbol's LSP hover inference plus type-definition
+locations and source lines. Treesitter colors only fenced hover signatures and definition source
+previews using the source buffer's language; styled headings, numbered paths, muted controls, a
+cursor line, and word-aware hanging wraps keep the surrounding UI readable.
+Press `<CR>` on a definition or its preview to jump there; with one definition, `<CR>` works anywhere
+in the window. Press `<Space>k` or `q` to close it and `y` to copy its contents. Python uses
+BasedPyright and C/C++ uses clangd through the same language-neutral requests; `<Space>D` remains the
+separate Telescope workflow for searching type-definition results.
+
+`<Space>e` uses the same focused detail-dialog layout, word wrapping, continuation marker, same-key
+close, and copy behavior while preserving Neovim's diagnostic severity, source, code, and
+related-information highlights. It omits the list-only cursor-line background and places its quick
+buttons in a muted content line because a diagnostic detail normally contains one item.
 
 #### Cancellable LSP Queries
 
@@ -199,6 +249,15 @@ modules in the current window, a vertical split, or a horizontal split.
 | `<Space>dvh` | Show history for the current file |
 | `<Space>dvc` | Close Diffview |
 | `gcc` / `gc` | Comment the current line or selection |
+
+Inside the file tree, `<Tab>` keeps the global next-window behavior instead of opening a folder or
+preview. `<CR>` opens regular files and directories but ignores the `..` parent entry; use `<C-[>`
+to move the tree root out to its parent and `<C-]>` to move the root into the selected directory.
+`<S-Tab>` continues to select the previous window.
+
+The `<C-t>` terminal starts in terminal-input mode. Press `<Esc>` to return to Normal mode, where
+regular scrolling and motions can inspect earlier output; press `v` to select terminal text, or
+`i`/`a` to resume terminal input. This mapping is local to ToggleTerm buffers.
 
 #### Translation Configuration
 

@@ -4,7 +4,7 @@ vim.opt.scrolloff = 8
 vim.opt.sidescrolloff = 8
 vim.opt.number = true
 vim.opt.cursorline = true
-vim.opt.signcolumn = "yes"
+vim.opt.signcolumn = "auto"
 vim.opt.colorcolumn = "160"
 
 vim.opt.expandtab = true

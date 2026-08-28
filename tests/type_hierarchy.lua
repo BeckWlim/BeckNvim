@@ -1,9 +1,17 @@
 local hierarchy = require('config.type_hierarchy')
 local python_hierarchy_index = require('config.python.hierarchy_index')
+local project = require('config.project')
 
 local fixture_root = vim.fs.normalize(
   vim.fs.joinpath(vim.fn.getcwd(), 'tests', 'fixtures', 'type_hierarchy_project')
 )
+local original_detect_repository = project.detect_repository
+rawset(project, 'detect_repository', function(path)
+  if project.contains(fixture_root, path) then
+    return fixture_root
+  end
+  return original_detect_repository(path)
+end)
 local fixture_filename = vim.fs.joinpath(fixture_root, 'models.py')
 local fixture_uri = vim.uri_from_fname(fixture_filename)
 local original_buffer = vim.api.nvim_get_current_buf()
@@ -317,6 +325,7 @@ package.loaded['telescope.pickers'] = original_pickers
 package.loaded['telescope.finders'] = original_finders
 package.loaded['telescope.config'] = original_telescope_config
 package.loaded['telescope.actions'] = original_actions
+rawset(project, 'detect_repository', original_detect_repository)
 vim.api.nvim_set_current_buf(original_buffer)
 vim.api.nvim_buf_delete(fixture_buffer, { force = true })
 vim.api.nvim_buf_delete(derived_model_buffer, { force = true })

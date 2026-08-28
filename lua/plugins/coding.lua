@@ -5,6 +5,14 @@ return {
     build = { ':TSUpdate', ':TSInstall python' },
   },
   {
+    'HiPhish/rainbow-delimiters.nvim',
+    dependencies = { 'nvim-treesitter/nvim-treesitter' },
+    submodules = false,
+    config = function()
+      require('config.syntax_visuals').setup_rainbow()
+    end,
+  },
+  {
     'nvim-telescope/telescope.nvim',
     branch = 'master',
     dependencies = {
