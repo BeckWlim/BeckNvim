@@ -3,6 +3,9 @@ return {
     'nvim-treesitter/nvim-treesitter',
     lazy = false,
     build = { ':TSUpdate', ':TSInstall python' },
+    config = function()
+      require('config.syntax.treesitter').setup()
+    end,
   },
   {
     'HiPhish/rainbow-delimiters.nvim',

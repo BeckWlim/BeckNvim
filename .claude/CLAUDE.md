@@ -11,8 +11,9 @@ newer is required.
   options, autocmds, plugin bootstrap, keymaps), `ui/` (dashboard, statusline, file tree,
   terminal), `search/` (Telescope wiring, query pickers, workspace symbols, LSP locations,
   grep previews, file navigation), `lsp/` (language-server behavior, completion, type
-  information, diagnostics, detail windows), and `syntax/` (Treesitter context, scope visuals,
-  highlights, folds). Feature families with their own lifecycle live in dedicated directories:
+  information, diagnostics, detail windows), and `syntax/` (Treesitter parser bootstrap, context,
+  scope visuals, highlights, folds). Feature families with their own lifecycle live in dedicated
+  directories:
   `python/`, `audit/`, `translation/`, `type_hierarchy/`.
 - `lua/plugins/*.lua` contains plugin specifications, dependencies, loading conditions, and
   lightweight setup calls.

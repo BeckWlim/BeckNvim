@@ -14,6 +14,11 @@ scopes larger than 120 lines are left unshaded to avoid overwhelming the file.
 - `curl` for the translation component
 - [ripgrep](https://github.com/BurntSushi/ripgrep) for full-text and project-definition search
 - `make` and a C compiler for `telescope-fzf-native.nvim`
+- The [tree-sitter CLI](https://github.com/tree-sitter/tree-sitter/blob/master/crates/cli/README.md)
+  (`npm install -g tree-sitter-cli`): the `main` branch of nvim-treesitter builds parsers through
+  it. Without it, parser installation fails silently and the sticky scope header, grep-preview
+  breadcrumbs, Treesitter highlighting, and folding stop rendering. The config installs the Python
+  and C++ parsers automatically on startup once the CLI is available.
 - A Nerd Font for the complete icon set; the GUI defaults to Hack Nerd Font
 
 Mason installs the configured language servers on demand. The current setup covers Bash,
@@ -31,7 +36,8 @@ sudo apt install git curl wget unzip ripgrep make gcc python3 nodejs npm cmake n
 
 - `make` and `gcc` compile `telescope-fzf-native.nvim` and the Treesitter parsers.
 - `unzip`, `wget`, and `curl` let Mason download and extract the language servers.
-- `nodejs` and `npm` are needed by Mason to install the BasedPyright Python language server.
+- `nodejs` and `npm` are needed by Mason to install the BasedPyright Python language server, and
+  by `npm install -g tree-sitter-cli`, which nvim-treesitter needs to build its parsers.
 - `cmake` and `ninja-build` power `cmake-tools.nvim` for C/C++ builds.
 - `xclip` (X11) or `wl-clipboard` (Wayland) provides the system clipboard used by `unnamedplus`;
   install the one matching your display server.
