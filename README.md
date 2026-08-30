@@ -19,6 +19,24 @@ scopes larger than 120 lines are left unshaded to avoid overwhelming the file.
 Mason installs the configured language servers on demand. The current setup covers Bash,
 C/C++, Lua, Markdown, Python, and Vim script.
 
+### Linux packages
+
+Ubuntu 24.04 ships an older Neovim in its default repositories, so install Neovim 0.11 or
+newer from the [official PPA](https://github.com/neovim/neovim/blob/master/INSTALL.md#ubuntu) or a
+standalone tarball. The remaining runtime dependencies install with:
+
+```bash
+sudo apt install git curl wget unzip ripgrep make gcc python3 nodejs npm cmake ninja-build
+```
+
+- `make` and `gcc` compile `telescope-fzf-native.nvim` and the Treesitter parsers.
+- `unzip`, `wget`, and `curl` let Mason download and extract the language servers.
+- `nodejs` and `npm` are needed by Mason to install the BasedPyright Python language server.
+- `cmake` and `ninja-build` power `cmake-tools.nvim` for C/C++ builds.
+- `xclip` (X11) or `wl-clipboard` (Wayland) provides the system clipboard used by `unnamedplus`;
+  install the one matching your display server.
+- A [Nerd Font](https://www.nerdfonts.com/) such as Hack Nerd Font supplies the complete icon set.
+
 ## Installation
 
 Back up the existing configuration, clone this repository, and start Neovim:
@@ -261,24 +279,20 @@ regular scrolling and motions can inspect earlier output; press `v` to select te
 
 #### Translation Configuration
 
-The translation defaults are configured in `lua/config/translation.lua`. Its
-`proxy_environment` table is the single place to change the default proxy addresses:
+The translation defaults are configured in `lua/config/translation.lua`. The proxy is resolved at
+query time by `resolve_proxy()` instead of a fixed address: proxy variables already exported into
+Neovim's environment (`http_proxy` / `https_proxy` / `ALL_PROXY`, upper or lower case) are used
+as-is, and when none are present requests go direct with no proxy.
 
-```lua
-proxy_environment = {
-  http_proxy = 'http://172.25.160.1:7890',
-  https_proxy = 'http://172.25.160.1:7890',
-  ALL_PROXY = 'socks5://172.25.160.1:7890',
-}
-```
-
-Each translation and dictionary subprocess explicitly receives these variables, so running a
-separate `proxy_on` shell function is unnecessary. Translation requests go directly to the
-[MyMemory REST API](https://mymemory.translated.net/doc/spec.php); the former smart-translate Bing
-adapter was removed because it also depended on a shared `script.google.com` Apps Script. Network
-errors and timeouts are captured and rendered inside the query window, never echoed into Neovim's
-command line. The same module owns the 500-byte backend limit, query window, debounce delay,
-translation candidates, and Youdao dictionary details.
+The active provider and proxy are shown in a status line at the top of the query window (for
+example `MyMemory · proxy 127.0.0.1:7890`, or `MyMemory · no proxy`). Two providers are supported:
+[MyMemory](https://mymemory.translated.net/doc/spec.php) (the default) and Google. Press `<C-p>` in
+either insert or normal mode to switch between them; the current input is re-translated immediately.
+Each translation and dictionary subprocess receives the resolved variables explicitly, so running a
+separate `proxy_on` shell function is unnecessary. Network errors and timeouts are captured and
+rendered inside the query window, never echoed into Neovim's command line. The same module owns the
+500-byte backend limit, query window, debounce delay, translation candidates, and Youdao dictionary
+details.
 
 ## Customization
 

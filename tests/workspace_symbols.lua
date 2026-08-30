@@ -90,6 +90,7 @@ local original_entry_display = package.loaded['telescope.pickers.entry_display']
 local original_make_entry = package.loaded['telescope.make_entry']
 local original_plenary_job = package.loaded['plenary.job']
 local picker_finder
+local picker_spec
 local picker_opened = false
 local fake_jobs = {}
 local FakeJob = {}
@@ -113,6 +114,7 @@ end)
 package.loaded['telescope.pickers'] = {
   new = function(_, spec)
     picker_finder = spec.finder
+    picker_spec = spec
     return {
       find = function()
         picker_opened = true
@@ -147,6 +149,15 @@ package.loaded['telescope.make_entry'] = {
 }
 
 symbols.open()
+
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'local indexed_target = 1' })
+vim.api.nvim_win_set_cursor(0, { 1, 8 })
+symbols.open_for_cursor()
+assert(
+  picker_spec.default_text == 'indexed_target',
+  'Cursor-word definition search did not seed the cursor word'
+)
+vim.api.nvim_buf_set_lines(0, 0, -1, false, {})
 
 rawset(vim.lsp, 'get_clients', original_get_clients)
 package.loaded['telescope.pickers'] = original_pickers

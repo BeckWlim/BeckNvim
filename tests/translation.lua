@@ -3,25 +3,76 @@ assert(
   translation.endpoint == 'https://api.mymemory.translated.net/get',
   'translation must avoid the plugin shared Apps Script endpoint'
 )
+
 assert(
-  translation.proxy_environment.http_proxy == 'http://172.25.160.1:7890'
-    and translation.proxy_environment.https_proxy == 'http://172.25.160.1:7890'
-    and translation.proxy_environment.ALL_PROXY == 'socks5://172.25.160.1:7890',
-  'translation proxy environment is incomplete'
+  translation.next_provider('mymemory') == 'google'
+    and translation.next_provider('google') == 'mymemory',
+  'provider cycling is wrong'
 )
+assert(
+  translation.next_provider('unknown') == 'mymemory',
+  'an unknown provider must fall back to the first provider'
+)
+
+assert(
+  translation.google_translation_candidates({
+    { { 'good', nil }, { ' morning', nil } },
+    nil,
+    'zh-CN',
+  })[1] == 'good morning',
+  'Google translation candidates were not joined'
+)
+assert(
+  #translation.google_translation_candidates({}) == 0,
+  'an empty Google response must produce no candidates'
+)
+
+assert(
+  translation.provider_status_line('mymemory', '127.0.0.1:7890')
+    == 'MyMemory · proxy 127.0.0.1:7890',
+  'provider status line does not render provider and proxy'
+)
+assert(
+  translation.provider_status_line('mymemory', nil) == 'MyMemory · no proxy',
+  'provider status line does not render a direct connection'
+)
+
+assert(
+  translation.proxy_from_env({ http_proxy = 'http://10.0.0.1:8080' }).http_proxy
+    == 'http://10.0.0.1:8080',
+  'lowercase proxy variable was not detected'
+)
+assert(
+  translation.proxy_from_env({ HTTPS_PROXY = 'https://10.0.0.1:8080' }).https_proxy
+    == 'https://10.0.0.1:8080',
+  'uppercase proxy variable was not detected'
+)
+assert(
+  translation.proxy_from_env({}) == nil,
+  'absent proxy variables must resolve to nil'
+)
+
 local previous_http_proxy = vim.env.http_proxy
 local previous_https_proxy = vim.env.https_proxy
 local previous_all_proxy = vim.env.ALL_PROXY
-translation.enable_proxy()
+vim.env.http_proxy = 'http://127.0.0.1:9999'
+vim.env.https_proxy = 'http://127.0.0.1:9999'
+vim.env.ALL_PROXY = 'socks5://127.0.0.1:9999'
+
+local resolved_proxy, resolved_label = translation.resolve_proxy()
 assert(
-  vim.env.http_proxy == translation.proxy_environment.http_proxy
-    and vim.env.https_proxy == translation.proxy_environment.https_proxy
-    and vim.env.ALL_PROXY == translation.proxy_environment.ALL_PROXY,
-  'translation proxy environment was not applied'
+  resolved_proxy.http_proxy == 'http://127.0.0.1:9999'
+    and resolved_proxy.https_proxy == 'http://127.0.0.1:9999'
+    and resolved_proxy.ALL_PROXY == 'socks5://127.0.0.1:9999',
+  'resolve_proxy did not prefer exported environment variables'
 )
-vim.env.http_proxy = previous_http_proxy
-vim.env.https_proxy = previous_https_proxy
-vim.env.ALL_PROXY = previous_all_proxy
+assert(resolved_label == '127.0.0.1:9999', 'resolve_proxy label is wrong')
+
+local function proxy_env_matches(actual, expected)
+  return (actual.http_proxy or nil) == (expected.http_proxy or nil)
+    and (actual.https_proxy or nil) == (expected.https_proxy or nil)
+    and (actual.ALL_PROXY or nil) == (expected.ALL_PROXY or nil)
+end
 
 assert(translation.target_for('hello world') == 'zh-CN', 'English target is not Chinese')
 assert(translation.target_for('你好，world') == 'en', 'Chinese target is not English')
@@ -221,6 +272,22 @@ assert(
   vim.fn.maparg('<C-q>', 'i', false, true).desc == 'Close translation query',
   'translation query insert-mode close mapping is missing'
 )
+assert(
+  vim.fn.maparg('<C-p>', 'n', false, true).desc == 'Switch translation provider',
+  'translation query provider-switch mapping is missing'
+)
+assert(
+  vim.fn.maparg('<C-p>', 'i', false, true).desc == 'Switch translation provider',
+  'translation query insert-mode provider-switch mapping is missing'
+)
+assert(
+  rendered_text(query_bufnr):find('MyMemory', 1, true) ~= nil,
+  'translation status line does not note the active provider'
+)
+assert(
+  rendered_text(query_bufnr):find('proxy 127.0.0.1:9999', 1, true) ~= nil,
+  'translation status line does not render the active proxy'
+)
 
 vim.api.nvim_buf_set_lines(query_bufnr, 0, -1, false, { '--literal | value' })
 vim.api.nvim_exec_autocmds('TextChangedI', { buffer = query_bufnr })
@@ -237,8 +304,8 @@ assert(
   'translation query did not preserve arbitrary input'
 )
 assert(
-  first_translation_request.options.env == translation.proxy_environment,
-  'translation request did not receive the configured proxy environment'
+  proxy_env_matches(first_translation_request.options.env, resolved_proxy),
+  'translation request did not receive the detected proxy environment'
 )
 assert(
   not vim.tbl_contains(first_translation_request.command, 'script.google.com'),
@@ -307,3 +374,6 @@ assert(
   'closing the translation query preserved Insert mode'
 )
 vim.system = original_system
+vim.env.http_proxy = previous_http_proxy
+vim.env.https_proxy = previous_https_proxy
+vim.env.ALL_PROXY = previous_all_proxy

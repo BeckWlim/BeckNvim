@@ -482,7 +482,8 @@ function M.is_ready()
   return ready
 end
 
-function M.open()
+function M.open(opts)
+  opts = opts or {}
   if not ready then
     vim.notify('Project definition search is loading; retry shortly', vim.log.levels.INFO)
     return
@@ -491,16 +492,22 @@ function M.open()
   local root = project.for_buffer(vim.api.nvim_get_current_buf())
   local pickers = require('telescope.pickers')
   local telescope_config = require('telescope.config').values
-  local opts = { cwd = root }
+  local picker_opts = { cwd = root }
 
-  pickers.new(opts, {
+  pickers.new(picker_opts, {
     prompt_title = 'Project Definitions (type 2+ characters)',
-    finder = multi_job_finder(root, symbol_entry_maker(root, opts)),
-    previewer = telescope_config.grep_previewer(opts),
-    sorter = telescope_config.generic_sorter(opts),
+    finder = multi_job_finder(root, symbol_entry_maker(root, picker_opts)),
+    previewer = telescope_config.grep_previewer(picker_opts),
+    sorter = telescope_config.generic_sorter(picker_opts),
+    default_text = opts.default_text,
     push_cursor_on_edit = true,
     push_tagstack_on_edit = true,
   }):find()
+end
+
+function M.open_for_cursor()
+  local cursor_word = vim.fn.expand('<cword>')
+  M.open({ default_text = cursor_word ~= '' and cursor_word or nil })
 end
 
 return M

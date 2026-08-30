@@ -53,6 +53,7 @@ package.loaded['config.type_hierarchy'] = {
 }
 package.loaded['config.workspace_symbols'] = {
   open = function() end,
+  open_for_cursor = function() end,
   setup = function() end,
 }
 package.loaded['config.telescope'] = nil

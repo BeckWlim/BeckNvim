@@ -2,12 +2,43 @@ local M = {
   cold_time_ms = 700,
   endpoint = 'https://api.mymemory.translated.net/get',
   max_query_bytes = 500,
-  proxy_environment = {
-    http_proxy = 'http://172.25.160.1:7890',
-    https_proxy = 'http://172.25.160.1:7890',
-    ALL_PROXY = 'socks5://172.25.160.1:7890',
-  },
 }
+
+local function proxy_host_label(proxy_url)
+  if not proxy_url then
+    return nil
+  end
+  return proxy_url:gsub('^%a+://', ''):gsub('/+$', '')
+end
+
+-- Extract the proxy variables already exported into a process environment.
+-- Absent or empty values are omitted so the result is always a clean table
+-- suitable for merging into a subprocess environment.
+function M.proxy_from_env(env)
+  local proxy = {}
+  local http_proxy = env.http_proxy or env.HTTP_PROXY
+  local https_proxy = env.https_proxy or env.HTTPS_PROXY
+  local all_proxy = env.all_proxy or env.ALL_PROXY
+  if http_proxy then proxy.http_proxy = http_proxy end
+  if https_proxy then proxy.https_proxy = https_proxy end
+  if all_proxy then proxy.ALL_PROXY = all_proxy end
+  if next(proxy) == nil then
+    return nil
+  end
+  return proxy
+end
+
+-- Resolve the proxy environment for outbound requests from the proxy variables
+-- already exported into Neovim's environment. When none are present the
+-- connection goes direct (no proxy). Returns the environment table to merge and
+-- a short `host:port` label for display.
+function M.resolve_proxy()
+  local proxy = M.proxy_from_env(vim.env)
+  if not proxy then
+    return {}, nil
+  end
+  return proxy, proxy_host_label(proxy.https_proxy or proxy.http_proxy or proxy.ALL_PROXY)
+end
 
 local chinese_pattern = vim.regex([=[[\u4e00-\u9fff]]=])
 local result_namespace = vim.api.nvim_create_namespace('translation_query_result')
@@ -135,6 +166,122 @@ local function append_translation_groups(detail_lines, translation_groups)
   end
 end
 
+local function curl_base()
+  return {
+    'curl',
+    '--silent',
+    '--show-error',
+    '--fail',
+    '--connect-timeout',
+    '5',
+    '--max-time',
+    '15',
+    '--retry',
+    '2',
+    '--retry-all-errors',
+    '--retry-max-time',
+    '15',
+  }
+end
+
+local providers = {
+  mymemory = {
+    name = 'MyMemory',
+    build = function(source_language, target_language, text)
+      local command = curl_base()
+      vim.list_extend(command, {
+        '--get',
+        'https://api.mymemory.translated.net/get',
+        '--data-urlencode',
+        'q=' .. text,
+        '--data-urlencode',
+        'langpair=' .. source_language .. '|' .. target_language,
+      })
+      return command
+    end,
+    parse = function(response_document)
+      if type(response_document) ~= 'table' then
+        return {}
+      end
+
+      local candidate_lines = {}
+      local primary_translation = nested_value(
+        response_document,
+        { 'responseData', 'translatedText' },
+        1
+      )
+      append_detail(candidate_lines, primary_translation)
+
+      if type(response_document.matches) == 'table' then
+        for _, match_document in ipairs(response_document.matches) do
+          if type(match_document) == 'table' then
+            append_detail(candidate_lines, match_document.translation)
+          end
+        end
+      end
+      return candidate_lines
+    end,
+  },
+  google = {
+    name = 'Google',
+    build = function(_source_language, target_language, text)
+      local command = curl_base()
+      vim.list_extend(command, {
+        '--get',
+        'https://translate.googleapis.com/translate_a/single',
+        '--data-urlencode',
+        'client=gtx',
+        '--data-urlencode',
+        'sl=auto',
+        '--data-urlencode',
+        'tl=' .. target_language,
+        '--data-urlencode',
+        'dt=t',
+        '--data-urlencode',
+        'q=' .. text,
+      })
+      return command
+    end,
+    parse = function(response_document)
+      if type(response_document) ~= 'table' or type(response_document[1]) ~= 'table' then
+        return {}
+      end
+
+      local parts = {}
+      for _, segment in ipairs(response_document[1]) do
+        if type(segment) == 'table' and type(segment[1]) == 'string' then
+          parts[#parts + 1] = segment[1]
+        end
+      end
+      if #parts == 0 then
+        return {}
+      end
+      return { table.concat(parts) }
+    end,
+  },
+}
+
+local default_provider = 'mymemory'
+local provider_order = { 'mymemory', 'google' }
+
+M.providers = providers
+M.provider_order = provider_order
+
+function M.next_provider(current_provider)
+  for index, provider_key in ipairs(provider_order) do
+    if provider_key == current_provider then
+      return provider_order[index % #provider_order + 1]
+    end
+  end
+  return provider_order[1]
+end
+
+function M.provider_status_line(provider_key, proxy_label)
+  local provider_name = providers[provider_key] and providers[provider_key].name or '?'
+  local proxy_status = proxy_label and ('proxy ' .. proxy_label) or 'no proxy'
+  return provider_name .. ' \194\183 ' .. proxy_status
+end
+
 function M.dictionary_lines(response_document)
   if type(response_document) ~= 'table' then
     return {}
@@ -209,26 +356,11 @@ function M.dictionary_lines(response_document)
 end
 
 function M.translation_candidates(response_document)
-  if type(response_document) ~= 'table' then
-    return {}
-  end
+  return providers.mymemory.parse(response_document)
+end
 
-  local candidate_lines = {}
-  local primary_translation = nested_value(
-    response_document,
-    { 'responseData', 'translatedText' },
-    1
-  )
-  append_detail(candidate_lines, primary_translation)
-
-  if type(response_document.matches) == 'table' then
-    for _, match_document in ipairs(response_document.matches) do
-      if type(match_document) == 'table' then
-        append_detail(candidate_lines, match_document.translation)
-      end
-    end
-  end
-  return candidate_lines
+function M.google_translation_candidates(response_document)
+  return providers.google.parse(response_document)
 end
 
 local function show_result(query_state, result_lines, highlight_group)
@@ -237,8 +369,10 @@ local function show_result(query_state, result_lines, highlight_group)
   end
 
   local separator_width = math.max(1, vim.api.nvim_win_get_width(query_state.winid) - 2)
+  local status_line = M.provider_status_line(query_state.provider, query_state.proxy_label)
   local virtual_lines = {
     { { string.rep('─', separator_width), 'FloatBorder' } },
+    { { ' ' .. status_line, 'Comment' } },
   }
   for _, result_line in ipairs(result_lines) do
     local display_line = result_line == '' and ' ' or result_line
@@ -257,10 +391,10 @@ end
 local function render_current_result(query_state)
   local rendered_lines = {}
   if query_state.translation_error then
-    table.insert(rendered_lines, '翻译失败')
+    table.insert(rendered_lines, 'Translation failed')
     table.insert(rendered_lines, query_state.translation_error)
   elseif query_state.translation_lines then
-    table.insert(rendered_lines, '翻译')
+    table.insert(rendered_lines, 'Translation')
     vim.list_extend(rendered_lines, query_state.translation_lines)
   else
     table.insert(rendered_lines, 'Translating…')
@@ -268,7 +402,7 @@ local function render_current_result(query_state)
 
   if query_state.dictionary_lines and #query_state.dictionary_lines > 0 then
     table.insert(rendered_lines, '')
-    table.insert(rendered_lines, '详细释义')
+    table.insert(rendered_lines, 'Dictionary')
     vim.list_extend(rendered_lines, query_state.dictionary_lines)
   end
   show_result(query_state, rendered_lines, 'NormalFloat')
@@ -302,7 +436,7 @@ local function request_dictionary(query_state, input_text, request_text)
   local request_started = pcall(function()
     dictionary_process = vim.system(dictionary_command, {
       text = true,
-      env = M.proxy_environment,
+      env = query_state.proxy_env,
     }, function(completed_process)
       vim.schedule(function()
         if not query_is_active(query_state)
@@ -340,7 +474,7 @@ end
 local function request_translation(query_state, input_text, request_text, target_language)
   local normalized_text = vim.trim(input_text)
   if #normalized_text > M.max_query_bytes then
-    query_state.translation_error = ('输入超过后端的 %d-byte 限制。'):format(
+    query_state.translation_error = ('Input exceeds the backend %d-byte limit.'):format(
       M.max_query_bytes
     )
     render_current_result(query_state)
@@ -348,33 +482,14 @@ local function request_translation(query_state, input_text, request_text, target
   end
 
   local source_language = target_language == 'en' and 'zh-CN' or 'en'
-  local translation_command = {
-    'curl',
-    '--silent',
-    '--show-error',
-    '--fail',
-    '--connect-timeout',
-    '5',
-    '--max-time',
-    '15',
-    '--retry',
-    '2',
-    '--retry-all-errors',
-    '--retry-max-time',
-    '15',
-    '--get',
-    M.endpoint,
-    '--data-urlencode',
-    'q=' .. normalized_text,
-    '--data-urlencode',
-    'langpair=' .. source_language .. '|' .. target_language,
-  }
+  local provider = M.providers[query_state.provider] or M.providers.mymemory
+  local translation_command = provider.build(source_language, target_language, normalized_text)
 
   local translation_process
   local request_started, start_error = pcall(function()
     translation_process = vim.system(translation_command, {
       text = true,
-      env = M.proxy_environment,
+      env = query_state.proxy_env,
     }, function(completed_process)
       vim.schedule(function()
         if not query_is_active(query_state)
@@ -393,7 +508,7 @@ local function request_translation(query_state, input_text, request_text, target
           completed_process.stdout
         )
         if not decode_succeeded or type(response_document) ~= 'table' then
-          query_state.translation_error = '翻译服务返回了无法解析的响应。'
+          query_state.translation_error = 'The translation service returned an unparsable response.'
           render_current_result(query_state)
           return
         end
@@ -401,15 +516,15 @@ local function request_translation(query_state, input_text, request_text, target
         local response_status = tonumber(response_document.responseStatus)
         if response_status and response_status ~= 200 then
           query_state.translation_error = tostring(
-            response_document.responseDetails or '翻译服务拒绝了请求。'
+            response_document.responseDetails or 'The translation service rejected the request.'
           )
           render_current_result(query_state)
           return
         end
 
-        local translation_lines = M.translation_candidates(response_document)
+        local translation_lines = provider.parse(response_document)
         if #translation_lines == 0 then
-          query_state.translation_error = '翻译服务没有返回候选表达。'
+          query_state.translation_error = 'The translation service returned no candidates.'
         else
           query_state.translation_lines = translation_lines
           query_state.translation_error = nil
@@ -435,7 +550,7 @@ function M.target_for(input_text)
 end
 
 function M.enable_proxy()
-  for environment_name, environment_value in pairs(M.proxy_environment) do
+  for environment_name, environment_value in pairs(M.resolve_proxy()) do
     vim.env[environment_name] = environment_value
   end
 end
@@ -462,6 +577,16 @@ function M.translate(input_text)
   return true
 end
 
+function M.switch_provider(query_state)
+  query_state.provider = M.next_provider(query_state.provider)
+  local input_text = query_text(query_state)
+  if vim.trim(input_text) == '' then
+    show_result(query_state, { 'Type Chinese or English, pause to auto-translate.' }, 'Comment')
+  else
+    M.translate(input_text)
+  end
+end
+
 local function schedule_translation(query_state)
   if not query_is_active(query_state) then
     return
@@ -475,7 +600,7 @@ local function schedule_translation(query_state)
   stop_requests(query_state)
   local input_text = query_text(query_state)
   if vim.trim(input_text) == '' then
-    show_result(query_state, { '输入中文或英文，停顿后自动翻译。' }, 'Comment')
+    show_result(query_state, { 'Type Chinese or English, pause to auto-translate.' }, 'Comment')
     return
   end
 
@@ -495,6 +620,7 @@ end
 function M.open()
   close_query()
 
+  local proxy_env, proxy_label = M.resolve_proxy()
   local width = math.max(50, math.min(88, math.floor(vim.o.columns * 0.72)))
   local height = math.max(10, math.min(16, math.floor((vim.o.lines - 2) * 0.55)))
   local query_bufnr = vim.api.nvim_create_buf(false, true)
@@ -509,9 +635,9 @@ function M.open()
     height = height,
     style = 'minimal',
     border = 'rounded',
-    title = ' Translate 中 ↔ EN ',
+    title = ' Translator ',
     title_pos = 'center',
-    footer = ' Auto: 700ms · Normal q / Insert Ctrl-Q: close ',
+    footer = ' Auto 700ms \194\183 Ctrl-P provider \194\183 q/Ctrl-Q close ',
     footer_pos = 'center',
   })
   vim.wo[query_winid].wrap = true
@@ -528,9 +654,12 @@ function M.open()
     dictionary_lines = nil,
     translation_process = nil,
     dictionary_process = nil,
+    proxy_env = proxy_env,
+    proxy_label = proxy_label,
+    provider = default_provider,
   }
   active_query_state = query_state
-  show_result(query_state, { '输入中文或英文，停顿后自动翻译。' }, 'Comment')
+  show_result(query_state, { 'Type Chinese or English, pause to auto-translate.' }, 'Comment')
 
   vim.keymap.set('n', 'q', close_query, {
     buffer = query_bufnr,
@@ -543,6 +672,22 @@ function M.open()
     nowait = true,
     silent = true,
     desc = 'Close translation query',
+  })
+  vim.keymap.set('n', '<C-p>', function()
+    M.switch_provider(query_state)
+  end, {
+    buffer = query_bufnr,
+    nowait = true,
+    silent = true,
+    desc = 'Switch translation provider',
+  })
+  vim.keymap.set('i', '<C-p>', function()
+    M.switch_provider(query_state)
+  end, {
+    buffer = query_bufnr,
+    nowait = true,
+    silent = true,
+    desc = 'Switch translation provider',
   })
 
   local change_group = vim.api.nvim_create_augroup(
