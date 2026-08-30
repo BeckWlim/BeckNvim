@@ -14,9 +14,11 @@ for _, test_file in ipairs({
   'tests/grep_preview.lua',
   'tests/diagnostics.lua',
   'tests/telescope.lua',
+  'tests/keybindings.lua',
   'tests/lsp_locations.lua',
   'tests/type_information.lua',
   'tests/translation.lua',
+  'tests/audit.lua',
   'tests/type_hierarchy.lua',
   'tests/workspace_symbols.lua',
 }) do

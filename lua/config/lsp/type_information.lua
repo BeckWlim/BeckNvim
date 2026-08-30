@@ -439,7 +439,7 @@ local function open_window(session)
   vim.bo[session.bufnr].modifiable = false
   session.winid = vim.api.nvim_open_win(session.bufnr, true, window_config)
 
-  require('config.detail_window').attach({
+  require('config.lsp.detail_window').attach({
     bufnr = session.bufnr,
     winid = session.winid,
     toggle_key = '<Space>k',

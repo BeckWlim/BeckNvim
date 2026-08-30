@@ -7,7 +7,7 @@ local original_show_document = vim.lsp.util.show_document
 local original_get_string_parser = vim.treesitter.get_string_parser
 local original_get_language = vim.treesitter.language.get_lang
 local original_get_query = vim.treesitter.query.get
-local original_type_information = package.loaded['config.type_information']
+local original_type_information = package.loaded['config.lsp.type_information']
 
 local source_buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_set_current_buf(source_buffer)
@@ -99,8 +99,8 @@ rawset(vim.treesitter, 'get_string_parser', function(_source, language)
   }
 end)
 
-package.loaded['config.type_information'] = nil
-local type_information = require('config.type_information')
+package.loaded['config.lsp.type_information'] = nil
+local type_information = require('config.lsp.type_information')
 type_information.toggle()
 
 local float_window = vim.api.nvim_get_current_win()
@@ -251,7 +251,7 @@ assert(
   '<Space>k did not close C++ type info'
 )
 
-package.loaded['config.type_information'] = original_type_information
+package.loaded['config.lsp.type_information'] = original_type_information
 rawset(vim.lsp, 'buf_request_all', original_buf_request_all)
 rawset(vim.lsp, 'get_client_by_id', original_get_client_by_id)
 rawset(vim.lsp, 'get_clients', original_get_clients)

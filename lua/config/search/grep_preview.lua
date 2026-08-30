@@ -44,7 +44,7 @@ local function update_context_winbar(preview_window, preview_buffer, target_line
     false
   )[1] or ''
   local first_nonblank_byte = source_line:find('%S') or 1
-  local context_labels = require('config.treesitter_context').structural_context_labels(
+  local context_labels = require('config.syntax.treesitter_context').structural_context_labels(
     preview_buffer,
     target_line - 1,
     first_nonblank_byte - 1

@@ -1,4 +1,4 @@
-local folds = require('config.folds')
+local folds = require('config.syntax.folds')
 
 local test_buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_set_current_buf(test_buffer)

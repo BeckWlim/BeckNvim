@@ -1,4 +1,4 @@
-local terminal = require('config.terminal')
+local terminal = require('config.ui.terminal')
 
 local terminal_buffer = vim.api.nvim_create_buf(false, true)
 terminal.setup_buffer(terminal_buffer)

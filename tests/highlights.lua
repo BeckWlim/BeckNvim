@@ -1,4 +1,4 @@
-require('config.highlights').setup()
+require('config.syntax.highlights').setup()
 
 local normal_highlight = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
 local tree_normal = vim.api.nvim_get_hl(0, { name = 'NvimTreeNormal', link = false })

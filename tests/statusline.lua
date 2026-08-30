@@ -1,14 +1,14 @@
 local original_lualine = package.loaded.lualine
-local original_statusline = package.loaded['config.statusline']
+local original_statusline = package.loaded['config.ui.statusline']
 local lualine_options
 package.loaded.lualine = {
   setup = function(options)
     lualine_options = options
   end,
 }
-package.loaded['config.statusline'] = nil
+package.loaded['config.ui.statusline'] = nil
 
-local statusline = require('config.statusline')
+local statusline = require('config.ui.statusline')
 statusline.setup()
 assert(lualine_options, 'statusline did not configure lualine')
 local project_component = lualine_options.sections.lualine_c[1]
@@ -20,4 +20,4 @@ assert(not project_identity:find('PROJECT', 1, true), 'statusline retained the l
 assert(project_identity:match(' nvim$'), 'statusline did not render the repository name')
 
 package.loaded.lualine = original_lualine
-package.loaded['config.statusline'] = original_statusline
+package.loaded['config.ui.statusline'] = original_statusline

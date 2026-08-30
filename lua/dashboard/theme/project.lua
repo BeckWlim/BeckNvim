@@ -1,3 +1,3 @@
 return function(config)
-  require('config.dashboard').attach(config.bufnr, config.winid)
+  require('config.ui.dashboard').attach(config.bufnr, config.winid)
 end

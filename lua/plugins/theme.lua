@@ -4,13 +4,13 @@ return {
     priority = 1000,
     config = function()
       vim.cmd.colorscheme('monokai')
-      require('config.highlights').setup()
+      require('config.syntax.highlights').setup()
     end,
   },
   {
     'glepnir/dashboard-nvim',
     event = 'VimEnter',
     dependencies = { 'nvim-tree/nvim-web-devicons' },
-    opts = require('config.dashboard').options(),
+    opts = require('config.ui.dashboard').options(),
   },
 }

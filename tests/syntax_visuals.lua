@@ -1,4 +1,4 @@
-local syntax_visuals = require('config.syntax_visuals')
+local syntax_visuals = require('config.syntax.visuals')
 
 local rainbow_config = syntax_visuals.rainbow_config()
 assert(#rainbow_config.highlight == 8, 'rainbow delimiters did not configure the base and nested colors')
@@ -17,7 +17,7 @@ assert(
   'current scope background is not the subtle Monokai variant'
 )
 
-require('config.highlights').setup()
+require('config.syntax.highlights').setup()
 local red_delimiter_highlight = vim.api.nvim_get_hl(0, {
   name = 'RainbowDelimiterRed',
   link = false,

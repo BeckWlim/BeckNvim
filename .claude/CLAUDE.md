@@ -7,17 +7,26 @@ newer is required.
 
 - `init.lua` calls `require('config').setup()`.
 - `lua/config/init.lua` owns startup order: options, autocmds, plugins, then keymaps.
-- `lua/config/` contains reusable and testable feature behavior.
+- `lua/config/` groups reusable and testable feature behavior by area: `startup/` (editor
+  options, autocmds, plugin bootstrap, keymaps), `ui/` (dashboard, statusline, file tree,
+  terminal), `search/` (Telescope wiring, query pickers, workspace symbols, LSP locations,
+  grep previews, file navigation), `lsp/` (language-server behavior, completion, type
+  information, diagnostics, detail windows), and `syntax/` (Treesitter context, scope visuals,
+  highlights, folds). Feature families with their own lifecycle live in dedicated directories:
+  `python/`, `audit/`, `translation/`, `type_hierarchy/`.
 - `lua/plugins/*.lua` contains plugin specifications, dependencies, loading conditions, and
   lightweight setup calls.
 - `lua/config/project.lua` is the source of truth for roots, markers, and path containment.
-- `lua/config/workspace_symbols.lua` owns Telescope project-definition search.
-- `lua/config/query_picker.lua` owns immediate, incremental, cancellable picker sessions.
-- `lua/config/lsp_locations.lua` owns semantic LSP location queries and fast local references.
-- `lua/config/type_hierarchy.lua` owns C++ LSP and Python indexed hierarchy pickers.
+- `lua/config/search/workspace_symbols.lua` owns Telescope project-definition search.
+- `lua/config/search/query_picker.lua` owns immediate, incremental, cancellable picker sessions.
+- `lua/config/search/lsp_locations.lua` owns semantic LSP location queries and fast local references.
+- `lua/config/type_hierarchy/` owns C++ LSP and Python indexed hierarchy pickers; `init.lua`
+  dispatches, `python.lua` owns indexed paths, `lsp.lua` owns live-request paths, and
+  `core.lua` owns shared picker plumbing.
 - `lua/config/python/hierarchy_index.lua` owns the background Python AST index lifecycle.
-- `lua/config/lsp.lua` owns language-server behavior and BasedPyright diagnostic policy.
-- `lua/config/translation.lua` owns direct translation requests, proxy injection, and query UI.
+- `lua/config/lsp/init.lua` owns language-server behavior and BasedPyright diagnostic policy.
+- `lua/config/translation/` owns the translation query UI (`init.lua`) and the backend
+  providers, proxy resolution, and response parsing (`providers.lua`).
 - `lua/config/audit/` contains project and diagnostic audit modules.
 
 ## Project Definition Contract

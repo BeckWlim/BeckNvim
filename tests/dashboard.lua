@@ -1,7 +1,7 @@
-local original_dashboard = package.loaded['config.dashboard']
-package.loaded['config.dashboard'] = nil
+local original_dashboard = package.loaded['config.ui.dashboard']
+package.loaded['config.ui.dashboard'] = nil
 
-local dashboard = require('config.dashboard')
+local dashboard = require('config.ui.dashboard')
 local temporary_root = vim.fn.tempname()
 local first_root = vim.fs.joinpath(temporary_root, 'alpha')
 local second_root = vim.fs.joinpath(temporary_root, 'beta')
@@ -234,4 +234,4 @@ vim.go.number = original_global_number
 vim.go.relativenumber = original_global_relativenumber
 vim.go.signcolumn = original_global_signcolumn
 vim.fn.delete(temporary_root, 'rf')
-package.loaded['config.dashboard'] = original_dashboard
+package.loaded['config.ui.dashboard'] = original_dashboard

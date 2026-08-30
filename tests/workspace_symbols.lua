@@ -1,4 +1,4 @@
-local symbols = require('config.workspace_symbols')
+local symbols = require('config.search.workspace_symbols')
 
 local definition_cases = {
   { 'example.py', 'class IndexedClass:', 'Class', 'IndexedClass' },

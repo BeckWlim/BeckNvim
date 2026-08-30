@@ -1,5 +1,5 @@
 local original_nvim_tree_api = package.loaded['nvim-tree.api']
-local original_filetree = package.loaded['config.filetree']
+local original_filetree = package.loaded['config.ui.filetree']
 local original_project = package.loaded['config.project']
 
 local tree_buffer = vim.api.nvim_create_buf(false, true)
@@ -46,9 +46,9 @@ package.loaded['config.project'] = {
     return '/shared-project'
   end,
 }
-package.loaded['config.filetree'] = nil
+package.loaded['config.ui.filetree'] = nil
 
-local filetree = require('config.filetree')
+local filetree = require('config.ui.filetree')
 filetree.on_attach(tree_buffer)
 local tree_mappings = vim.api.nvim_buf_get_keymap(tree_buffer, 'n')
 assert(
@@ -118,5 +118,5 @@ assert(
 
 vim.api.nvim_buf_delete(tree_buffer, { force = true })
 package.loaded['nvim-tree.api'] = original_nvim_tree_api
-package.loaded['config.filetree'] = original_filetree
+package.loaded['config.ui.filetree'] = original_filetree
 package.loaded['config.project'] = original_project

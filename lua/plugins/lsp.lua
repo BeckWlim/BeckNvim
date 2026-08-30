@@ -20,7 +20,7 @@ return {
       'rafamadriz/friendly-snippets',
     },
     config = function()
-      require('config.completion').setup()
+      require('config.lsp.completion').setup()
     end,
   },
 }

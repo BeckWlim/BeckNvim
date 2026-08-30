@@ -1,4 +1,4 @@
-local grep_preview = require('config.grep_preview')
+local grep_preview = require('config.search.grep_preview')
 
 assert(grep_preview.context_winbar({}) == '', 'empty grep context consumed preview space')
 assert(

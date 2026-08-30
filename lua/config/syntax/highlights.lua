@@ -45,7 +45,7 @@ local rainbow_delimiter_colors = {
   RainbowDelimiterCyan = '#73C9CF',
 }
 
-local current_scope_background = require('config.syntax_visuals').current_scope_color()
+local current_scope_background = require('config.syntax.visuals').current_scope_color()
 
 local function apply()
   local normal_highlight = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })

@@ -2,7 +2,7 @@ return {
   {
     'nvim-lualine/lualine.nvim',
     config = function()
-      require('config.statusline').setup()
+      require('config.ui.statusline').setup()
     end,
   },
   {
@@ -10,7 +10,7 @@ return {
     event = 'VimEnter',
     dependencies = { 'nvim-tree/nvim-web-devicons' },
     opts = {
-      on_attach = require('config.filetree').on_attach,
+      on_attach = require('config.ui.filetree').on_attach,
       sort = { sorter = 'case_sensitive' },
       view = { width = 30 },
       renderer = { group_empty = true },
@@ -30,7 +30,7 @@ return {
       start_in_insert = true,
       direction = 'horizontal',
       on_open = function(terminal)
-        require('config.terminal').setup_buffer(terminal.bufnr)
+        require('config.ui.terminal').setup_buffer(terminal.bufnr)
       end,
     },
   },
@@ -50,8 +50,8 @@ return {
     'nvim-treesitter/nvim-treesitter-context',
     dependencies = { 'nvim-treesitter/nvim-treesitter' },
     config = function()
-      require('config.treesitter_context').setup()
-      require('config.syntax_visuals').setup_scopes()
+      require('config.syntax.treesitter_context').setup()
+      require('config.syntax.visuals').setup_scopes()
     end,
   },
 }

@@ -160,7 +160,7 @@ end
 local function open_location_query(query)
   local telescope_config = require('telescope.config').values
   local make_entry = require('telescope.make_entry')
-  local query_picker = require('config.query_picker')
+  local query_picker = require('config.search.query_picker')
   local source_buffer = vim.api.nvim_get_current_buf()
   local source_window = vim.api.nvim_get_current_win()
   local source_cursor = vim.api.nvim_win_get_cursor(source_window)

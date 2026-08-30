@@ -1,4 +1,4 @@
-local treesitter_context = require('config.treesitter_context')
+local treesitter_context = require('config.syntax.treesitter_context')
 
 local context_ranges = {
   { 0, 0, 1, 0 },

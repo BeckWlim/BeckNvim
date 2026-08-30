@@ -1,6 +1,6 @@
 local original_telescope_builtin = package.loaded['telescope.builtin']
-local original_diagnostics = package.loaded['config.diagnostics']
-local original_detail_window = package.loaded['config.detail_window']
+local original_diagnostics = package.loaded['config.lsp.diagnostics']
+local original_detail_window = package.loaded['config.lsp.detail_window']
 
 local picker_options
 package.loaded['telescope.builtin'] = {
@@ -8,10 +8,10 @@ package.loaded['telescope.builtin'] = {
     picker_options = options
   end,
 }
-package.loaded['config.detail_window'] = nil
-package.loaded['config.diagnostics'] = nil
+package.loaded['config.lsp.detail_window'] = nil
+package.loaded['config.lsp.diagnostics'] = nil
 
-local diagnostics = require('config.diagnostics')
+local diagnostics = require('config.lsp.diagnostics')
 local diagnostic_namespace = vim.api.nvim_create_namespace('diagnostic-detail-test')
 local diagnostic_buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_set_current_buf(diagnostic_buffer)
@@ -56,5 +56,5 @@ assert(picker_options, 'diagnostic picker was not opened')
 assert(picker_options.bufnr == 0, 'diagnostic picker did not target the current buffer')
 
 package.loaded['telescope.builtin'] = original_telescope_builtin
-package.loaded['config.detail_window'] = original_detail_window
-package.loaded['config.diagnostics'] = original_diagnostics
+package.loaded['config.lsp.detail_window'] = original_detail_window
+package.loaded['config.lsp.diagnostics'] = original_diagnostics

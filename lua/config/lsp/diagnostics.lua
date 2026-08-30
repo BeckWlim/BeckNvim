@@ -27,7 +27,7 @@ function M.open_float()
       vim.api.nvim_win_close(float_winid, true)
     end
   end
-  require('config.detail_window').attach({
+  require('config.lsp.detail_window').attach({
     bufnr = float_bufnr,
     winid = float_winid,
     toggle_key = '<Space>e',

@@ -9,7 +9,7 @@ return {
     dependencies = { 'nvim-treesitter/nvim-treesitter' },
     submodules = false,
     config = function()
-      require('config.syntax_visuals').setup_rainbow()
+      require('config.syntax.visuals').setup_rainbow()
     end,
   },
   {
@@ -24,7 +24,7 @@ return {
       },
     },
     config = function()
-      require('config.telescope').setup()
+      require('config.search.telescope').setup()
     end,
   },
   {

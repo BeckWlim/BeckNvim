@@ -63,17 +63,16 @@ Plugin versions are pinned in `lazy-lock.json`. Include the updated lockfile whe
 ```text
 init.lua                         Startup entry point; calls config.setup()
 lua/
-├── config/                       Reusable, testable feature modules
+├── config/                       Reusable, testable feature modules, grouped by area
 │   ├── init.lua                  Configuration assembly order
 │   ├── project.lua               Shared project-root and path boundary logic
-│   ├── dashboard.lua             Recent-project and recent-file start page
-│   ├── keybindings.lua           Global keymap assembly
-│   ├── translation.lua           Translation UI, engine, proxy, and dictionary parsing
-│   ├── query_picker.lua          Immediate, incremental, cancellable query sessions
-│   ├── lsp_locations.lua         Semantic LSP location queries
-│   ├── treesitter_context.lua    Priority-aware pinned syntax context
-│   ├── type_hierarchy.lua        Recursive class hierarchy and implementation pickers
-│   ├── workspace_symbols.lua     Project-definition finder
+│   ├── startup/                  Editor options, autocmds, plugin bootstrap, keymaps
+│   ├── ui/                       Dashboard, statusline, file tree, and terminal behavior
+│   ├── search/                   Telescope wiring, pickers, definitions, LSP locations
+│   ├── lsp/                      Servers, completion, type information, diagnostics
+│   ├── syntax/                   Treesitter context, scope visuals, highlights, folds
+│   ├── type_hierarchy/           Recursive class hierarchy and implementation pickers
+│   ├── translation/              Translation query UI and backend providers
 │   ├── python/                   Python environment and hierarchy indexing
 │   └── audit/                    Project scan and diagnostic audit modules
 └── plugins/*.lua                 Lightweight lazy.nvim plugin specifications
@@ -279,7 +278,7 @@ regular scrolling and motions can inspect earlier output; press `v` to select te
 
 #### Translation Configuration
 
-The translation defaults are configured in `lua/config/translation.lua`. The proxy is resolved at
+The translation defaults are configured in `lua/config/translation/`. The proxy is resolved at
 query time by `resolve_proxy()` instead of a fixed address: proxy variables already exported into
 Neovim's environment (`http_proxy` / `https_proxy` / `ALL_PROXY`, upper or lower case) are used
 as-is, and when none are present requests go direct with no proxy.
@@ -290,20 +289,20 @@ example `MyMemory · proxy 127.0.0.1:7890`, or `MyMemory · no proxy`). Two prov
 either insert or normal mode to switch between them; the current input is re-translated immediately.
 Each translation and dictionary subprocess receives the resolved variables explicitly, so running a
 separate `proxy_on` shell function is unnecessary. Network errors and timeouts are captured and
-rendered inside the query window, never echoed into Neovim's command line. The same module owns the
-500-byte backend limit, query window, debounce delay, translation candidates, and Youdao dictionary
-details.
+rendered inside the query window, never echoed into Neovim's command line. Backend selection,
+proxy resolution, and response parsing live in `providers.lua`; the query window, debounce delay,
+and 500-byte backend limit live in `init.lua`.
 
 ## Customization
 
 - Theme and completion colors: `lua/plugins/theme.lua`
-- Indentation, clipboard, and display options: `lua/config/options.lua`
-- LSP behavior: `lua/config/lsp.lua`
-- Completion behavior: `lua/config/completion.lua`
-- Translation defaults and proxy: `lua/config/translation.lua`
-- Class hierarchy and method implementations: `lua/config/type_hierarchy.lua`
-- Telescope and project definitions: `lua/config/telescope.lua`,
-  `lua/config/workspace_symbols.lua`
+- Indentation, clipboard, and display options: `lua/config/startup/options.lua`
+- LSP behavior: `lua/config/lsp/init.lua`
+- Completion behavior: `lua/config/lsp/completion.lua`
+- Translation defaults and proxy: `lua/config/translation/providers.lua`
+- Class hierarchy and method implementations: `lua/config/type_hierarchy/`
+- Telescope and project definitions: `lua/config/search/telescope.lua`,
+  `lua/config/search/workspace_symbols.lua`
 - Plugin dependencies and loading conditions: `lua/plugins/`
 
 Local sessions use the system clipboard. SSH sessions use OSC 52 to communicate with the local

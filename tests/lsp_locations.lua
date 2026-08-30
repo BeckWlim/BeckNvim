@@ -3,8 +3,8 @@ local original_config = package.loaded['telescope.config']
 local original_finders = package.loaded['telescope.finders']
 local original_make_entry = package.loaded['telescope.make_entry']
 local original_pickers = package.loaded['telescope.pickers']
-local original_query_picker = package.loaded['config.query_picker']
-local original_lsp_locations = package.loaded['config.lsp_locations']
+local original_query_picker = package.loaded['config.search.query_picker']
+local original_lsp_locations = package.loaded['config.search.lsp_locations']
 local original_buf_request_all = vim.lsp.buf_request_all
 local original_get_client_by_id = vim.lsp.get_client_by_id
 local original_get_clients = vim.lsp.get_clients
@@ -84,8 +84,8 @@ package.loaded['telescope.pickers'] = {
     }
   end,
 }
-package.loaded['config.query_picker'] = nil
-package.loaded['config.lsp_locations'] = nil
+package.loaded['config.search.query_picker'] = nil
+package.loaded['config.search.lsp_locations'] = nil
 
 rawset(vim.lsp, 'get_clients', function(options)
   if options and (options.method == 'textDocument/references'
@@ -119,7 +119,7 @@ vim.lsp.util.locations_to_items = function(locations, _offset_encoding)
   end, locations)
 end
 
-local lsp_locations = require('config.lsp_locations')
+local lsp_locations = require('config.search.lsp_locations')
 lsp_locations.references()
 assert(picker_opened, 'references picker did not open before the LSP request')
 assert(initial_result_count == 0, 'references picker did not start empty')
@@ -254,8 +254,8 @@ package.loaded['telescope.config'] = original_config
 package.loaded['telescope.finders'] = original_finders
 package.loaded['telescope.make_entry'] = original_make_entry
 package.loaded['telescope.pickers'] = original_pickers
-package.loaded['config.query_picker'] = original_query_picker
-package.loaded['config.lsp_locations'] = original_lsp_locations
+package.loaded['config.search.query_picker'] = original_query_picker
+package.loaded['config.search.lsp_locations'] = original_lsp_locations
 rawset(vim.lsp, 'buf_request_all', original_buf_request_all)
 rawset(vim.lsp, 'get_client_by_id', original_get_client_by_id)
 rawset(vim.lsp, 'get_clients', original_get_clients)
