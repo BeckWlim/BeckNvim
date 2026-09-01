@@ -2,6 +2,7 @@ local project = require('config.project')
 
 local M = {}
 local ready = false
+local maximum_buffer_definitions = 1000
 
 local function definition(kind, name)
   return { kind = kind, name = name }
@@ -430,11 +431,8 @@ local function relative_path(root, filename)
   return normalized_filename
 end
 
-local function symbol_entry_maker(root, opts)
-  local entry_display = require('telescope.pickers.entry_display')
-  local make_entry = require('telescope.make_entry')
-  local vimgrep_entry_maker = make_entry.gen_from_vimgrep(opts)
-  local displayer = entry_display.create({
+local function symbol_displayer()
+  return require('telescope.pickers.entry_display').create({
     separator = '  ',
     items = {
       { width = 36 },
@@ -442,14 +440,22 @@ local function symbol_entry_maker(root, opts)
       { remaining = true },
     },
   })
+end
 
-  local function make_display(entry)
+local function symbol_display(displayer)
+  return function(entry)
     return displayer({
       { entry.symbol_name, 'TelescopeResultsIdentifier' },
       { entry.symbol_kind, 'TelescopeResultsComment' },
       ('%s:%d'):format(entry.symbol_path, entry.lnum),
     })
   end
+end
+
+local function symbol_entry_maker(root, opts)
+  local make_entry = require('telescope.make_entry')
+  local vimgrep_entry_maker = make_entry.gen_from_vimgrep(opts)
+  local make_display = symbol_display(symbol_displayer())
 
   return function(line)
     local entry = vimgrep_entry_maker(line)
@@ -471,6 +477,105 @@ local function symbol_entry_maker(root, opts)
   end
 end
 
+function M.buffer_definitions(buffer, filename, root)
+  if not vim.api.nvim_buf_is_valid(buffer) then
+    return {}
+  end
+  local requested_filename = filename or ''
+  local source_filename = requested_filename ~= '' and requested_filename
+    or vim.api.nvim_buf_get_name(buffer)
+  local display_root = root or vim.fs.dirname(source_filename) or vim.uv.cwd()
+  local symbol_path = relative_path(display_root, source_filename)
+  local make_display = symbol_display(symbol_displayer())
+  local entries = {}
+  local source_lines = vim.api.nvim_buf_get_lines(buffer, 0, -1, false)
+  for line_index, source_line in ipairs(source_lines) do
+    local parsed_definition = M.definition(source_filename, source_line)
+    if parsed_definition then
+      local entry = {
+        col = 1,
+        filename = source_filename,
+        lnum = line_index,
+        ordinal = ('%s %s %s'):format(
+          parsed_definition.name,
+          parsed_definition.kind,
+          symbol_path
+        ),
+        symbol_kind = parsed_definition.kind,
+        symbol_name = parsed_definition.name,
+        symbol_path = symbol_path,
+        text = source_line,
+      }
+      entry.display = make_display
+      entries[#entries + 1] = entry
+      if #entries == maximum_buffer_definitions then
+        break
+      end
+    end
+  end
+  return entries
+end
+
+local function jump_to_buffer_symbol(prompt_buffer, target_buffer, target_window)
+  local action_state = require('telescope.actions.state')
+  local selected_entry = action_state.get_selected_entry()
+  require('telescope.actions').close(prompt_buffer)
+  if not selected_entry
+      or not vim.api.nvim_buf_is_valid(target_buffer)
+      or not vim.api.nvim_win_is_valid(target_window)
+      or vim.api.nvim_win_get_buf(target_window) ~= target_buffer then
+    return
+  end
+  vim.api.nvim_set_current_win(target_window)
+  vim.api.nvim_win_set_cursor(target_window, { selected_entry.lnum, 0 })
+  vim.cmd('normal! zvzz')
+end
+
+function M.open_buffer(buffer, options)
+  local buffer_options = options or {}
+  if not ready then
+    vim.notify('Definition search is loading; retry shortly', vim.log.levels.INFO)
+    return
+  end
+  if not vim.api.nvim_buf_is_valid(buffer) then
+    vim.notify('The historical source buffer is no longer available', vim.log.levels.INFO)
+    return
+  end
+  local source_filename = buffer_options.filename or vim.api.nvim_buf_get_name(buffer)
+  local repository_root = buffer_options.root
+    or project.detect_repository(source_filename)
+    or vim.fs.dirname(source_filename)
+    or vim.uv.cwd()
+  local target_window = buffer_options.target_window or vim.api.nvim_get_current_win()
+  local picker_options = { cwd = repository_root }
+  local entries = M.buffer_definitions(buffer, source_filename, repository_root)
+  local pickers = require('telescope.pickers')
+  local finders = require('telescope.finders')
+  local telescope_config = require('telescope.config').values
+
+  pickers.new(picker_options, {
+    prompt_title = buffer_options.title or 'Buffer Definitions',
+    finder = finders.new_table({
+      entry_maker = function(entry)
+        return entry
+      end,
+      results = entries,
+    }),
+    previewer = require('config.search.grep_preview').new({
+      cwd = repository_root,
+      source_buffer = buffer,
+      source_filename = source_filename,
+    }),
+    sorter = telescope_config.generic_sorter(picker_options),
+    attach_mappings = function(prompt_buffer)
+      require('telescope.actions').select_default:replace(function()
+        jump_to_buffer_symbol(prompt_buffer, buffer, target_window)
+      end)
+      return true
+    end,
+  }):find()
+end
+
 function M.setup()
   ready = false
   vim.schedule(function()
@@ -482,8 +587,8 @@ function M.is_ready()
   return ready
 end
 
-function M.open(opts)
-  opts = opts or {}
+function M.open(options)
+  local open_options = options or {}
   if not ready then
     vim.notify('Project definition search is loading; retry shortly', vim.log.levels.INFO)
     return
@@ -499,7 +604,7 @@ function M.open(opts)
     finder = multi_job_finder(root, symbol_entry_maker(root, picker_opts)),
     previewer = telescope_config.grep_previewer(picker_opts),
     sorter = telescope_config.generic_sorter(picker_opts),
-    default_text = opts.default_text,
+    default_text = open_options.default_text,
     push_cursor_on_edit = true,
     push_tagstack_on_edit = true,
   }):find()

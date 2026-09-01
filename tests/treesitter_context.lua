@@ -109,6 +109,15 @@ local structural_labels = treesitter_context.structural_context_labels(
   16
 )
 assert(vim.deep_equal(structural_labels, { 'Service', 'run' }), 'structural labels included block scopes')
+local enclosing_structure = treesitter_context.enclosing_structure(navigation_buffer, 4, 16)
+assert(enclosing_structure, 'enclosing function structure was not found')
+assert(enclosing_structure.label == 'Service › run', 'enclosing structure lost its hierarchy label')
+assert(enclosing_structure.first_line == 2, 'enclosing structure started on the wrong line')
+assert(enclosing_structure.last_line == 5, 'enclosing structure ended on the wrong line')
+assert(
+  enclosing_structure.node_type == 'function_definition',
+  'enclosing structure selected a block instead of the nearest symbol'
+)
 treesitter_context.go_to_nearest_context()
 assert(vim.api.nvim_win_get_cursor(0)[1] == 4, 'nearest context did not jump to with')
 treesitter_context.go_to_nearest_context()
@@ -138,3 +147,24 @@ assert(
   'C++ structural labels did not reduce a qualified definition to its readable declarator'
 )
 vim.api.nvim_buf_delete(cpp_buffer, { force = true })
+
+local original_context_plugin = package.loaded['treesitter-context']
+local original_context_provider = package.loaded['treesitter-context.context']
+local configured_context_options
+package.loaded['treesitter-context'] = {
+  setup = function(options)
+    configured_context_options = options
+  end,
+}
+package.loaded['treesitter-context.context'] = {
+  get = function()
+    return nil, nil
+  end,
+}
+treesitter_context.setup()
+assert(
+  configured_context_options and configured_context_options.on_attach == nil,
+  'Pinned code context still excludes Diffview buffers instead of reusing the editor renderer'
+)
+package.loaded['treesitter-context'] = original_context_plugin
+package.loaded['treesitter-context.context'] = original_context_provider

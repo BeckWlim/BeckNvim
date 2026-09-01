@@ -126,6 +126,7 @@ assert(initial_result_count == 0, 'references picker did not start empty')
 assert(#latest_results == 1, 'Python local references were not populated synchronously')
 assert(latest_results[1].lnum == 3, 'Python local scan found the wrong reference')
 assert(latest_title:match('querying'), 'references picker did not expose query status')
+assert(latest_title:match('Ctrl%-Q: cancel'), 'references picker advertised plain q as cancel')
 assert(vim.wait(1000, function()
   return request_callbacks['textDocument/references'] ~= nil
     and request_callbacks['textDocument/documentHighlight'] ~= nil
@@ -143,14 +144,22 @@ assert(#latest_results == 1, 'fast document references were not shown incrementa
 assert(latest_results[1].lnum == 3, 'the declaration line was not excluded from references')
 assert(latest_title:match('1 results available'), 'partial result status was not shown')
 
-assert(type(mapped_actions.i.q) == 'function', 'insert-mode q did not cancel the query')
-assert(type(mapped_actions.n.q) == 'function', 'normal-mode q did not cancel the query')
-mapped_actions.i.q()
-assert(close_called, 'q did not close the query picker')
-assert(cancelled_methods['textDocument/references'], 'q did not cancel the full reference request')
+assert(mapped_actions.i.q == nil, 'insert-mode q was consumed by the query picker')
+assert(type(mapped_actions.n.q) == 'function', 'normal-mode q did not close the query picker')
+assert(type(mapped_actions.i['<C-q>']) == 'function', 'insert-mode Ctrl-Q did not cancel the query')
+assert(
+  mapped_actions.n['<C-q>'] == nil,
+  'normal-mode Ctrl-Q was captured by the query picker'
+)
+mapped_actions.i['<C-q>']()
+assert(close_called, 'Ctrl-Q did not close the query picker')
+assert(
+  cancelled_methods['textDocument/references'],
+  'Ctrl-Q did not cancel the full reference request'
+)
 assert(
   cancelled_methods['textDocument/documentHighlight'],
-  'q did not cancel the fast document-highlight request'
+  'Ctrl-Q did not cancel the fast document-highlight request'
 )
 
 for method in pairs(request_callbacks) do

@@ -26,13 +26,28 @@ local completion_kind_colors = {
 }
 
 local context_colors = {
-  background = '#3A3D32',
-  border = '#A6E22E',
+  background = '#405A45',
   foreground = '#F8F8F2',
   muted_foreground = '#A6A69C',
 }
 
 local cursor_line_background = '#3A3D3F'
+
+local history_ui_colors = {
+  accent = '#A6E22E',
+  added_background = '#29362D',
+  background = '#232526',
+  border = '#666666',
+  changed = '#E6DB74',
+  changed_background = '#34352B',
+  deleted = '#F92672',
+  deleted_background = '#382A2F',
+  foreground = '#DCDCDC',
+  information = '#66D9EF',
+  muted = '#75715E',
+  selected = '#3A3D3F',
+  violet = '#AE81FF',
+}
 
 local rainbow_delimiter_colors = {
   RainbowDelimiterBase = '#B7B9C0',
@@ -68,21 +83,16 @@ local function apply()
     fg = context_colors.muted_foreground,
   })
   vim.api.nvim_set_hl(0, 'TreesitterContextBottom', {
-    underline = true,
-    sp = context_colors.border,
+    bg = context_colors.background,
   })
   vim.api.nvim_set_hl(0, 'TreesitterContextPreview', {
     bg = context_colors.background,
     fg = context_colors.foreground,
     bold = true,
-    underline = true,
-    sp = context_colors.border,
   })
   vim.api.nvim_set_hl(0, 'TreesitterContextPreviewSeparator', {
     bg = context_colors.background,
     fg = context_colors.muted_foreground,
-    underline = true,
-    sp = context_colors.border,
   })
 
   for group_name, color in pairs(rainbow_delimiter_colors) do
@@ -109,6 +119,38 @@ local function apply()
   })
   vim.api.nvim_set_hl(0, 'TypeInformationPreview', { bg = '#2B2C26' })
   vim.api.nvim_set_hl(0, 'TypeInformationCursorLine', { bg = cursor_line_background })
+  vim.api.nvim_set_hl(0, 'TranslationFloat', {
+    bg = '#232526',
+    fg = '#DCDCDC',
+  })
+  vim.api.nvim_set_hl(0, 'TranslationSeparator', {
+    fg = '#49483E',
+    bg = '#232526',
+  })
+  vim.api.nvim_set_hl(0, 'TranslationSection', {
+    fg = '#66D9EF',
+    bg = '#232526',
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'TranslationContent', {
+    fg = '#F8F8F2',
+    bg = '#232526',
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'TranslationDictionary', {
+    fg = '#DCDCDC',
+    bg = '#232526',
+  })
+  vim.api.nvim_set_hl(0, 'TranslationNotification', {
+    fg = '#75715E',
+    bg = '#232526',
+    italic = true,
+  })
+  vim.api.nvim_set_hl(0, 'TranslationError', {
+    fg = '#F92672',
+    bg = '#232526',
+    bold = true,
+  })
   vim.api.nvim_set_hl(0, 'NvimTreeNormal', {
     bg = editor_background,
     fg = editor_foreground,
@@ -124,9 +166,136 @@ local function apply()
   })
   vim.api.nvim_set_hl(0, 'NvimTreeCursorLine', { bg = cursor_line_background })
 
+  for _, group_name in ipairs({
+    'TelescopeNormal',
+    'TelescopePromptNormal',
+    'TelescopeResultsNormal',
+    'TelescopePreviewNormal',
+    'DiffviewNormal',
+  }) do
+    vim.api.nvim_set_hl(0, group_name, {
+      bg = history_ui_colors.background,
+      fg = history_ui_colors.foreground,
+    })
+  end
+  for _, group_name in ipairs({
+    'TelescopeBorder',
+    'TelescopePromptBorder',
+    'TelescopeResultsBorder',
+    'TelescopePreviewBorder',
+    'DiffviewWinSeparator',
+  }) do
+    vim.api.nvim_set_hl(0, group_name, {
+      bg = history_ui_colors.background,
+      fg = history_ui_colors.border,
+    })
+  end
+  for _, group_name in ipairs({
+    'TelescopePromptTitle',
+    'TelescopeResultsTitle',
+    'TelescopePreviewTitle',
+    'DiffviewFilePanelTitle',
+    'DiffviewFilePanelRootPath',
+  }) do
+    vim.api.nvim_set_hl(0, group_name, {
+      bg = history_ui_colors.background,
+      fg = history_ui_colors.accent,
+      bold = true,
+    })
+  end
+  vim.api.nvim_set_hl(0, 'TelescopeSelection', {
+    bg = history_ui_colors.selected,
+    fg = '#FFFFFF',
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'TelescopeSelectionCaret', {
+    bg = history_ui_colors.selected,
+    fg = history_ui_colors.accent,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'TelescopeMatching', {
+    fg = history_ui_colors.accent,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewCursorLine', { bg = history_ui_colors.selected })
+  vim.api.nvim_set_hl(0, 'DiffviewFilePanelSelected', {
+    bg = history_ui_colors.selected,
+    fg = '#FFFFFF',
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewFilePanelFileName', {
+    bg = history_ui_colors.background,
+    fg = history_ui_colors.foreground,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewFilePanelPath', {
+    bg = history_ui_colors.background,
+    fg = history_ui_colors.muted,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewFilePanelCounter', {
+    bg = history_ui_colors.background,
+    fg = history_ui_colors.information,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewHash', {
+    bg = history_ui_colors.background,
+    fg = history_ui_colors.violet,
+  })
+  vim.api.nvim_set_hl(0, 'GitHistoryMessageMatch', {
+    fg = history_ui_colors.accent,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'GitHistoryLocalTag', {
+    bg = history_ui_colors.selected,
+    fg = history_ui_colors.accent,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'GitHistoryRemoteTag', {
+    bg = history_ui_colors.selected,
+    fg = history_ui_colors.information,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewFilePanelInsertions', {
+    bg = history_ui_colors.background,
+    fg = history_ui_colors.accent,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewFilePanelDeletions', {
+    bg = history_ui_colors.background,
+    fg = history_ui_colors.deleted,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewStatusModified', { fg = history_ui_colors.changed })
+  vim.api.nvim_set_hl(0, 'DiffviewStatusAdded', { fg = history_ui_colors.accent })
+  vim.api.nvim_set_hl(0, 'DiffviewStatusDeleted', { fg = history_ui_colors.deleted })
+  vim.api.nvim_set_hl(0, 'DiffviewDiffAdd', {
+    bg = history_ui_colors.added_background,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewDiffAddAsDelete', {
+    bg = history_ui_colors.deleted_background,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewDiffChange', {
+    bg = history_ui_colors.changed_background,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewDiffText', {
+    bg = history_ui_colors.changed_background,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewDiffDeleteDim', {
+    bg = history_ui_colors.background,
+    fg = history_ui_colors.muted,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewSecondary', {
+    bg = history_ui_colors.background,
+    fg = history_ui_colors.muted,
+  })
+  vim.api.nvim_set_hl(0, 'DiffviewDim1', {
+    bg = history_ui_colors.background,
+    fg = history_ui_colors.muted,
+  })
+
   for kind, color in pairs(completion_kind_colors) do
     vim.api.nvim_set_hl(0, 'CmpItemKind' .. kind, { fg = color })
   end
+end
+
+function M.apply()
+  apply()
 end
 
 function M.setup()
@@ -134,9 +303,9 @@ function M.setup()
   vim.api.nvim_create_autocmd('ColorScheme', {
     group = group,
     pattern = '*',
-    callback = apply,
+    callback = M.apply,
   })
-  apply()
+  M.apply()
 end
 
 return M

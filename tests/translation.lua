@@ -1,30 +1,18 @@
 local translation = require('config.translation')
+assert(not translation.refresh_proxy(), 'Proxy refresh reported an inactive translation dialog')
 assert(
   translation.endpoint == 'https://api.mymemory.translated.net/get',
   'translation must avoid the plugin shared Apps Script endpoint'
 )
-
 assert(
-  translation.next_provider('mymemory') == 'google'
-    and translation.next_provider('google') == 'mymemory',
-  'provider cycling is wrong'
+  #translation.provider_order == 1
+    and translation.provider_order[1] == 'mymemory'
+    and translation.next_provider('mymemory') == 'mymemory',
+  'single-provider cycling did not preserve the provider-switch structure'
 )
 assert(
   translation.next_provider('unknown') == 'mymemory',
   'an unknown provider must fall back to the first provider'
-)
-
-assert(
-  translation.google_translation_candidates({
-    { { 'good', nil }, { ' morning', nil } },
-    nil,
-    'zh-CN',
-  })[1] == 'good morning',
-  'Google translation candidates were not joined'
-)
-assert(
-  #translation.google_translation_candidates({}) == 0,
-  'an empty Google response must produce no candidates'
 )
 
 assert(
@@ -254,6 +242,41 @@ local function rendered_text(buffer_number)
   return table.concat(rendered_parts, '\n')
 end
 
+local function rendered_highlights(buffer_number)
+  local namespace = vim.api.nvim_get_namespaces().translation_query_result
+  local extmarks = vim.api.nvim_buf_get_extmarks(
+    buffer_number,
+    namespace,
+    0,
+    -1,
+    { details = true }
+  )
+  local highlight_groups = {}
+  for _, extmark in ipairs(extmarks) do
+    local virtual_lines = extmark[4].virt_lines or {}
+    for _, virtual_line in ipairs(virtual_lines) do
+      for _, virtual_chunk in ipairs(virtual_line) do
+        if virtual_chunk[2] then
+          highlight_groups[virtual_chunk[2]] = true
+        end
+      end
+    end
+  end
+  return highlight_groups
+end
+
+local function window_title_text(window_config)
+  local title = window_config.title
+  if type(title) == 'string' then
+    return title
+  end
+  local title_parts = {}
+  for _, title_chunk in ipairs(title or {}) do
+    title_parts[#title_parts + 1] = title_chunk[1]
+  end
+  return table.concat(title_parts)
+end
+
 translation.open()
 local query_winid = vim.api.nvim_get_current_win()
 local query_bufnr = vim.api.nvim_win_get_buf(query_winid)
@@ -264,6 +287,17 @@ assert(
   query_window_config.col == math.floor((vim.o.columns - query_window_config.width) / 2),
   'translation query is not horizontally centered'
 )
+local query_window_highlights = vim.wo[query_winid].winhighlight
+assert(
+  query_window_highlights:find('Normal:TranslationFloat', 1, true) ~= nil,
+  'translation query does not use its dedicated background'
+)
+assert(
+  query_window_highlights:find('FloatBorder:TelescopeBorder', 1, true) ~= nil
+    and query_window_highlights:find('FloatTitle:TelescopeBorder', 1, true) ~= nil
+    and query_window_highlights:find('FloatFooter:TelescopeBorder', 1, true) ~= nil,
+  'translation edges do not uniformly match the search interface'
+)
 assert(
   vim.fn.maparg('q', 'n', false, true).desc == 'Close translation query',
   'translation query close mapping is missing'
@@ -273,20 +307,47 @@ assert(
   'translation query insert-mode close mapping is missing'
 )
 assert(
-  vim.fn.maparg('<C-p>', 'n', false, true).desc == 'Switch translation provider',
+  vim.fn.maparg('<C-g>', 'n', false, true).desc == 'Switch translation provider'
+    and vim.fn.maparg('<C-g>', 'i', false, true).desc == 'Switch translation provider',
   'translation query provider-switch mapping is missing'
 )
 assert(
-  vim.fn.maparg('<C-p>', 'i', false, true).desc == 'Switch translation provider',
-  'translation query insert-mode provider-switch mapping is missing'
+  vim.fn.maparg('<C-p>', 'i', false, true).desc ~= 'Switch translation provider',
+  'translation query still captures the snippet/completion key'
+)
+local initial_title = window_title_text(query_window_config)
+assert(initial_title:find('MyMemory', 1, true), 'translation title omits the active provider')
+assert(
+  initial_title:find('proxy 127.0.0.1:9999', 1, true),
+  'translation title omits the active proxy'
+)
+vim.env.http_proxy = 'http://127.0.0.1:8888'
+vim.env.https_proxy = 'http://127.0.0.1:8888'
+assert(translation.refresh_proxy(), 'Active translation proxy was not refreshed')
+assert(
+  window_title_text(vim.api.nvim_win_get_config(query_winid)):find(
+    'proxy 127.0.0.1:8888',
+    1,
+    true
+  ),
+  'Translation title did not reflect the refreshed proxy'
+)
+vim.env.http_proxy = 'http://127.0.0.1:9999'
+vim.env.https_proxy = 'http://127.0.0.1:9999'
+assert(translation.refresh_proxy(), 'Translation proxy could not be restored for requests')
+vim.fn.maparg('<C-g>', 'i', false, true).callback()
+assert(
+  window_title_text(vim.api.nvim_win_get_config(query_winid)):find('MyMemory', 1, true),
+  'Single-provider switching changed the active provider'
+)
+local initial_highlights = rendered_highlights(query_bufnr)
+assert(
+  initial_highlights.TranslationNotification,
+  'translation guidance does not use the notification style'
 )
 assert(
-  rendered_text(query_bufnr):find('MyMemory', 1, true) ~= nil,
-  'translation status line does not note the active provider'
-)
-assert(
-  rendered_text(query_bufnr):find('proxy 127.0.0.1:9999', 1, true) ~= nil,
-  'translation status line does not render the active proxy'
+  not rendered_text(query_bufnr):find('proxy 127.0.0.1:9999', 1, true),
+  'provider metadata still occupies the translation content area'
 )
 
 vim.api.nvim_buf_set_lines(query_bufnr, 0, -1, false, { '--literal | value' })
@@ -310,6 +371,13 @@ assert(
 assert(
   not vim.tbl_contains(first_translation_request.command, 'script.google.com'),
   'translation request still uses the broken Apps Script endpoint'
+)
+assert(
+  not vim.tbl_contains(
+    first_translation_request.command,
+    'https://translate.googleapis.com/translate_a/single'
+  ),
+  'translation request still uses the rate-limited Google web endpoint'
 )
 
 local window_count_before_result = #vim.api.nvim_list_wins()
@@ -337,6 +405,9 @@ assert(
   vim.api.nvim_buf_get_lines(query_bufnr, 0, -1, false)[1] == '--literal | value',
   'translation result modified the query input'
 )
+local result_highlights = rendered_highlights(query_bufnr)
+assert(result_highlights.TranslationSection, 'translation section heading is not styled')
+assert(result_highlights.TranslationContent, 'translation content is not visually emphasized')
 
 local next_request_index = #system_requests + 1
 vim.api.nvim_buf_set_lines(query_bufnr, 0, -1, false, { '测试错误' })
@@ -354,6 +425,10 @@ failed_translation_request.callback({
 assert(vim.wait(500, function()
   return rendered_text(query_bufnr):find('curl: (35)', 1, true) ~= nil
 end), 'curl failure was not rendered inside the translation window')
+assert(
+  rendered_highlights(query_bufnr).TranslationError,
+  'translation failure does not use the error style'
+)
 
 vim.cmd('stopinsert')
 vim.cmd('normal q')

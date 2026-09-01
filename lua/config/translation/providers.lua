@@ -1,51 +1,15 @@
 -- Translation backends: proxy resolution, provider registry, request building,
 -- and response parsing. Everything here is pure or environment-driven; the
 -- query-window UI and process lifecycle live in `config.translation` (init.lua).
+local proxy = require('config.network.proxy')
+
 local M = {}
 
 M.endpoint = 'https://api.mymemory.translated.net/get'
 
-local function proxy_host_label(proxy_url)
-  if not proxy_url then
-    return nil
-  end
-  return proxy_url:gsub('^%a+://', ''):gsub('/+$', '')
-end
-
--- Extract the proxy variables already exported into a process environment.
--- Absent or empty values are omitted so the result is always a clean table
--- suitable for merging into a subprocess environment.
-function M.proxy_from_env(env)
-  local proxy = {}
-  local http_proxy = env.http_proxy or env.HTTP_PROXY
-  local https_proxy = env.https_proxy or env.HTTPS_PROXY
-  local all_proxy = env.all_proxy or env.ALL_PROXY
-  if http_proxy then proxy.http_proxy = http_proxy end
-  if https_proxy then proxy.https_proxy = https_proxy end
-  if all_proxy then proxy.ALL_PROXY = all_proxy end
-  if next(proxy) == nil then
-    return nil
-  end
-  return proxy
-end
-
--- Resolve the proxy environment for outbound requests from the proxy variables
--- already exported into Neovim's environment. When none are present the
--- connection goes direct (no proxy). Returns the environment table to merge and
--- a short `host:port` label for display.
-function M.resolve_proxy()
-  local proxy = M.proxy_from_env(vim.env)
-  if not proxy then
-    return {}, nil
-  end
-  return proxy, proxy_host_label(proxy.https_proxy or proxy.http_proxy or proxy.ALL_PROXY)
-end
-
-function M.enable_proxy()
-  for environment_name, environment_value in pairs(M.resolve_proxy()) do
-    vim.env[environment_name] = environment_value
-  end
-end
+M.proxy_from_env = proxy.from_environment
+M.resolve_proxy = proxy.resolve
+M.enable_proxy = proxy.enable
 
 local chinese_pattern = vim.regex([=[[一-鿿]]=])
 
@@ -183,46 +147,9 @@ M.providers = {
       return candidate_lines
     end,
   },
-  google = {
-    name = 'Google',
-    build = function(_source_language, target_language, text)
-      local command = curl_base()
-      vim.list_extend(command, {
-        '--get',
-        'https://translate.googleapis.com/translate_a/single',
-        '--data-urlencode',
-        'client=gtx',
-        '--data-urlencode',
-        'sl=auto',
-        '--data-urlencode',
-        'tl=' .. target_language,
-        '--data-urlencode',
-        'dt=t',
-        '--data-urlencode',
-        'q=' .. text,
-      })
-      return command
-    end,
-    parse = function(response_document)
-      if type(response_document) ~= 'table' or type(response_document[1]) ~= 'table' then
-        return {}
-      end
-
-      local parts = {}
-      for _, segment in ipairs(response_document[1]) do
-        if type(segment) == 'table' and type(segment[1]) == 'string' then
-          parts[#parts + 1] = segment[1]
-        end
-      end
-      if #parts == 0 then
-        return {}
-      end
-      return { table.concat(parts) }
-    end,
-  },
 }
 
-M.provider_order = { 'mymemory', 'google' }
+M.provider_order = { 'mymemory' }
 M.default_provider = 'mymemory'
 
 function M.next_provider(current_provider)
@@ -242,10 +169,6 @@ end
 
 function M.translation_candidates(response_document)
   return M.providers.mymemory.parse(response_document)
-end
-
-function M.google_translation_candidates(response_document)
-  return M.providers.google.parse(response_document)
 end
 
 -- Parse a Youdao dictionary response into display lines: phonetics, senses,

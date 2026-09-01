@@ -159,6 +159,46 @@ assert(
 )
 vim.api.nvim_buf_set_lines(0, 0, -1, false, {})
 
+local historical_buffer = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(historical_buffer, 0, -1, false, {
+  'local function before_commit()',
+  'end',
+  'local after_value = 1',
+})
+local historical_entries = symbols.buffer_definitions(
+  historical_buffer,
+  '/work/repository/example.lua',
+  '/work/repository'
+)
+assert(#historical_entries == 2, 'Historical-buffer search did not index in-memory definitions')
+assert(
+  historical_entries[1].symbol_name == 'before_commit'
+    and historical_entries[1].lnum == 1,
+  'Historical-buffer function entry lost its revision-local line'
+)
+assert(
+  historical_entries[2].symbol_name == 'after_value'
+    and historical_entries[2].lnum == 3,
+  'Historical-buffer variable entry lost its revision-local line'
+)
+local large_historical_source = {}
+for definition_index = 1, 1005 do
+  large_historical_source[definition_index] = ('local historical_%d = %d'):format(
+    definition_index,
+    definition_index
+  )
+end
+vim.api.nvim_buf_set_lines(historical_buffer, 0, -1, false, large_historical_source)
+assert(
+  #symbols.buffer_definitions(
+    historical_buffer,
+    '/work/repository/example.lua',
+    '/work/repository'
+  ) == 1000,
+  'Historical-buffer definition index exceeded its performance cap'
+)
+vim.api.nvim_buf_delete(historical_buffer, { force = true })
+
 rawset(vim.lsp, 'get_clients', original_get_clients)
 package.loaded['telescope.pickers'] = original_pickers
 package.loaded['telescope.config'] = original_config

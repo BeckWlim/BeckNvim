@@ -48,7 +48,12 @@ local function map_windows()
 
   map('<Tab>', '<C-w>w', 'Next window')
   map('<S-Tab>', '<C-w>W', 'Previous window')
-  map('<Space>o', '<C-o>', 'Jump back')
+  map('<Space>o', function()
+    if require('config.git').return_to_inspector() then
+      return
+    end
+    vim.api.nvim_feedkeys(vim.keycode('<C-o>'), 'n', false)
+  end, 'Jump back')
   map('<Space>p', '<C-i>', 'Jump forward')
 end
 
@@ -92,6 +97,11 @@ local function map_finders()
   map('<Space>fs', telescope_builtin('lsp_document_symbols'), 'Document symbols')
   map('<Space>fw', workspace_symbols.open, 'Project workspace symbols')
   map('<Space>ft', workspace_symbols.open_for_cursor, 'Project definitions of cursor word')
+  local git = require('config.git')
+  map('<Space>de', git.search_repository, 'Enter Git mode and search repository')
+  map('<Space>df', git.history_file, 'Git history for current file')
+  map('<Space>ds', git.history_symbol, 'Git history for cursor symbol')
+  map('<Space>dr', git.history_repository, 'Git history for repository')
 end
 
 local function map_diagnostics()

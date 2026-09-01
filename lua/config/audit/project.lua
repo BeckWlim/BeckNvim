@@ -1,5 +1,6 @@
 local M = {}
 local project = require('config.project')
+local float = require('config.ui.float')
 local audit_states = {}
 local write_tracking_setup = false
 
@@ -113,7 +114,11 @@ local function open_task_output(task)
   local close = function()
     close_task_float(bufnr)
   end
-  vim.keymap.set('n', 'q', close, { buffer = bufnr, nowait = true, silent = true, desc = 'Close audit log' })
+  float.bind_close({
+    buffer = bufnr,
+    close = close,
+    description = 'Close audit log',
+  })
   vim.keymap.set('n', '<Esc>', close, { buffer = bufnr, nowait = true, silent = true, desc = 'Close audit log' })
 end
 

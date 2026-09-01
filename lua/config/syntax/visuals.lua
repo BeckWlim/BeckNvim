@@ -20,6 +20,10 @@ local rainbow_highlight_groups = {
 
 local current_scope_background = '#2B2C26'
 
+function M.should_highlight_scope(buffer_number)
+  return not vim.startswith(vim.api.nvim_buf_get_name(buffer_number), 'diffview://')
+end
+
 local global_wrapper_node_types = {
   chunk = true,
   document = true,
@@ -199,6 +203,11 @@ end
 
 local function highlight_current_scope(buffer_number)
   if not vim.api.nvim_buf_is_valid(buffer_number) then
+    return
+  end
+
+  if not M.should_highlight_scope(buffer_number) then
+    vim.api.nvim_buf_clear_namespace(buffer_number, scope_namespace, 0, -1)
     return
   end
 

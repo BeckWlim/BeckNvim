@@ -3,6 +3,7 @@
 -- live in `config.translation.providers`; their pure functions are re-exported
 -- here so the public surface remains `config.translation`.
 local providers = require('config.translation.providers')
+local float = require('config.ui.float')
 
 local M = {
   cold_time_ms = 700,
@@ -20,7 +21,6 @@ for _, name in ipairs({
   'next_provider',
   'provider_status_line',
   'translation_candidates',
-  'google_translation_candidates',
   'dictionary_lines',
 }) do
   M[name] = providers[name]
@@ -80,20 +80,46 @@ local function query_text(query_state)
   return table.concat(input_lines, '\n')
 end
 
-local function show_result(query_state, result_lines, highlight_group)
+local function text_line(text, highlight_group)
+  local display_text = text == '' and ' ' or text
+  return { { '  ' .. display_text, highlight_group } }
+end
+
+local function section_divider(label, available_width)
+  local left_rule = '── '
+  local right_padding = ' '
+  local occupied_width = vim.fn.strdisplaywidth(left_rule .. label .. right_padding)
+  local right_rule_width = math.max(1, available_width - occupied_width)
+  return {
+    { left_rule, 'TranslationSeparator' },
+    { label, 'TranslationSection' },
+    { right_padding .. string.rep('─', right_rule_width), 'TranslationSeparator' },
+  }
+end
+
+local function query_title(provider, proxy_label)
+  local status_line = providers.provider_status_line(provider, proxy_label)
+  return ' Translator · ' .. status_line .. ' '
+end
+
+local function update_query_title(query_state)
+  if not vim.api.nvim_win_is_valid(query_state.winid) then
+    return
+  end
+  vim.api.nvim_win_set_config(query_state.winid, {
+    title = query_title(query_state.provider, query_state.proxy_label),
+    title_pos = 'center',
+  })
+end
+
+local function show_result(query_state, content_lines)
   if not query_is_active(query_state) then
     return
   end
 
-  local separator_width = math.max(1, vim.api.nvim_win_get_width(query_state.winid) - 2)
-  local status_line = providers.provider_status_line(query_state.provider, query_state.proxy_label)
-  local virtual_lines = {
-    { { string.rep('─', separator_width), 'FloatBorder' } },
-    { { ' ' .. status_line, 'Comment' } },
-  }
-  for _, result_line in ipairs(result_lines) do
-    local display_line = result_line == '' and ' ' or result_line
-    table.insert(virtual_lines, { { ' ' .. display_line, highlight_group } })
+  local virtual_lines = {}
+  for _, content_line in ipairs(content_lines) do
+    table.insert(virtual_lines, content_line)
   end
 
   vim.api.nvim_buf_clear_namespace(query_state.bufnr, result_namespace, 0, -1)
@@ -108,21 +134,38 @@ end
 local function render_current_result(query_state)
   local rendered_lines = {}
   if query_state.translation_error then
-    table.insert(rendered_lines, 'Translation failed')
-    table.insert(rendered_lines, query_state.translation_error)
+    table.insert(rendered_lines, section_divider(
+      'Translation failed',
+      vim.api.nvim_win_get_width(query_state.winid)
+    ))
+    table.insert(rendered_lines, text_line(query_state.translation_error, 'TranslationError'))
   elseif query_state.translation_lines then
-    table.insert(rendered_lines, 'Translation')
-    vim.list_extend(rendered_lines, query_state.translation_lines)
+    table.insert(rendered_lines, section_divider(
+      'Translation',
+      vim.api.nvim_win_get_width(query_state.winid)
+    ))
+    for _, translation_line in ipairs(query_state.translation_lines) do
+      table.insert(rendered_lines, text_line(translation_line, 'TranslationContent'))
+    end
   else
-    table.insert(rendered_lines, 'Translating…')
+    table.insert(rendered_lines, text_line('Translating…', 'TranslationNotification'))
   end
 
   if query_state.dictionary_lines and #query_state.dictionary_lines > 0 then
-    table.insert(rendered_lines, '')
-    table.insert(rendered_lines, 'Dictionary')
-    vim.list_extend(rendered_lines, query_state.dictionary_lines)
+    table.insert(rendered_lines, text_line('', 'TranslationContent'))
+    table.insert(rendered_lines, section_divider(
+      'Dictionary',
+      vim.api.nvim_win_get_width(query_state.winid)
+    ))
+    for _, dictionary_line in ipairs(query_state.dictionary_lines) do
+      table.insert(rendered_lines, text_line(dictionary_line, 'TranslationDictionary'))
+    end
   end
-  show_result(query_state, rendered_lines, 'NormalFloat')
+  show_result(query_state, rendered_lines)
+end
+
+local function show_notification(query_state, message)
+  show_result(query_state, { text_line(message, 'TranslationNotification') })
 end
 
 local function should_query_dictionary(input_text)
@@ -283,12 +326,29 @@ end
 
 function M.switch_provider(query_state)
   query_state.provider = providers.next_provider(query_state.provider)
+  update_query_title(query_state)
   local input_text = query_text(query_state)
   if vim.trim(input_text) == '' then
-    show_result(query_state, { 'Type Chinese or English, pause to auto-translate.' }, 'Comment')
+    show_notification(query_state, 'Type Chinese or English, pause to auto-translate.')
   else
     M.translate(input_text)
   end
+end
+
+function M.refresh_proxy()
+  local query_state = active_query_state
+  if not query_state or not query_is_active(query_state) then
+    return false
+  end
+  local proxy_environment, proxy_label = providers.resolve_proxy()
+  query_state.proxy_env = proxy_environment
+  query_state.proxy_label = proxy_label
+  update_query_title(query_state)
+  local input_text = query_text(query_state)
+  if vim.trim(input_text) ~= '' then
+    M.translate(input_text)
+  end
+  return true
 end
 
 local function schedule_translation(query_state)
@@ -304,11 +364,11 @@ local function schedule_translation(query_state)
   stop_requests(query_state)
   local input_text = query_text(query_state)
   if vim.trim(input_text) == '' then
-    show_result(query_state, { 'Type Chinese or English, pause to auto-translate.' }, 'Comment')
+    show_notification(query_state, 'Type Chinese or English, pause to auto-translate.')
     return
   end
 
-  show_result(query_state, { 'Waiting…' }, 'Comment')
+  show_notification(query_state, 'Waiting…')
   query_state.timer:start(M.cold_time_ms, 0, vim.schedule_wrap(function()
     if not query_is_active(query_state) then
       return
@@ -325,6 +385,7 @@ function M.open()
   close_query()
 
   local proxy_env, proxy_label = providers.resolve_proxy()
+  local initial_provider = providers.default_provider
   local width = math.max(50, math.min(88, math.floor(vim.o.columns * 0.72)))
   local height = math.max(10, math.min(16, math.floor((vim.o.lines - 2) * 0.55)))
   local query_bufnr = vim.api.nvim_create_buf(false, true)
@@ -339,13 +400,21 @@ function M.open()
     height = height,
     style = 'minimal',
     border = 'rounded',
-    title = ' Translator ',
+    title = query_title(initial_provider, proxy_label),
     title_pos = 'center',
-    footer = ' Auto 700ms \194\183 Ctrl-P provider \194\183 q/Ctrl-Q close ',
+    footer = ' Auto 700ms \194\183 Ctrl-G provider \194\183 q/Ctrl-Q close ',
     footer_pos = 'center',
   })
   vim.wo[query_winid].wrap = true
   vim.wo[query_winid].scrolloff = 0
+  vim.wo[query_winid].winhighlight = table.concat({
+    'Normal:TranslationFloat',
+    'NormalFloat:TranslationFloat',
+    'EndOfBuffer:TranslationFloat',
+    'FloatBorder:TelescopeBorder',
+    'FloatTitle:TelescopeBorder',
+    'FloatFooter:TelescopeBorder',
+  }, ',')
 
   local debounce_timer = assert(vim.uv.new_timer())
   local query_state = {
@@ -360,39 +429,10 @@ function M.open()
     dictionary_process = nil,
     proxy_env = proxy_env,
     proxy_label = proxy_label,
-    provider = providers.default_provider,
+    provider = initial_provider,
   }
   active_query_state = query_state
-  show_result(query_state, { 'Type Chinese or English, pause to auto-translate.' }, 'Comment')
-
-  vim.keymap.set('n', 'q', close_query, {
-    buffer = query_bufnr,
-    nowait = true,
-    silent = true,
-    desc = 'Close translation query',
-  })
-  vim.keymap.set('i', '<C-q>', close_query, {
-    buffer = query_bufnr,
-    nowait = true,
-    silent = true,
-    desc = 'Close translation query',
-  })
-  vim.keymap.set('n', '<C-p>', function()
-    M.switch_provider(query_state)
-  end, {
-    buffer = query_bufnr,
-    nowait = true,
-    silent = true,
-    desc = 'Switch translation provider',
-  })
-  vim.keymap.set('i', '<C-p>', function()
-    M.switch_provider(query_state)
-  end, {
-    buffer = query_bufnr,
-    nowait = true,
-    silent = true,
-    desc = 'Switch translation provider',
-  })
+  show_notification(query_state, 'Type Chinese or English, pause to auto-translate.')
 
   local change_group = vim.api.nvim_create_augroup(
     'translation_query_' .. query_bufnr,
@@ -419,6 +459,22 @@ function M.open()
   })
 
   vim.cmd('startinsert')
+  float.bind_close({
+    accepts_input = true,
+    buffer = query_bufnr,
+    close = close_query,
+    description = 'Close translation query',
+  })
+  -- Keep provider switching stable even when only one backend is currently
+  -- registered, so adding a supported replacement does not change the UI.
+  vim.keymap.set({ 'n', 'i' }, '<C-g>', function()
+    M.switch_provider(query_state)
+  end, {
+    buffer = query_bufnr,
+    nowait = true,
+    silent = true,
+    desc = 'Switch translation provider',
+  })
 end
 
 return M

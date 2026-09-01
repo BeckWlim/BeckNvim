@@ -17,6 +17,20 @@ assert(
   'current scope background is not the subtle Monokai variant'
 )
 
+local diffview_buffer = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_name(diffview_buffer, 'diffview://scope-visual-test')
+assert(
+  not syntax_visuals.should_highlight_scope(diffview_buffer),
+  'Diffview buffer retained the editor scope background'
+)
+local ordinary_buffer = vim.api.nvim_create_buf(false, true)
+assert(
+  syntax_visuals.should_highlight_scope(ordinary_buffer),
+  'Ordinary editor buffer unexpectedly lost scope highlighting'
+)
+vim.api.nvim_buf_delete(diffview_buffer, { force = true })
+vim.api.nvim_buf_delete(ordinary_buffer, { force = true })
+
 require('config.syntax.highlights').setup()
 local red_delimiter_highlight = vim.api.nvim_get_hl(0, {
   name = 'RainbowDelimiterRed',

@@ -16,9 +16,9 @@ scopes larger than 120 lines are left unshaded to avoid overwhelming the file.
 - `make` and a C compiler for `telescope-fzf-native.nvim`
 - The [tree-sitter CLI](https://github.com/tree-sitter/tree-sitter/blob/master/crates/cli/README.md)
   (`npm install -g tree-sitter-cli`): the `main` branch of nvim-treesitter builds parsers through
-  it. Without it, parser installation fails silently and the sticky scope header, grep-preview
-  breadcrumbs, Treesitter highlighting, and folding stop rendering. The config installs the Python
-  and C++ parsers automatically on startup once the CLI is available.
+  it. The CLI enables parser installation, sticky scope headers, grep-preview breadcrumbs,
+  Treesitter highlighting, and folding. The config installs the Python and C++ parsers automatically
+  on startup once the CLI is available.
 - A Nerd Font for the complete icon set; the GUI defaults to Hack Nerd Font
 
 Mason installs the configured language servers on demand. The current setup covers Bash,
@@ -43,7 +43,7 @@ sudo apt install git curl wget unzip ripgrep make gcc python3 nodejs npm cmake n
   install the one matching your display server.
 - A [Nerd Font](https://www.nerdfonts.com/) such as Hack Nerd Font supplies the complete icon set.
 
-## Installation
+## Quick Start
 
 Back up the existing configuration, clone this repository, and start Neovim:
 
@@ -73,8 +73,9 @@ lua/
 │   ├── init.lua                  Configuration assembly order
 │   ├── project.lua               Shared project-root and path boundary logic
 │   ├── startup/                  Editor options, autocmds, plugin bootstrap, keymaps
-│   ├── ui/                       Dashboard, statusline, file tree, and terminal behavior
+│   ├── ui/                       Float/folder-picker policy, dashboard, statusline, file tree, terminal
 │   ├── search/                   Telescope wiring, pickers, definitions, LSP locations
+│   ├── git/                      History/detach workflow, Diffview UI, GitHub issue details
 │   ├── lsp/                      Servers, completion, type information, diagnostics
 │   ├── syntax/                   Treesitter context, scope visuals, highlights, folds
 │   ├── type_hierarchy/           Recursive class hierarchy and implementation pickers
@@ -86,9 +87,11 @@ tests/                            Focused regression tests
 lazy-lock.json                    Pinned plugin versions
 ```
 
-See [Architecture](docs/architecture.md) for module ownership and extension rules.
+See [Architecture](docs/architecture.md) for module ownership and extension rules. The project-local
+[`nvim-design`](.agents/skills/nvim-design/SKILL.md) skill guides implementation work, while
+[`nvim-guide`](.agents/skills/nvim-guide/SKILL.md) covers installation and advanced usage.
 
-## Keymaps
+## Main Functions and Keymaps
 
 The default leader remains `\`. Every `<Space>` entry below uses the literal space key as its
 prefix.
@@ -130,61 +133,52 @@ tree:
 
 1. The nearest ancestor containing `.git` is authoritative.
 2. Outside Git repositories, the most specific attached LSP root is used for an open buffer.
-3. Without either, the nearest workspace marker is used: `.venv`, Pyright configuration,
+3. Next, the nearest workspace marker is used: `.venv`, Pyright configuration,
    language manifests, or build-system files.
 4. The current working directory is the final fallback.
 
-The statusline renders a GitHub, GitLab, Bitbucket, generic Git, or workspace icon followed by the
-root name and project-relative file path. In nvim-tree,
-`<C-[>` moves the tree root out and `<C-]>` moves it into the selected node. Changes within the
-same detected project proceed immediately; crossing a project boundary asks for confirmation.
+The statusline shows the provider, root name, and project-relative file path. `<Space>h` opens the
+dashboard for recent projects and files; `h/l` changes project, `j/k` changes file, and `<Enter>`
+opens the selection. Press `f` for the shared folder picker, then use `<C-h>`/`<C-l>` to browse,
+`<Tab>` to complete a path, and `<Enter>` to open the workspace.
 
-`<Space>h` opens a compact project theme hosted by dashboard-nvim. A larger terminal Neovim mark and
-fixed `PROJECT DECK` title use a stable upper-page anchor, while the horizontal drawer of up to five
-recent projects extends the visual weight toward the center. The launch-directory project occupies the
-leftmost position, and project positions then remain fixed; `h/l` only moves the selection. The active project's ten
-most recent files appear below using project-relative paths, and `j/k` selects a file. The project
-containing Neovim's launch directory starts selected at the left of the drawer. `<Enter>`
-opens the selected file, or activates the selected project in the same homepage when the drawer is
-focused; project activation does not open or focus the file tree. The active project and its stable
-project-root path appear in a compact two-line footer with provider and folder icons, regardless of
-which project file opened the homepage. The project rows and key prompt share a fixed bottom anchor
-with two rows of breathing room. `q` closes the dashboard.
-The colors, restrained separators, selection background, and
-muted key hint reuse the same visual language as the diagnostic and type-information dialogs.
+In nvim-tree, `<C-[>` moves the root outward and `<C-]>` moves it into the selected node. Crossing a
+project boundary asks for confirmation. These features are owned by `config.project` and `config.ui`.
 
 #### Project Definition Search
 
-`<Space>fw` opens a dedicated Telescope definition picker with the following policy:
+`<Space>fw` searches project definitions for Python, C/C++/CUDA, Lua, Shell, Vim script, and Markdown.
+Results show the symbol, kind, path, and syntax-aware source preview. `gd`, `gD`, `gr`, and `gI`
+remain the LSP navigation keys.
 
-- Scope: Python, C/C++/CUDA, Lua, Shell, Vim script, and Markdown files under the project root.
-- Backend: language-specific ripgrep jobs run in parallel and feed one Telescope finder.
-- Query: two characters start a name-prefix search; longer input uses name containment.
-- Capacity: each query supplies up to 1,000 candidates, and further input narrows the result set.
-- Result row: definition name, symbol kind, and project-relative path.
-- Preview: the source location appears in the Telescope preview window.
-- State: each new query retires the previous finder generation and releases its search jobs.
-- Readiness: initialization completes on Neovim's main loop; an early invocation reports the loading
-  state and accepts a retry after startup settles.
+Across Telescope pickers, `<Tab>` moves between results and preview, while `<C-v>` and `<C-x>` open
+the selection in a vertical or horizontal split. `config.search` owns picker behavior and reuses the
+pinned class/function context from `config.syntax`.
 
-This picker owns project-definition search. LSP navigation remains assigned to `gd`, `gD`, `gr`,
-and `gI`.
+#### Git Repository Inspection
 
-Telescope results support `<C-v>` for a vertical split, `<C-x>` for a horizontal split, and
-`<C-q>` for immediately closing the picker from insert or normal mode.
-Grep previews, including `<Space>fg` and `<Space>fw`, pin the enclosing class/function hierarchy in
-their winbar, such as `Service › run`; conditional and loop blocks are intentionally omitted.
-LSP location previews use the same structural winbar, including reference results opened with `gr`.
-The winbar reuses the regular pinned-context background, bold foreground, muted hierarchy separator,
-and green lower boundary so preview and source-window context remain visually consistent.
+`<Space>df`, `<Space>ds`, and `<Space>dr` open file, symbol, and repository history in one Diffview
+workspace. Every scope uses the same commit → file footer and `BEFORE`/`AFTER` code panes; FILE keeps
+rename tracking and SYMBOL keeps its Git line trace. `<Space>fw` searches definitions in the displayed
+historical buffer.
+
+`<Space>de` enters repository history and opens the Telescope dispatcher for branches, commits,
+changed files, and GitHub issues. A `#<digits>` query combines exact Git subject matches with the
+origin issue or pull request. Search selection reviews and highlights a commit while preserving HEAD;
+`<Space>dm` performs guarded checkout from the footer. Current branch HEAD stays attached, and an
+older commit uses detached HEAD.
+
+Use `<Tab>`/`<S-Tab>` between the footer and code panes, `<Space>dp` to collapse or restore the
+footer, and `<C-q>` to return from search or issue detail to history and then to the editor. Git uses
+the repository's configured transport; GitHub metadata uses the shared proxy environment. The
+workflow is owned by `config.git`; detailed behavior lives in
+[`nvim-guide`](.agents/skills/nvim-guide/references/advanced-usage.md).
 
 ### Pinned Syntax Context
 
-The context window uses a six-line soft budget. Class, function, method, and comparable structural
-scopes always remain visible, as does the scope nearest the cursor. When those anchors and all
-intermediate block scopes do not fit, inner block scopes consume the remaining budget first and
-middle `if`, `with`, loop, or similar scopes may be omitted. Mandatory structural and nearest scopes
-may exceed the soft budget rather than disappear.
+The pinned context keeps class/function structure and the scope nearest the cursor visible within a
+six-line soft budget. `<Space>cc` moves outward through enclosing scopes. `config.syntax` provides the
+same context and highlight policy to editor, Telescope, and Diffview panes.
 
 ### LSP and Diagnostics
 
@@ -205,55 +199,22 @@ may exceed the soft budget rather than disappear.
 | `<Space>cb` | Find all direct and indirect base classes under the cursor |
 | `<Space>ci` | Find concrete implementations of the class or method under the cursor |
 
-`<Space>k` is a plain-text detail view rather than a search picker. It focuses one floating window
-and fills it asynchronously with the current symbol's LSP hover inference plus type-definition
-locations and source lines. Treesitter colors only fenced hover signatures and definition source
-previews using the source buffer's language; styled headings, numbered paths, muted controls, a
-cursor line, and word-aware hanging wraps keep the surrounding UI readable.
-Press `<CR>` on a definition or its preview to jump there; with one definition, `<CR>` works anywhere
-in the window. Press `<Space>k` or `q` to close it and `y` to copy its contents. Python uses
-BasedPyright and C/C++ uses clangd through the same language-neutral requests; `<Space>D` remains the
-separate Telescope workflow for searching type-definition results.
-
-`<Space>e` uses the same focused detail-dialog layout, word wrapping, continuation marker, same-key
-close, and copy behavior while preserving Neovim's diagnostic severity, source, code, and
-related-information highlights. It omits the list-only cursor-line background and places its quick
-buttons in a muted content line because a diagnostic detail normally contains one item.
+`<Space>k` opens inferred type information and type-definition previews; `<CR>` jumps, `y` copies,
+and `q` closes. `<Space>e` uses the same detail-window style for diagnostics. `config.lsp` owns both
+workflows and their language-server requests.
 
 #### Cancellable LSP Queries
 
-Definition, declaration, reference, type-definition, implementation, and class-hierarchy commands
-open an empty Telescope window immediately instead of waiting for the language server. The title
-shows whether the request is still running and how many partial results are available. While a
-request is active, `q` in either insert or normal mode cancels every outstanding LSP request and
-closes the picker; closing the picker through another action also cancels its work.
-
-For a Python identifier inside a function, `gr` first scans identifier nodes in the enclosing syntax
-scope and normally displays local candidates within a few milliseconds. It then starts the current
-document's semantic-highlight request in parallel with the full project reference request. The first
-semantic response replaces the provisional syntax candidates; subsequent results are deduplicated
-and merged into the already visible picker.
+Definition, reference, type-definition, implementation, and hierarchy queries open Telescope
+immediately and stream partial LSP results into the list. Closing the picker cancels the active
+requests. Python references can seed fast local candidates before semantic results arrive.
 
 #### Type Hierarchy and Implementations
 
-The class tools use language-server semantics instead of textual class-name matching, so aliases,
-imports, multiple inheritance, and cross-file relationships remain resolvable. With C++, clangd's
-native Type Hierarchy recursively supplies the complete base/derived tree and its depth. Because
-BasedPyright does not implement that protocol, Python files are indexed in the background with the
-standard-library AST parser. Queries then traverse the in-memory class graph without waiting for an
-LSP round trip; a warm query is expected to open within 100 ms. The index is prepared when a Python
-buffer opens, excludes virtual environments and build outputs, and refreshes after saving a Python
-file while continuing to serve the previous ready snapshot. LSP remains the fallback for symbols
-that are not present in the project index.
-
-On a Python method decorated with `@abstractmethod`, `<Space>ci` reads concrete overrides from the
-in-memory class graph and labels each result with its owning class, such as `SqlRepository.save`.
-On a class name—including a base-class reference inside a multiline inheritance list—it resolves
-that exact indexed class and lists its direct and indirect derived classes without an LSP fallback.
-For a C++ pure virtual method, clangd results are labeled similarly as `SqlRepository::save`. The
-abstract declaration itself is excluded. Class results appear incrementally during recursive LSP
-queries. All three pickers support preview, `<CR>` to open, `<C-v>` for a vertical split, and `<C-x>`
-for a horizontal split.
+`<Space>cd`, `<Space>cb`, and `<Space>ci` find derived classes, base classes, and concrete
+implementations. C/C++ uses clangd hierarchy data; Python uses the background project index. Results
+include their owning class and support Telescope preview and split actions. `config.type_hierarchy`
+owns this feature.
 
 `<Space>gf`, `<Space>gv`, and `<Space>gx` open referenced C/C++ includes, Python imports, and Lua
 modules in the current window, a vertical split, or a horizontal split.
@@ -267,10 +228,13 @@ modules in the current window, a vertical split, or a horizontal split.
 | `<M-e>` | Apply a quick surround operation |
 | `<Space>t` | Open the centered live Chinese/English translation query (700 ms debounce) |
 | `<Space>mp` | Toggle Markdown rendering |
-| `<Space>dv` | Open Diffview for the current branch |
-| `<Space>dvm` | Compare the current branch with `main` |
-| `<Space>dvh` | Show history for the current file |
-| `<Space>dvc` | Close Diffview |
+| `<Space>df` | Open bounded history for the current file |
+| `<Space>de` | Enter repository Git mode and search branches, commits, and GitHub issues |
+| `<Space>ds` | Open bounded history for the function or class under the cursor |
+| `<Space>dr` | Open bounded history for the complete repository |
+| `<Space>dp` | Temporarily collapse or restore the Git history panel |
+| `<Space>dm` | In the Git history list, checkout the selected commit version |
+| `<Space>fw` | Search project definitions; inside Git history, search the selected revision buffer |
 | `gcc` / `gc` | Comment the current line or selection |
 
 Inside the file tree, `<Tab>` keeps the global next-window behavior instead of opening a folder or
@@ -284,20 +248,13 @@ regular scrolling and motions can inspect earlier output; press `v` to select te
 
 #### Translation Configuration
 
-The translation defaults are configured in `lua/config/translation/`. The proxy is resolved at
-query time by `resolve_proxy()` instead of a fixed address: proxy variables already exported into
-Neovim's environment (`http_proxy` / `https_proxy` / `ALL_PROXY`, upper or lower case) are used
-as-is, and when none are present requests go direct with no proxy.
+`config.network` resolves process and shell proxy settings before plugin bootstrap. `:Proxy` shows
+the effective HTTP, HTTPS, fallback, and NO_PROXY routes; `<Enter>` selects or edits a session route,
+and direct mode bypasses the proxy. Shell configuration supplies persistence.
 
-The active provider and proxy are shown in a status line at the top of the query window (for
-example `MyMemory · proxy 127.0.0.1:7890`, or `MyMemory · no proxy`). Two providers are supported:
-[MyMemory](https://mymemory.translated.net/doc/spec.php) (the default) and Google. Press `<C-p>` in
-either insert or normal mode to switch between them; the current input is re-translated immediately.
-Each translation and dictionary subprocess receives the resolved variables explicitly, so running a
-separate `proxy_on` shell function is unnecessary. Network errors and timeouts are captured and
-rendered inside the query window, never echoed into Neovim's command line. Backend selection,
-proxy resolution, and response parsing live in `providers.lua`; the query window, debounce delay,
-and 500-byte backend limit live in `init.lua`.
+`<Space>t` opens live Chinese/English translation through MyMemory. Its title shows the provider and
+proxy state, and network errors render in the same window. `config.translation` owns the query UI and
+provider parsing; GitHub metadata shares the network module.
 
 ## Customization
 
@@ -305,7 +262,8 @@ and 500-byte backend limit live in `init.lua`.
 - Indentation, clipboard, and display options: `lua/config/startup/options.lua`
 - LSP behavior: `lua/config/lsp/init.lua`
 - Completion behavior: `lua/config/lsp/completion.lua`
-- Translation defaults and proxy: `lua/config/translation/providers.lua`
+- Shared GitHub/translation proxy discovery: `lua/config/network/proxy.lua`
+- Translation providers: `lua/config/translation/providers.lua`
 - Class hierarchy and method implementations: `lua/config/type_hierarchy/`
 - Telescope and project definitions: `lua/config/search/telescope.lua`,
   `lua/config/search/workspace_symbols.lua`

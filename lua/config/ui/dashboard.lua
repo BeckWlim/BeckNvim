@@ -334,6 +334,10 @@ local function file_icon(path)
   return icon or '󰈔', highlight or 'TypeInformationIndex'
 end
 
+function M.file_row_prefix(file_index, icon)
+  return ('  %2d  %s  '):format(file_index, icon)
+end
+
 local function render_files(rendered, state, layout_width, maximum_file_rows)
   local project_entry = selected_project(state)
   if not project_entry then
@@ -394,7 +398,7 @@ local function render_files(rendered, state, layout_width, maximum_file_rows)
   for file_index = first_file_index, last_file_index do
     local file_entry = project_entry.files[file_index]
     local icon, icon_highlight = file_icon(file_entry.path)
-    local prefix = ('  %d  %s  '):format(file_index, icon)
+    local prefix = M.file_row_prefix(file_index, icon)
     local relative_path = truncate_display(
       file_entry.relative_path,
       math.max(8, layout_width - vim.fn.strdisplaywidth(prefix))
@@ -409,10 +413,10 @@ local function render_files(rendered, state, layout_width, maximum_file_rows)
       rendered,
       row,
       rendered.left_column + 2,
-      rendered.left_column + 2 + #tostring(file_index),
+      rendered.left_column + 4,
       'TypeInformationIndex'
     )
-    local icon_start = rendered.left_column + #(('  %d  '):format(file_index))
+    local icon_start = rendered.left_column + #(('  %2d  '):format(file_index))
     add_highlight(rendered, row, icon_start, icon_start + #icon, icon_highlight)
     local path_start = rendered.left_column + #prefix
     add_highlight(rendered, row, path_start, -1, 'TypeInformationLocation')
@@ -504,7 +508,7 @@ local function build_render(state)
     add_line(rendered, '')
   end
 
-  local hint = 'h/l project  ·  j/k file  ·  <Enter> activate/open  ·  q close'
+  local hint = 'h/l project  ·  j/k file  ·  f folder  ·  <Enter> activate/open  ·  q close'
   local hint_row = add_centered_line(rendered, truncate_display(hint, layout_width), layout_width)
   add_highlight(rendered, hint_row, 0, -1, 'TypeInformationHint')
   for _ = 1, M.bottom_padding do
@@ -570,9 +574,9 @@ local function schedule_initial_render(state)
 end
 
 function M.activate_project(project_path)
-  local project_root = require('config.project').for_path(project_path)
-  vim.cmd('lcd ' .. vim.fn.fnameescape(project_root))
-  return project_root
+  local normalized_project_path = vim.fs.normalize(project_path)
+  vim.cmd('lcd ' .. vim.fn.fnameescape(normalized_project_path))
+  return normalized_project_path
 end
 
 local function open_selected_file(state)
@@ -596,6 +600,63 @@ local function open_selection(state)
     state.context = { root = activated_root }
     render(state)
   end
+end
+
+local function activate_selected_folder(state, folder_path)
+  local project = require('config.project')
+  local activated_root = M.activate_project(folder_path)
+  local refreshed_projects = M.collect(nil, activated_root)
+  if not refreshed_projects[1] or refreshed_projects[1].root ~= activated_root then
+    local explicit_project = new_project(activated_root)
+    local source_oldfiles = vim.v.oldfiles or {}
+    local scan_count = math.min(#source_oldfiles, M.oldfile_scan_limit)
+    for oldfile_index = 1, scan_count do
+      if #explicit_project.files >= M.file_limit then
+        break
+      end
+      local file_path = normalized_existing_file(source_oldfiles[oldfile_index])
+      if file_path and project.contains(activated_root, file_path) then
+        explicit_project.files[#explicit_project.files + 1] = {
+          path = file_path,
+          relative_path = vim.fs.relpath(activated_root, file_path) or vim.fs.basename(file_path),
+        }
+      end
+    end
+    local explicit_projects = { explicit_project }
+    for _, recent_project in ipairs(refreshed_projects) do
+      if #explicit_projects >= M.project_limit then
+        break
+      end
+      if recent_project.root ~= activated_root
+          and not project.contains(recent_project.root, activated_root) then
+        explicit_projects[#explicit_projects + 1] = recent_project
+      end
+    end
+    explicit_projects.current_index = 1
+    refreshed_projects = explicit_projects
+  end
+  state.projects = refreshed_projects
+  state.project_index = #refreshed_projects > 0 and 1 or 0
+  state.file_index = 1
+  state.mode = 'projects'
+  state.context = { root = activated_root }
+  render(state)
+end
+
+local function open_folder_picker(state)
+  local project_entry = selected_project(state)
+  local starting_root = project_entry and project_entry.root
+    or (state.context and state.context.root)
+    or vim.uv.cwd()
+  require('config.ui.folder_picker').open({
+    starting_directory = starting_root,
+    on_select = function(folder_path)
+      activate_selected_folder(state, folder_path)
+    end,
+    on_close = function()
+      M.restore_after_folder_picker(state.bufnr)
+    end,
+  })
 end
 
 local function move_project(state, offset)
@@ -720,6 +781,9 @@ local function attach_mappings(state)
   map_buffer(state, '<CR>', function()
     open_selection(state)
   end, 'Dashboard: open selection')
+  map_buffer(state, 'f', function()
+    open_folder_picker(state)
+  end, 'Dashboard: open folder')
   map_buffer(state, 'q', function()
     close_dashboard(state)
   end, 'Dashboard: close')
@@ -742,6 +806,18 @@ local function configure_buffer(bufnr, winid)
   vim.wo[winid].signcolumn = 'no'
   vim.wo[winid].spell = false
   vim.wo[winid].wrap = false
+end
+
+function M.restore_after_folder_picker(bufnr)
+  local state = dashboard_states[bufnr]
+  if not state
+      or not vim.api.nvim_buf_is_valid(bufnr)
+      or not vim.api.nvim_win_is_valid(state.winid)
+      or vim.api.nvim_win_get_buf(state.winid) ~= bufnr then
+    return
+  end
+  configure_buffer(bufnr, state.winid)
+  render(state)
 end
 
 function M.attach(bufnr, winid, projects, context)

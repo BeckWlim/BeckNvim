@@ -1,12 +1,15 @@
 local M = {}
+local float = require('config.ui.float')
 
 ---@class QueryPickerHandle
 ---@field find fun(self: QueryPickerHandle)
 ---@field refresh fun(self: QueryPickerHandle, finder: table, options: table)
+---@field set_selection fun(self: QueryPickerHandle, record: table)
 ---@field layout? table
 
 local function picker_title(title, status, active)
-  local action = active and 'q: cancel' or 'q: close'
+  local action_name = active and 'cancel' or 'close'
+  local action = float.input_close_hint .. ': ' .. action_name
   return ('%s · %s · %s'):format(title, status, action)
 end
 
@@ -21,6 +24,7 @@ function M.open(options)
     finished = false,
     picker = nil,
     prompt_buffer = nil,
+    selection_generation = 0,
   }
   local session = {}
 
@@ -88,6 +92,43 @@ function M.open(options)
     change_title(message)
   end
 
+  function session:set_selection(record)
+    if state.closed then
+      return
+    end
+    state.selection_generation = state.selection_generation + 1
+    local active_generation = state.selection_generation
+    local function select_record(active_picker)
+      if state.closed or active_generation ~= state.selection_generation then
+        return
+      end
+      local manager = active_picker.manager
+      local record_index
+      if manager then
+        for candidate_index = 1, manager:num_results() do
+          local candidate_record = manager:get_entry(candidate_index)
+          local same_record = candidate_record == record
+            or (candidate_record
+              and candidate_record.ordinal ~= nil
+              and candidate_record.ordinal == record.ordinal)
+          if same_record then
+            record_index = candidate_index
+            break
+          end
+        end
+      end
+      if record_index then
+        active_picker:set_selection(active_picker:get_row(record_index))
+      end
+    end
+    state.picker:register_completion_callback(function(completed_picker)
+      select_record(completed_picker)
+    end)
+    vim.schedule(function()
+      select_record(state.picker)
+    end)
+  end
+
   function session:cancel()
     if state.closed then
       return
@@ -113,13 +154,22 @@ function M.open(options)
         session:cancel()
         actions.close(prompt_buffer)
       end
-      map('i', 'q', cancel_and_close)
-      map('n', 'q', cancel_and_close)
+      float.bind_close({
+        accepts_input = true,
+        close = cancel_and_close,
+        map = map,
+      })
       vim.api.nvim_create_autocmd('BufWipeout', {
         buffer = prompt_buffer,
         once = true,
         callback = session.cancel,
       })
+      if options.attach_mappings then
+        local keep_default_mappings = options.attach_mappings(prompt_buffer, map, session)
+        if keep_default_mappings == false then
+          return false
+        end
+      end
       return true
     end,
   })

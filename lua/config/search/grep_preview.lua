@@ -101,6 +101,43 @@ function M.new(options)
   local Path = require('plenary.path')
   local working_directory = preview_options.cwd or vim.uv.cwd()
 
+  if preview_options.source_buffer then
+    local source_buffer = preview_options.source_buffer
+    local source_filename = preview_options.source_filename
+      or vim.api.nvim_buf_get_name(source_buffer)
+    return previewers.new_buffer_previewer({
+      title = 'Source Preview',
+      dyn_title = function()
+        return Path:new(source_filename):normalize(working_directory)
+      end,
+      get_buffer_by_name = function()
+        return ('git-history-symbols://%d/%s'):format(source_buffer, source_filename)
+      end,
+      define_preview = function(previewer, entry)
+        if not vim.api.nvim_buf_is_valid(source_buffer) then
+          return
+        end
+        local preview_buffer = previewer.state.bufnr
+        local source_changedtick = vim.api.nvim_buf_get_changedtick(source_buffer)
+        local preview_matches_source = vim.b[preview_buffer].git_history_source_buffer
+            == source_buffer
+          and vim.b[preview_buffer].git_history_source_changedtick == source_changedtick
+        if not preview_matches_source then
+          local source_lines = vim.api.nvim_buf_get_lines(source_buffer, 0, -1, false)
+          vim.bo[preview_buffer].modifiable = true
+          vim.api.nvim_buf_set_lines(preview_buffer, 0, -1, false, source_lines)
+          vim.bo[preview_buffer].filetype = vim.bo[source_buffer].filetype
+          vim.bo[preview_buffer].modifiable = false
+          vim.b[preview_buffer].git_history_source_buffer = source_buffer
+          vim.b[preview_buffer].git_history_source_changedtick = source_changedtick
+        end
+        vim.schedule(function()
+          show_entry(previewer, preview_buffer, entry)
+        end)
+      end,
+    })
+  end
+
   return previewers.new_buffer_previewer({
     title = 'Source Preview',
     dyn_title = function(_, entry)

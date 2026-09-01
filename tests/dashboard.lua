@@ -1,4 +1,11 @@
 local original_dashboard = package.loaded['config.ui.dashboard']
+local original_folder_picker = package.loaded['config.ui.folder_picker']
+local folder_picker_open_options
+package.loaded['config.ui.folder_picker'] = {
+  open = function(options)
+    folder_picker_open_options = options
+  end,
+}
 package.loaded['config.ui.dashboard'] = nil
 
 local dashboard = require('config.ui.dashboard')
@@ -10,6 +17,7 @@ local second_file = vim.fs.joinpath(first_root, 'README.md')
 local third_file = vim.fs.joinpath(second_root, 'lua', 'init.lua')
 local center_root = vim.fs.joinpath(temporary_root, 'gamma')
 local center_file = vim.fs.joinpath(center_root, 'doc', 'guide.md')
+local arbitrary_folder = vim.fs.joinpath(temporary_root, 'plain-folder')
 
 vim.fn.mkdir(vim.fs.joinpath(first_root, '.git'), 'p')
 vim.fn.mkdir(vim.fs.dirname(first_file), 'p')
@@ -17,6 +25,7 @@ vim.fn.mkdir(vim.fs.joinpath(second_root, '.git'), 'p')
 vim.fn.mkdir(vim.fs.dirname(third_file), 'p')
 vim.fn.mkdir(vim.fs.joinpath(center_root, '.git'), 'p')
 vim.fn.mkdir(vim.fs.dirname(center_file), 'p')
+vim.fn.mkdir(arbitrary_folder, 'p')
 vim.fn.writefile({ 'print("alpha")' }, first_file)
 vim.fn.writefile({ '# Alpha' }, second_file)
 vim.fn.writefile({ 'return {}' }, third_file)
@@ -48,9 +57,18 @@ assert(
   prioritized_projects[1].root == center_root,
   'dashboard did not place the launch-directory project at the left edge'
 )
-
 local options = dashboard.options()
 assert(options.theme == 'project', 'dashboard did not select the compact project theme')
+local one_digit_prefix = dashboard.file_row_prefix(1, 'I')
+local two_digit_prefix = dashboard.file_row_prefix(10, 'I')
+assert(
+  one_digit_prefix:find('I', 1, true) == two_digit_prefix:find('I', 1, true),
+  'dashboard file icons shifted when the list index reached two digits'
+)
+assert(
+  one_digit_prefix:find(' 1', 1, true) and two_digit_prefix:find('10', 1, true),
+  'dashboard file indices were not right-aligned in a two-column field'
+)
 
 local original_buffer = vim.api.nvim_get_current_buf()
 local dashboard_buffer = vim.api.nvim_create_buf(false, true)
@@ -175,10 +193,12 @@ end
 local next_project = buffer_mapping('l')
 local next_file = buffer_mapping('j')
 local open_selection = buffer_mapping('<CR>')
+local open_folder = buffer_mapping('f')
 local close = buffer_mapping('q')
 assert(type(next_project.callback) == 'function', 'dashboard has no project drawer navigation')
 assert(type(next_file.callback) == 'function', 'dashboard has no recent-file navigation')
 assert(type(open_selection.callback) == 'function', 'dashboard has no direct open action')
+assert(type(open_folder.callback) == 'function', 'dashboard has no open-folder action')
 assert(type(close.callback) == 'function', 'dashboard has no close action')
 
 next_project.callback()
@@ -191,6 +211,18 @@ local updated_drawer_line = vim.iter(next_project_lines):find(function(line)
   return line:find('alpha', 1, true) and line:find('beta', 1, true)
 end)
 assert(updated_drawer_line == initial_drawer_line, 'project navigation rolled the drawer positions')
+
+open_folder.callback()
+assert(folder_picker_open_options, 'dashboard did not delegate folder search to the shared picker')
+assert(
+  folder_picker_open_options.starting_directory == second_root,
+  'dashboard did not start the shared folder picker from the selected project'
+)
+assert(
+  type(folder_picker_open_options.on_select) == 'function'
+    and type(folder_picker_open_options.on_close) == 'function',
+  'dashboard did not provide selection and restoration boundaries to the shared folder picker'
+)
 
 next_file.callback()
 local original_command = vim.cmd
@@ -209,6 +241,15 @@ assert(activated_root == first_root, 'project action activated the wrong root')
 assert(
   opened_commands[#opened_commands] == 'lcd ' .. vim.fn.fnameescape(first_root),
   'project action did not update the dashboard working directory'
+)
+local activated_arbitrary_folder = dashboard.activate_project(arbitrary_folder)
+assert(
+  activated_arbitrary_folder == arbitrary_folder,
+  'open-folder action did not use the selected folder as the workspace'
+)
+assert(
+  opened_commands[#opened_commands] == 'lcd ' .. vim.fn.fnameescape(arbitrary_folder),
+  'open-folder action did not enter the selected folder'
 )
 
 dashboard.open()
@@ -235,3 +276,4 @@ vim.go.relativenumber = original_global_relativenumber
 vim.go.signcolumn = original_global_signcolumn
 vim.fn.delete(temporary_root, 'rf')
 package.loaded['config.ui.dashboard'] = original_dashboard
+package.loaded['config.ui.folder_picker'] = original_folder_picker

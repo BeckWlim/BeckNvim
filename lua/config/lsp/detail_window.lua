@@ -1,4 +1,5 @@
 local M = {}
+local float = require('config.ui.float')
 
 local function style_window(winid, options)
   if not vim.api.nvim_win_is_valid(winid) then
@@ -34,14 +35,17 @@ function M.attach(options)
 
   style_window(winid, options)
 
-  for _, lhs in ipairs({ options.toggle_key, 'q' }) do
-    vim.keymap.set('n', lhs, close_window, {
-      buffer = bufnr,
-      nowait = true,
-      silent = true,
-      desc = 'Close detail window',
-    })
-  end
+  float.bind_close({
+    buffer = bufnr,
+    close = close_window,
+    description = 'Close detail window',
+  })
+  vim.keymap.set('n', options.toggle_key, close_window, {
+    buffer = bufnr,
+    nowait = true,
+    silent = true,
+    desc = 'Close detail window',
+  })
   vim.keymap.set('n', 'y', function()
     copy_contents(bufnr)
   end, {

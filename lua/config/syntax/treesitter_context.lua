@@ -359,6 +359,46 @@ function M.structural_context_labels(source_buffer, source_row, source_column)
   return labels
 end
 
+function M.enclosing_structure(source_buffer, source_row, source_column)
+  local source_range = { source_row, source_column, source_row, source_column + 1 }
+  local parser
+  local parser_available = pcall(function()
+    parser = vim.treesitter.get_parser(source_buffer)
+    parser:parse()
+  end)
+  if not parser_available or not parser then
+    return
+  end
+
+  local language_tree = parser:language_for_range(source_range)
+  local syntax_tree = language_tree:tree_for_range(source_range, { ignore_injections = true })
+  if not syntax_tree then
+    return
+  end
+
+  local syntax_root = syntax_tree:root()
+  local enclosing_node = syntax_root:named_descendant_for_range(
+    source_row,
+    source_column,
+    source_row,
+    source_column
+  )
+  while enclosing_node do
+    if structural_node_types[enclosing_node:type()] then
+      local start_row, _, end_row, end_column = enclosing_node:range()
+      local final_line = end_row + (end_column == 0 and 0 or 1)
+      local labels = M.structural_context_labels(source_buffer, source_row, source_column)
+      return {
+        first_line = start_row + 1,
+        last_line = math.max(start_row + 1, final_line),
+        label = table.concat(labels, ' › '),
+        node_type = enclosing_node:type(),
+      }
+    end
+    enclosing_node = enclosing_node:parent()
+  end
+end
+
 function M.setup()
   require('treesitter-context').setup({
     enable = true,
