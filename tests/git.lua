@@ -5,36 +5,27 @@ assert(repository.max_history_entries == 50, 'Git history cap changed unexpected
 assert(repository.max_branch_entries == 100, 'Git branch cap changed unexpectedly')
 
 local branch_output = table.concat({
-  '*\trefs/heads/main\tmain\torigin/main\t2026-08-31\tcurrent work',
-  ' \trefs/remotes/origin/main\torigin/main\t\t2026-08-31\tcurrent work',
-  ' \trefs/remotes/origin/feature/topic\torigin/feature/topic\t\t2026-08-30\tnew topic',
-  ' \trefs/remotes/origin/HEAD\torigin/HEAD\t\t2026-08-31\tremote head',
+  '*\trefs/heads/main\tmain\t1111111111111111111111111111111111111111\torigin/main\t2026-08-31\tcurrent work',
+  ' \trefs/remotes/origin/main\torigin/main\t1111111111111111111111111111111111111111\t\t2026-08-31\tcurrent work',
+  ' \trefs/remotes/origin/feature/topic\torigin/feature/topic\t2222222222222222222222222222222222222222\t\t2026-08-30\tnew topic',
+  ' \trefs/remotes/origin/HEAD\torigin/HEAD\t1111111111111111111111111111111111111111\t\t2026-08-31\tremote head',
 }, '\n')
 local branches = repository.parse_branches(branch_output)
 assert(#branches == 3, 'Branch parser retained the remote HEAD pseudo-ref')
 assert(
-  branches[1].current and branches[1].local_name == 'main',
+  branches[1].current
+    and branches[1].short_name == 'main'
+    and branches[1].tip_commit == string.rep('1', 40),
   'Current branch was not identified'
 )
 assert(
-  branches[2].is_remote and not branches[2].track_remote,
-  'Remote branch ignored its existing local counterpart'
+  branches[2].is_remote and branches[2].short_name == 'origin/main',
+  'Remote branch lost its read-only remote-tracking ref'
 )
 assert(
-  branches[3].local_name == 'feature/topic' and branches[3].track_remote,
-  'Remote-only branch did not request a tracking branch'
+  branches[3].refname == 'refs/remotes/origin/feature/topic',
+  'Remote-only branch did not retain its exact review ref'
 )
-assert(
-  vim.deep_equal(repository.commands.switch_branch(branches[1]), { 'git', 'switch', 'main' }),
-  'Local branch did not use safe git switch semantics'
-)
-assert(
-  vim.deep_equal(repository.commands.switch_branch(branches[3]), {
-    'git', 'switch', '--track', 'origin/feature/topic',
-  }),
-  'Remote-only branch did not create a tracking branch'
-)
-
 local branch_command = repository.commands.branches()
 assert(
   vim.tbl_contains(branch_command, '--count=' .. repository.max_branch_entries),
@@ -180,6 +171,16 @@ assert(
   'Commit overview did not use an explicit detached switch'
 )
 assert(
+  vim.deep_equal(repository.commands.attach_branch('main'), { 'git', 'switch', 'main' }),
+  'A detached local branch tip did not use explicit branch attachment'
+)
+assert(
+  vim.deep_equal(repository.commands.commit_is_ancestor('resolved', 'refs/heads/main'), {
+    'git', 'merge-base', '--is-ancestor', 'resolved', 'refs/heads/main',
+  }),
+  'Detached-commit retention did not use an explicit ancestry check'
+)
+assert(
   repository.parse_commit_source('refs/remotes/origin/topic\n') == 'REMOTE'
     and repository.parse_commit_source('refs/heads/main\nrefs/remotes/origin/main\n') == 'LOCAL',
   'Commit source did not prioritize local-branch reachability over remote refs'
@@ -203,6 +204,7 @@ local clean_head_state = repository.parse_head_state(table.concat({
 }, '\n'))
 assert(
   clean_head_state.commit == 'resolved'
+    and clean_head_state.branch_name == 'main'
     and not clean_head_state.detached
     and not clean_head_state.dirty,
   'Clean attached HEAD state was parsed incorrectly'
@@ -213,8 +215,10 @@ local dirty_detached_state = repository.parse_head_state(table.concat({
   '? scratch.txt',
 }, '\n'))
 assert(
-  dirty_detached_state.detached and dirty_detached_state.dirty,
-  'Detached or dirty Git workspace state was lost'
+  dirty_detached_state.detached
+    and dirty_detached_state.branch_name == nil
+    and dirty_detached_state.dirty,
+  'Detached or dirty Git workspace state retained a synthetic branch name'
 )
 
 local original_git_module = package.loaded['config.git']
@@ -226,29 +230,62 @@ local overview_close_calls = 0
 local overview_options
 local replacement_call
 local direct_search_call
+local deferred_git_action
+local defer_git_search = false
+local focus_history_result = false
+local focus_history_calls = 0
+local anchor_logs = {}
 local opened_history_view = { name = 'direct repository history' }
 local head_status_output = table.concat({
   '# branch.oid previous',
   '# branch.head main',
 }, '\n')
 local resolved_commit = string.rep('a', 40)
+local ancestor_exit_code = 0
+local commit_source_output = 'refs/remotes/origin/topic\n'
 package.loaded['config.git.diffview'] = {
   close = function()
     overview_close_calls = overview_close_calls + 1
   end,
   open_file_history = function(options)
     overview_options = options
+    if options.render_ready_callback then
+      options.render_ready_callback(opened_history_view, true, 'test render ready')
+    end
     return opened_history_view
   end,
   is_active = function()
     return false
   end,
-  focus_history_commit = function()
-    return false
+  defer_until_settled = function(action_name, action_callback)
+    if not defer_git_search then
+      return false
+    end
+    deferred_git_action = {
+      callback = action_callback,
+      name = action_name,
+    }
+    return true
+  end,
+  focus_history_commit = function(parent_view)
+    focus_history_calls = focus_history_calls + 1
+    if focus_history_result and parent_view.git_render_ready_callback then
+      local render_callback = parent_view.git_render_ready_callback
+      parent_view.git_render_ready_callback = nil
+      render_callback(parent_view, true, 'test focus ready')
+    end
+    return focus_history_result
   end,
   replace_file_history = function(parent_view, options)
     replacement_call = { options = options, parent_view = parent_view }
+    if options.render_ready_callback then
+      options.render_ready_callback(parent_view, true, 'test replacement ready')
+    end
     return true
+  end,
+  adapt_history_footer = function() end,
+  log_anchor = function(message, level)
+    anchor_logs[#anchor_logs + 1] = { level = level, message = message }
   end,
 }
 package.loaded['config.git.search'] = {
@@ -268,7 +305,9 @@ repository.start = function(command, root, callback)
   elseif command[2] == 'status' then
     callback({ code = 0, stderr = '', stdout = head_status_output })
   elseif command[2] == 'for-each-ref' then
-    callback({ code = 0, stderr = '', stdout = 'refs/remotes/origin/topic\n' })
+    callback({ code = 0, stderr = '', stdout = commit_source_output })
+  elseif command[2] == 'merge-base' then
+    callback({ code = ancestor_exit_code, stderr = '', stdout = '' })
   elseif command[2] == 'switch' then
     callback({ code = 0, stderr = '', stdout = '' })
   else
@@ -278,24 +317,84 @@ repository.start = function(command, root, callback)
 end
 package.loaded['config.git'] = nil
 local git = require('config.git')
+assert(
+  type(git.on) == 'function'
+    and git.supports_event('ready')
+    and not git.supports_event('diffview_file_open_post'),
+  'Git subsystem did not expose a stable renderer-independent event port'
+)
+defer_git_search = true
+assert(git.search_repository())
+assert(
+  deferred_git_action
+    and deferred_git_action.name == 'repository_search'
+    and direct_search_call == nil,
+  'Repository search was dropped instead of waiting for Git teardown'
+)
+defer_git_search = false
+deferred_git_action.callback()
+assert(direct_search_call, 'Deferred repository search did not resume after Git teardown')
+direct_search_call = nil
 assert(git.search_repository())
 assert(
   direct_search_call
     and direct_search_call.root == vim.fs.normalize(vim.uv.cwd())
     and direct_search_call.history_options.kind == 'repository'
+    and direct_search_call.history_options.checked_out_branch == 'main'
+    and direct_search_call.history_options.branch_name == 'main'
+    and direct_search_call.history_options.history_ref == 'refs/heads/main'
+    and direct_search_call.history_options.branch_tip_commit == 'previous'
     and direct_search_call.parent_view == opened_history_view,
   'Direct Git search did not mount repository history beneath its picker'
 )
+
+started_commands = {}
+direct_search_call = nil
+head_status_output = table.concat({
+  '# branch.oid ' .. resolved_commit,
+  '# branch.head (detached)',
+  '? scratch.txt',
+}, '\n')
+assert(git.search_repository())
+assert(
+  #started_commands == 3
+    and started_commands[1].command[2] == 'status'
+    and started_commands[2].command[2] == 'for-each-ref'
+    and started_commands[3].command[2] == 'rev-parse'
+    and direct_search_call
+    and direct_search_call.history_options.branch_name == 'origin/topic'
+    and direct_search_call.history_options.history_ref == 'refs/remotes/origin/topic'
+    and direct_search_call.history_options.selected_commit == resolved_commit
+    and direct_search_call.history_options.detached_head_commit == resolved_commit
+    and direct_search_call.history_options.anchor_plan.branch_ref
+      == 'refs/remotes/origin/topic'
+    and direct_search_call.history_options.anchor_plan.branch_tip_commit == resolved_commit
+    and direct_search_call.history_options.unbounded,
+  'Dirty detached Git entry did not use a containing local or remote-tracking branch history'
+)
+
+started_commands = {}
+head_status_output = table.concat({
+  '# branch.oid previous',
+  '# branch.head main',
+}, '\n')
 assert(git.detach_commit_overview('/work/repository', 'aaaaaaa'))
 assert(
-  #started_commands == 4
-    and started_commands[4].command[2] == 'switch'
+  #started_commands == 3
+    and started_commands[3].command[2] == 'switch'
     and overview_close_calls == 1
     and overview_options.selected_commit == resolved_commit
-    and overview_options.history_ref == 'origin/topic'
+    and overview_options.history_ref == resolved_commit
+    and overview_options.detached_head_commit == resolved_commit
     and overview_options.unbounded
-    and overview_options.source == 'REMOTE',
-  'Commit overview did not resolve, detach, and open the selected commit'
+    and overview_options.source == 'LOCAL',
+  'Context-free commit overview searched branches instead of using the exact commit anchor'
+)
+assert(
+  #anchor_logs >= 5
+    and anchor_logs[1].message:match('requested')
+    and anchor_logs[#anchor_logs].message:match('review render ready'),
+  'Anchor move did not record its staged timing trace in the Diffview log'
 )
 
 started_commands = {}
@@ -305,7 +404,9 @@ head_status_output = table.concat({
 }, '\n')
 assert(git.detach_commit_overview('/work/repository', 'aaaaaaa'))
 assert(
-  #started_commands == 3 and overview_close_calls == 2,
+  #started_commands == 2
+    and overview_close_calls == 2
+    and overview_options.detached_head_commit == resolved_commit,
   'An already-detached commit performed a duplicate switch'
 )
 
@@ -316,7 +417,9 @@ head_status_output = table.concat({
 }, '\n')
 assert(git.detach_commit_overview('/work/repository', 'aaaaaaa'))
 assert(
-  #started_commands == 3 and overview_close_calls == 3,
+  #started_commands == 2
+    and overview_close_calls == 3
+    and overview_options.detached_head_commit == nil,
   'A commit already checked out as branch HEAD was detached unnecessarily'
 )
 
@@ -338,36 +441,112 @@ head_status_output = table.concat({
   '# branch.head main',
 }, '\n')
 local parent_view = { name = 'persistent Git view' }
+focus_history_result = true
 assert(git.detach_commit_overview('/work/repository', 'aaaaaaa', parent_view, {
+  anchor_plan = {
+    branch_name = 'origin/chosen-topic',
+    branch_ref = 'refs/remotes/origin/chosen-topic',
+    branch_tip_commit = string.rep('b', 40),
+    source = 'REMOTE',
+  },
   branch_name = 'origin/chosen-topic',
   source = 'REMOTE',
 }))
 assert(
-  #started_commands == 4
+  #started_commands == 3
+    and started_commands[1].command[2] == 'rev-parse'
+    and started_commands[2].command[2] == 'status'
+    and started_commands[3].command[2] == 'switch'
     and overview_close_calls == 3
+    and focus_history_calls == 0
     and replacement_call
     and replacement_call.parent_view == parent_view
     and replacement_call.options.selected_commit == resolved_commit
-    and replacement_call.options.history_ref == 'origin/chosen-topic'
+    and replacement_call.options.history_ref == 'refs/remotes/origin/chosen-topic'
     and replacement_call.options.unbounded
     and replacement_call.options.branch_name == 'origin/chosen-topic'
+    and replacement_call.options.branch_tip_commit == string.rep('b', 40)
+    and replacement_call.options.checked_out_branch == nil
+    and replacement_call.options.detached_head_commit == resolved_commit
     and replacement_call.options.source == 'REMOTE',
-  'In-mode commit detach did not replace history without exiting the Git workspace'
+  'In-mode commit detach reused stale branch decorations instead of refreshing history'
 )
 
 started_commands = {}
 replacement_call = nil
-git.switch_to_branch('/work/repository', branches[1], parent_view)
+commit_source_output = 'refs/heads/main\n'
+head_status_output = table.concat({
+  '# branch.oid ' .. resolved_commit,
+  '# branch.head (detached)',
+}, '\n')
+assert(git.detach_commit_overview('/work/repository', 'aaaaaaa', parent_view, {
+  anchor_plan = {
+    branch_name = 'main',
+    branch_ref = 'refs/heads/main',
+    branch_tip_commit = resolved_commit,
+    source = 'LOCAL',
+  },
+  branch_name = 'main',
+  source = 'LOCAL',
+}))
 assert(
-  #started_commands == 1
-    and started_commands[1].command[2] == 'switch'
+  #started_commands == 4
+    and started_commands[3].command[2] == 'rev-parse'
+    and started_commands[4].command[2] == 'switch'
+    and vim.deep_equal(started_commands[4].command, { 'git', 'switch', 'main' })
+    and replacement_call
+    and replacement_call.options.branch_name == 'main'
+    and replacement_call.options.history_ref == 'refs/heads/main'
+    and replacement_call.options.checked_out_branch == 'main'
+    and replacement_call.options.detached_head_commit == nil,
+  'Detached HEAD at a local branch tip was not reattached by the explicit anchor action'
+)
+
+started_commands = {}
+replacement_call = nil
+focus_history_result = false
+commit_source_output = 'refs/remotes/origin/topic\n'
+head_status_output = table.concat({
+  '# branch.oid ' .. resolved_commit,
+  '# branch.head (detached)',
+  '? scratch.txt',
+}, '\n')
+git.review_branch('/work/repository', branches[1], parent_view)
+assert(
+  #started_commands == 2
+    and started_commands[1].command[2] == 'status'
+    and started_commands[2].command[2] == 'merge-base'
     and overview_close_calls == 3
     and replacement_call
     and replacement_call.parent_view == parent_view
     and replacement_call.options.kind == 'repository'
+    and replacement_call.options.anchor_plan.branch_ref == 'refs/heads/main'
+    and replacement_call.options.anchor_plan.branch_tip_commit == string.rep('1', 40)
     and replacement_call.options.location.root == '/work/repository'
-    and replacement_call.options.branch_name == 'main',
-  'In-mode branch switch did not replace the bottom list with branch commits'
+    and replacement_call.options.branch_name == 'main'
+    and replacement_call.options.history_ref == 'refs/heads/main'
+    and replacement_call.options.detached_head_commit == resolved_commit
+    and replacement_call.options.selected_commit == resolved_commit
+    and replacement_call.options.review_only
+    and replacement_call.options.unbounded,
+  'Dirty read-only branch review did not retain a contained detached HEAD commit'
+)
+
+started_commands = {}
+replacement_call = nil
+ancestor_exit_code = 1
+git.review_branch('/work/repository', branches[3], parent_view)
+assert(
+  #started_commands == 2
+    and not vim.tbl_contains(started_commands[1].command, 'switch')
+    and not vim.tbl_contains(started_commands[2].command, 'switch')
+    and replacement_call
+    and replacement_call.options.history_ref == 'refs/remotes/origin/feature/topic'
+    and replacement_call.options.source == 'REMOTE'
+    and replacement_call.options.detached_head_commit == resolved_commit
+    and replacement_call.options.selected_commit == nil
+    and not replacement_call.options.unbounded,
+  'Branch review changed HEAD or retained a detached commit outside the selected ref'
 )
 repository.start = original_repository_start
 package.loaded['config.git.diffview'] = original_diffview_module

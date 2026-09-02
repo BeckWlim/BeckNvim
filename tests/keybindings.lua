@@ -22,7 +22,6 @@ for _, module_name in ipairs(replaced_modules) do
 end
 
 local function no_op() end
-local git_return_handled = false
 local git_search_calls = 0
 
 package.loaded['config.audit.diagnostic'] = { open = no_op }
@@ -48,9 +47,6 @@ package.loaded['config.git'] = {
   history_symbol = no_op,
   search_repository = function()
     git_search_calls = git_search_calls + 1
-  end,
-  return_to_inspector = function()
-    return git_return_handled
   end,
 }
 package.loaded['config.search.navigation'] = {
@@ -108,19 +104,7 @@ vim.fn.maparg('<Space>de', 'n', false, true).callback()
 assert(git_search_calls == 1, 'Space-de did not enter repository Git search directly')
 
 local jump_back_mapping = vim.fn.maparg('<Space>o', 'n', false, true)
-local original_feedkeys = vim.api.nvim_feedkeys
-local fed_keys
-vim.api.nvim_feedkeys = function(keys, mode, escape_ks)
-  fed_keys = { keys = keys, mode = mode, escape_ks = escape_ks }
-end
-jump_back_mapping.callback()
-assert(fed_keys and fed_keys.keys == vim.keycode('<C-o>'), 'Ordinary Space-o lost jump-back')
-assert(fed_keys.mode == 'n' and not fed_keys.escape_ks, 'Jump-back feed mode changed')
-git_return_handled = true
-fed_keys = nil
-jump_back_mapping.callback()
-assert(fed_keys == nil, 'Git history return also triggered the ordinary jumplist')
-vim.api.nvim_feedkeys = original_feedkeys
+assert(jump_back_mapping.rhs == '<C-o>', 'Space-o is not a pure jump-back mapping')
 
 assert(
   vim.fn.maparg('gr', 'n', false, true).nowait == 1,

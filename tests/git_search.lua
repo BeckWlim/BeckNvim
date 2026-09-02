@@ -32,7 +32,7 @@ local picker_spec
 local selected_entry
 local select_action
 local jump_call
-local branch_switch_call
+local branch_review_call
 local searched_query
 local preview_buffer = vim.api.nvim_create_buf(false, true)
 local preview_window = vim.api.nvim_open_win(preview_buffer, false, {
@@ -81,22 +81,18 @@ package.loaded['config.git.repository'] = {
         current = true,
         date = '2026-09-01',
         is_remote = false,
-        local_name = 'main',
         refname = 'refs/heads/main',
         short_name = 'main',
         subject = 'Current work',
-        track_remote = false,
         upstream = 'origin/main',
       },
       {
         current = false,
         date = '2026-08-31',
         is_remote = true,
-        local_name = 'topic',
         refname = 'refs/remotes/origin/topic',
         short_name = 'origin/topic',
         subject = 'Remote work',
-        track_remote = true,
         upstream = '',
       },
     }
@@ -155,8 +151,8 @@ package.loaded['config.git'] = {
       root = root,
     }
   end,
-  switch_to_branch = function(root, branch, parent_view)
-    branch_switch_call = { branch = branch, parent_view = parent_view, root = root }
+  review_branch = function(root, branch, parent_view)
+    branch_review_call = { branch = branch, parent_view = parent_view, root = root }
   end,
 }
 package.loaded['config.search.telescope'] = { focus_preview = function() end }
@@ -270,11 +266,11 @@ assert(
 selected_entry = emitted_records[1]
 select_action(41)
 assert(
-  branch_switch_call
-    and branch_switch_call.root == '/work/repository'
-    and branch_switch_call.parent_view == parent_view
-    and branch_switch_call.branch.short_name == 'main',
-  'Selecting a branch root did not dispatch in-mode guarded branch checkout'
+  branch_review_call
+    and branch_review_call.root == '/work/repository'
+    and branch_review_call.parent_view == parent_view
+    and branch_review_call.branch.short_name == 'main',
+  'Selecting a branch root did not dispatch read-only in-mode branch review'
 )
 vim.api.nvim_buf_set_lines(preview_buffer, 0, -1, false, {
   'branch header',
@@ -285,18 +281,18 @@ vim.b[preview_buffer].git_search_commit_by_line = {
   string.rep('a', 40),
 }
 picker.previewer = { state = { winid = preview_window } }
-branch_switch_call = nil
+branch_review_call = nil
 jump_call = nil
 detach_call = nil
 local close_calls_before_unmapped_preview = picker_close_calls
 vim.api.nvim_win_set_cursor(preview_window, { 1, 0 })
 picker.preview_enter_action(41)
 assert(
-  not branch_switch_call
+  not branch_review_call
     and not jump_call
     and not detach_call
     and picker_close_calls == close_calls_before_unmapped_preview,
-  'An unmapped branch-preview line fell through to branch checkout'
+  'An unmapped branch-preview line fell through to branch review'
 )
 vim.api.nvim_win_set_cursor(preview_window, { 2, 0 })
 picker.preview_enter_action(41)

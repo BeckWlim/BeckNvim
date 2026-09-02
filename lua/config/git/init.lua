@@ -2,9 +2,53 @@ local project = require('config.project')
 local panel = require('config.git.panel')
 local repository = require('config.git.repository')
 local ui = require('config.git.ui')
+local events = require('config.git.events')
 
 local M = {}
 local commit_transitioning = false
+
+function M.on(event_name, callback)
+  return events.on(event_name, callback)
+end
+
+function M.supports_event(event_name)
+  return events.supports(event_name)
+end
+
+local function anchor_elapsed_milliseconds(operation)
+  return (vim.uv.hrtime() - operation.started_at_ns) / 1000000
+end
+
+local function anchor_target(operation)
+  return (operation.resolved_commit or operation.requested_commit):sub(1, 12)
+end
+
+local function log_anchor_operation(operation, stage, level)
+  require('config.git.diffview').log_anchor(
+    ('%s · %s · %.1f ms'):format(
+      anchor_target(operation),
+      stage,
+      anchor_elapsed_milliseconds(operation)
+    ),
+    level
+  )
+end
+
+local function set_anchor_footer(operation, status)
+  local parent_view = operation.parent_view
+  if not parent_view then
+    return
+  end
+  parent_view.git_anchor_waiting = status
+  require('config.git.diffview').adapt_history_footer(parent_view)
+end
+
+local function finish_anchor_lifecycle(view, succeeded, detail)
+  local git_diffview = require('config.git.diffview')
+  if type(git_diffview.finish_anchor_operation) == 'function' then
+    git_diffview.finish_anchor_operation(view, succeeded, detail)
+  end
+end
 
 local function current_location()
   local source_buffer = vim.api.nvim_get_current_buf()
@@ -50,6 +94,8 @@ local function current_repository()
   }
 end
 
+local resolve_history_head_options
+
 local function open_history(kind)
   local location, location_error
   if kind == 'repository' then
@@ -70,11 +116,14 @@ local function open_history(kind)
     location.structure.first_line,
     location.structure.last_line,
   } or nil
-  require('config.git.diffview').open_file_history({
+  local history_options = {
     kind = kind,
     location = location,
     range = history_range,
-  })
+  }
+  resolve_history_head_options(history_options, function(resolved_history_options)
+    require('config.git.diffview').open_file_history(resolved_history_options)
+  end)
 end
 
 function M.history_file()
@@ -89,8 +138,88 @@ function M.history_repository()
   open_history('repository')
 end
 
+resolve_history_head_options = function(history_options, callback)
+  local resolved_options = vim.deepcopy(history_options)
+  local history_location = resolved_options.location
+  repository.start(repository.commands.head_state(), history_location.root, function(head_process)
+    if head_process.code ~= 0 then
+      vim.notify(repository.concise_error(head_process), vim.log.levels.WARN)
+      callback(resolved_options)
+      return
+    end
+    local head_state = repository.parse_head_state(head_process.stdout)
+    resolved_options.checked_out_branch = head_state.branch_name
+    if not head_state.detached or not head_state.commit then
+      if head_state.branch_name and head_state.branch_name ~= '' then
+        local branch_ref = 'refs/heads/' .. head_state.branch_name
+        resolved_options.anchor_plan = {
+          branch_name = head_state.branch_name,
+          branch_ref = branch_ref,
+          branch_tip_commit = head_state.commit,
+          source = 'LOCAL',
+        }
+        resolved_options.branch_name = head_state.branch_name
+        resolved_options.branch_tip_commit = head_state.commit
+        resolved_options.history_ref = branch_ref
+        resolved_options.source = 'LOCAL'
+      end
+      callback(resolved_options)
+      return
+    end
+    local detached_commit = head_state.commit
+    resolved_options.detached_head_commit = detached_commit
+    resolved_options.history_ref = detached_commit
+    resolved_options.selected_commit = detached_commit
+    resolved_options.unbounded = true
+    repository.start(repository.commands.commit_sources(detached_commit), history_location.root,
+      function(source_process)
+        if source_process.code ~= 0 then
+          vim.notify(repository.concise_error(source_process), vim.log.levels.WARN)
+          callback(resolved_options)
+          return
+        end
+        local commit_location = repository.parse_commit_location(source_process.stdout)
+        if commit_location.branch_name and commit_location.branch_name ~= 'DETACHED' then
+          resolved_options.branch_name = commit_location.branch_name
+          resolved_options.source = commit_location.source
+          local branch_ref_prefix = commit_location.source == 'REMOTE'
+              and 'refs/remotes/'
+            or 'refs/heads/'
+          local branch_ref = branch_ref_prefix .. commit_location.branch_name
+          resolved_options.history_ref = branch_ref
+          repository.start(repository.commands.resolve_commit(branch_ref), history_location.root,
+            function(branch_tip_process)
+              local branch_tip_lines = branch_tip_process.code == 0
+                  and repository.output_lines(branch_tip_process.stdout)
+                or {}
+              resolved_options.anchor_plan = {
+                branch_name = commit_location.branch_name,
+                branch_ref = branch_ref,
+                branch_tip_commit = branch_tip_lines[1],
+                source = commit_location.source,
+              }
+              resolved_options.branch_tip_commit = branch_tip_lines[1]
+              callback(resolved_options)
+            end)
+          return
+        end
+        callback(resolved_options)
+      end)
+  end)
+end
+
+local function resolve_repository_history_options(location, callback)
+  resolve_history_head_options({
+    kind = 'repository',
+    location = location,
+  }, callback)
+end
+
 function M.search_repository()
   local git_diffview = require('config.git.diffview')
+  if git_diffview.defer_until_settled('repository_search', M.search_repository) then
+    return true
+  end
   if git_diffview.is_active() then
     return git_diffview.search()
   end
@@ -99,15 +228,13 @@ function M.search_repository()
     vim.notify(location_error, vim.log.levels.INFO)
     return false
   end
-  local history_options = {
-    kind = 'repository',
-    location = location,
-  }
-  local view = git_diffview.open_file_history(history_options)
-  if not view then
-    return false
-  end
-  return require('config.git.search').open(location.root, history_options, view)
+  resolve_repository_history_options(location, function(history_options)
+    local view = git_diffview.open_file_history(history_options)
+    if view then
+      require('config.git.search').open(location.root, history_options, view)
+    end
+  end)
+  return true
 end
 
 local function modified_repository_buffers(root)
@@ -133,101 +260,237 @@ local function notify_modified_buffers(modified_paths, action)
   )
 end
 
-local function switch_branch(root, prompt_buffer, branch, parent_view)
-  local modified_paths = modified_repository_buffers(root)
-  if #modified_paths > 0 then
-    notify_modified_buffers(modified_paths, 'switching branches')
-    return
-  end
-
+local function render_branch_review(root, prompt_buffer, branch, parent_view, head_state)
   if prompt_buffer then
     require('telescope.actions').close(prompt_buffer)
   end
   local git_diffview = require('config.git.diffview')
-  if not parent_view then
-    git_diffview.close()
-  end
-  repository.start(repository.commands.switch_branch(branch), root, function(completed_process)
-    if completed_process.code ~= 0 then
-      vim.notify(repository.concise_error(completed_process), vim.log.levels.ERROR)
-      return
-    end
-    vim.cmd('checktime')
+  local branch_name = branch.short_name or branch.refname
+  local branch_ref = branch.refname or branch.short_name
+  local result_source = branch.is_remote and 'REMOTE' or 'LOCAL'
+  local history_options = {
+    anchor_plan = {
+      branch_name = branch_name,
+      branch_ref = branch_ref,
+      branch_tip_commit = branch.tip_commit,
+      source = result_source,
+    },
+    branch_name = branch_name,
+    branch_tip_commit = branch.tip_commit,
+    checked_out_branch = head_state.branch_name,
+    detached_head_commit = head_state.detached and head_state.commit or nil,
+    history_ref = branch_ref,
+    kind = 'repository',
+    location = { root = root },
+    review_only = true,
+    source = result_source,
+  }
+  local function mount_review(selected_commit)
+    history_options.selected_commit = selected_commit
+    history_options.unbounded = selected_commit ~= nil
     if parent_view then
-      git_diffview.replace_file_history(parent_view, {
-        branch_name = branch.local_name,
-        kind = 'repository',
-        location = { root = root },
-        source = 'LOCAL',
-      })
+      git_diffview.replace_file_history(parent_view, history_options)
+    else
+      git_diffview.open_file_history(history_options)
     end
-    vim.notify(('Switched to branch %s'):format(branch.local_name), vim.log.levels.INFO)
-  end)
+  end
+
+  local detached_commit = history_options.detached_head_commit
+  if not detached_commit then
+    mount_review(nil)
+    return
+  end
+  repository.start(repository.commands.commit_is_ancestor(detached_commit, branch_ref), root,
+    function(ancestor_process)
+      if ancestor_process.code == 0 then
+        mount_review(detached_commit)
+        return
+      end
+      if ancestor_process.code ~= 1 then
+        vim.notify(repository.concise_error(ancestor_process), vim.log.levels.WARN)
+      end
+      mount_review(nil)
+    end)
 end
 
-function M.switch_to_branch(root, branch, parent_view)
-  return switch_branch(vim.fs.normalize(root), nil, branch, parent_view)
+function M.review_branch(root, branch, parent_view)
+  local repository_root = vim.fs.normalize(root)
+  repository.start(repository.commands.head_state(), repository_root, function(head_process)
+    if head_process.code ~= 0 then
+      vim.notify(repository.concise_error(head_process), vim.log.levels.ERROR)
+      return
+    end
+    local head_state = repository.parse_head_state(head_process.stdout)
+    render_branch_review(repository_root, nil, branch, parent_view, head_state)
+  end)
+  return true
 end
 
 local function render_commit_overview(
     repository_root,
     commit_hash,
-    source,
-    branch_name,
-    parent_view
+    review_context,
+    parent_view,
+    render_ready_callback,
+    force_rebuild
 )
   local git_diffview = require('config.git.diffview')
+  local selected_context = review_context or {}
   local history_options = {
-    branch_name = branch_name,
-    history_ref = branch_name or commit_hash,
+    anchor_plan = vim.deepcopy(selected_context.anchor_plan),
+    branch_name = selected_context.branch_name,
+    branch_tip_commit = selected_context.branch_tip_commit,
+    checked_out_branch = selected_context.checked_out_branch,
+    detached_head_commit = selected_context.detached_head_commit,
+    history_ref = selected_context.branch_ref or selected_context.branch_name or commit_hash,
     kind = 'repository',
     location = { root = repository_root },
+    render_ready_callback = render_ready_callback,
+    review_only = selected_context.branch_name ~= nil,
     selected_commit = commit_hash,
-    source = source,
+    source = selected_context.source,
     unbounded = true,
   }
   if parent_view then
-    if git_diffview.focus_history_commit(parent_view, commit_hash) then
-      return
+    parent_view.git_render_ready_callback = render_ready_callback
+    if not force_rebuild
+        and not selected_context.detached_head_commit
+        and git_diffview.focus_history_commit(parent_view, commit_hash) then
+      return true
     end
-    git_diffview.replace_file_history(parent_view, history_options)
-    return
+    parent_view.git_render_ready_callback = nil
+    return git_diffview.replace_file_history(parent_view, history_options)
   end
   git_diffview.close()
-  git_diffview.open_file_history(history_options)
+  return git_diffview.open_file_history(history_options) ~= nil
 end
 
 local function open_detached_overview(
     repository_root,
     commit_hash,
     already_at_commit,
-    source,
-    branch_name,
-    parent_view
+    already_detached,
+    parent_view,
+    operation,
+    attach_branch_name,
+    review_context
 )
-  if already_at_commit then
+  local render_finished = false
+  local function finish_render(_, render_succeeded, detail)
+    if render_finished then
+      return
+    end
+    render_finished = true
     commit_transitioning = false
-    render_commit_overview(repository_root, commit_hash, source, branch_name, parent_view)
-    vim.notify(
-      ('Already at %s; kept the current HEAD'):format(commit_hash:sub(1, 12)),
-      vim.log.levels.INFO
+    set_anchor_footer(operation, nil)
+    finish_anchor_lifecycle(
+      operation.parent_view,
+      render_succeeded,
+      detail
     )
+    local elapsed_milliseconds = anchor_elapsed_milliseconds(operation)
+    if render_succeeded then
+      log_anchor_operation(operation, 'review render ready: ' .. detail, 'info')
+      local completion
+      if operation.action == 'attach' then
+        completion = ('attached %s and rendered'):format(attach_branch_name)
+      elseif operation.action == 'detach' then
+        completion = 'detached and rendered'
+      else
+        completion = 'already current; rendered'
+      end
+      vim.notify(
+        ('Git anchor %s: %s in %.1f ms'):format(
+          anchor_target(operation),
+          completion,
+          elapsed_milliseconds
+        ),
+        vim.log.levels.INFO
+      )
+      return
+    end
+    log_anchor_operation(operation, 'review render incomplete: ' .. detail, 'error')
+    vim.notify(
+      ('Git anchor %s: HEAD update %s, but review render was incomplete after %.1f ms; use :DiffviewLog'):format(
+        anchor_target(operation),
+        operation.action == 'none' and 'was unnecessary' or 'completed',
+        elapsed_milliseconds
+      ),
+      vim.log.levels.WARN
+    )
+  end
+
+  if already_at_commit and not (already_detached and attach_branch_name) then
+    local detached_head_commit = already_detached and commit_hash or nil
+    local rendered_context = vim.tbl_extend('force', review_context, {
+      checked_out_branch = already_detached and nil or review_context.branch_name,
+      detached_head_commit = detached_head_commit,
+    })
+    operation.action = 'none'
+    log_anchor_operation(operation, 'HEAD already at target; rendering review', 'info')
+    set_anchor_footer(operation, 'HEAD unchanged; rendering ' .. commit_hash:sub(1, 12))
+    local render_started = render_commit_overview(
+      repository_root,
+      commit_hash,
+      rendered_context,
+      parent_view,
+      finish_render,
+      false
+    )
+    if not render_started then
+      finish_render(nil, false, 'failed to mount replacement history')
+    end
     return
   end
 
-  repository.start(repository.commands.detach_commit(commit_hash), repository_root,
+  local anchor_command
+  local anchor_action
+  if attach_branch_name then
+    anchor_command = repository.commands.attach_branch(attach_branch_name)
+    anchor_action = 'attach'
+  else
+    anchor_command = repository.commands.detach_commit(commit_hash)
+    anchor_action = 'detach'
+  end
+  operation.action = anchor_action
+  log_anchor_operation(operation, 'starting ' .. table.concat(anchor_command, ' '), 'info')
+  local pending_status = anchor_action == 'attach'
+      and ('attaching %s'):format(attach_branch_name)
+    or ('moving HEAD to %s'):format(commit_hash:sub(1, 12))
+  set_anchor_footer(operation, pending_status)
+  repository.start(anchor_command, repository_root,
     function(completed_process)
-      commit_transitioning = false
       if completed_process.code ~= 0 then
+        commit_transitioning = false
+        set_anchor_footer(operation, nil)
+        finish_anchor_lifecycle(
+          operation.parent_view,
+          false,
+          'git switch failed'
+        )
+        log_anchor_operation(operation, 'git switch failed', 'error')
         vim.notify(repository.concise_error(completed_process), vim.log.levels.ERROR)
         return
       end
       vim.cmd('checktime')
-      render_commit_overview(repository_root, commit_hash, source, branch_name, parent_view)
-      vim.notify(
-        ('Detached at %s; opened commit overview'):format(commit_hash:sub(1, 12)),
-        vim.log.levels.INFO
+      local detached_head_commit = anchor_action == 'detach' and commit_hash or nil
+      local rendered_context = vim.tbl_extend('force', review_context, {
+        checked_out_branch = anchor_action == 'attach' and attach_branch_name or nil,
+        detached_head_commit = detached_head_commit,
+      })
+      log_anchor_operation(operation, 'HEAD state updated; rebuilding review', 'info')
+      set_anchor_footer(operation, 'HEAD ready; rendering ' .. commit_hash:sub(1, 12))
+      local render_started = render_commit_overview(
+        repository_root,
+        commit_hash,
+        rendered_context,
+        parent_view,
+        finish_render,
+        true
       )
+      if not render_started then
+        finish_render(nil, false, 'failed to mount replacement history')
+      end
     end)
 end
 
@@ -237,11 +500,33 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
     return false
   end
   local repository_root = vim.fs.normalize(root)
+  local selected_context = commit_context or {}
+  local operation = {
+    parent_view = parent_view,
+    requested_commit = commit_id,
+    resolved_commit = nil,
+    started_at_ns = vim.uv.hrtime(),
+  }
   commit_transitioning = true
+  set_anchor_footer(operation, 'validating ' .. commit_id:sub(1, 12))
+  log_anchor_operation(operation, 'requested', 'info')
+  vim.notify(
+    ('Git anchor %s: validating checkout; details in :DiffviewLog'):format(
+      commit_id:sub(1, 12)
+    ),
+    vim.log.levels.INFO
+  )
   repository.start(repository.commands.resolve_commit(commit_id), repository_root,
     function(resolve_process)
       if resolve_process.code ~= 0 then
         commit_transitioning = false
+        set_anchor_footer(operation, nil)
+        finish_anchor_lifecycle(
+          parent_view,
+          false,
+          'commit resolution failed'
+        )
+        log_anchor_operation(operation, 'commit resolution failed', 'error')
         vim.notify(repository.concise_error(resolve_process), vim.log.levels.ERROR)
         return
       end
@@ -249,13 +534,29 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
       local resolved_commit = resolved_lines[1]
       if not resolved_commit then
         commit_transitioning = false
+        set_anchor_footer(operation, nil)
+        finish_anchor_lifecycle(
+          parent_view,
+          false,
+          'commit resolution returned no object'
+        )
+        log_anchor_operation(operation, 'commit resolution returned no object', 'error')
         vim.notify(('Commit not found: %s'):format(commit_id), vim.log.levels.ERROR)
         return
       end
+      operation.resolved_commit = resolved_commit
+      log_anchor_operation(operation, 'commit resolved; reading HEAD state', 'info')
       repository.start(repository.commands.head_state(), repository_root,
         function(head_process)
           if head_process.code ~= 0 then
             commit_transitioning = false
+            set_anchor_footer(operation, nil)
+            finish_anchor_lifecycle(
+              parent_view,
+              false,
+              'HEAD state read failed'
+            )
+            log_anchor_operation(operation, 'HEAD state read failed', 'error')
             vim.notify(repository.concise_error(head_process), vim.log.levels.ERROR)
             return
           end
@@ -264,6 +565,13 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
           if not already_at_commit then
             if head_state.dirty then
               commit_transitioning = false
+              set_anchor_footer(operation, nil)
+              finish_anchor_lifecycle(
+                parent_view,
+                false,
+                'dirty worktree'
+              )
+              log_anchor_operation(operation, 'refused: dirty worktree', 'warn')
               vim.notify(
                 'Commit overview refused because the Git workspace is dirty',
                 vim.log.levels.WARN
@@ -273,31 +581,100 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
             local modified_paths = modified_repository_buffers(repository_root)
             if #modified_paths > 0 then
               commit_transitioning = false
+              set_anchor_footer(operation, nil)
+              finish_anchor_lifecycle(
+                parent_view,
+                false,
+                'modified editor buffers'
+              )
+              log_anchor_operation(operation, 'refused: modified editor buffers', 'warn')
               notify_modified_buffers(modified_paths, 'detaching HEAD')
               return
             end
           end
-          repository.start(repository.commands.commit_sources(resolved_commit), repository_root,
-            function(source_process)
-              if source_process.code ~= 0 then
-                commit_transitioning = false
-                vim.notify(repository.concise_error(source_process), vim.log.levels.ERROR)
-                return
-              end
-              local commit_location = repository.parse_commit_location(source_process.stdout)
-              local selected_context = commit_context or {}
-              local result_source = selected_context.source or commit_location.source
-              local result_branch_name = selected_context.branch_name
-                or commit_location.branch_name
+          local function continue_with_location(
+              result_source,
+              result_branch_name,
+              branch_ref,
+              prepared_branch_tip
+          )
+            local function continue_anchor(attach_branch_name)
+              local review_context = {
+                anchor_plan = {
+                  branch_name = result_branch_name,
+                  branch_ref = branch_ref,
+                  branch_tip_commit = prepared_branch_tip,
+                  source = result_source,
+                },
+                branch_name = result_branch_name,
+                branch_ref = branch_ref,
+                branch_tip_commit = prepared_branch_tip,
+                source = result_source,
+              }
               open_detached_overview(
                 repository_root,
                 resolved_commit,
                 already_at_commit,
-                result_source,
-                result_branch_name,
-                parent_view
+                head_state.detached,
+                parent_view,
+                operation,
+                attach_branch_name,
+                review_context
               )
-            end)
+            end
+            if result_source ~= 'LOCAL'
+                or not result_branch_name
+                or prepared_branch_tip ~= resolved_commit then
+              continue_anchor(nil)
+              return
+            end
+            local local_branch_name = result_branch_name:match('^refs/heads/(.+)$')
+              or result_branch_name
+            local local_branch_ref = branch_ref or ('refs/heads/' .. local_branch_name)
+            repository.start(repository.commands.resolve_commit(local_branch_ref), repository_root,
+              function(branch_tip_process)
+                if branch_tip_process.code ~= 0 then
+                  log_anchor_operation(
+                    operation,
+                    'prepared local branch tip could not be verified; retaining detached checkout',
+                    'warn'
+                  )
+                  continue_anchor(nil)
+                  return
+                end
+                local current_tip_lines = repository.output_lines(branch_tip_process.stdout)
+                if current_tip_lines[1] == resolved_commit then
+                  log_anchor_operation(
+                    operation,
+                    'prepared target is current local branch tip; attaching ' .. local_branch_name,
+                    'info'
+                  )
+                  continue_anchor(local_branch_name)
+                  return
+                end
+                log_anchor_operation(
+                  operation,
+                  'prepared local branch tip changed; retaining detached checkout',
+                  'warn'
+                )
+                continue_anchor(nil)
+              end)
+          end
+
+          local anchor_plan = selected_context.anchor_plan or {}
+          local reviewed_branch_name = anchor_plan.branch_name or selected_context.branch_name
+          if reviewed_branch_name then
+            log_anchor_operation(operation, 'reusing current review branch anchor plan', 'info')
+            continue_with_location(
+              anchor_plan.source or selected_context.source,
+              reviewed_branch_name,
+              anchor_plan.branch_ref,
+              anchor_plan.branch_tip_commit
+            )
+            return
+          end
+          log_anchor_operation(operation, 'no reviewed branch; using exact commit anchor', 'info')
+          continue_with_location(selected_context.source or 'LOCAL', nil, nil, nil)
         end)
     end)
   return true
@@ -312,7 +689,7 @@ function M.branches(root)
   local repository_root = vim.fs.normalize(selected_root)
   local query_picker = require('config.search.query_picker')
   local session = query_picker.open({
-    title = ('Git Branches · Enter: switch · max %d'):format(repository.max_branch_entries),
+    title = ('Git Branches · Enter: review · max %d'):format(repository.max_branch_entries),
     picker_options = ui.picker_options(repository_root),
     entry_maker = ui.entry,
     previewer = require('telescope.previewers').git_branch_log.new({ cwd = repository_root }),
@@ -332,7 +709,21 @@ function M.branches(root)
       actions.select_default:replace(function(active_prompt_buffer)
         local selected_entry = action_state.get_selected_entry()
         if selected_entry then
-          switch_branch(repository_root, active_prompt_buffer, selected_entry.branch, nil)
+          repository.start(repository.commands.head_state(), repository_root,
+            function(head_process)
+              if head_process.code ~= 0 then
+                vim.notify(repository.concise_error(head_process), vim.log.levels.ERROR)
+                return
+              end
+              local head_state = repository.parse_head_state(head_process.stdout)
+              render_branch_review(
+                repository_root,
+                active_prompt_buffer,
+                selected_entry.branch,
+                nil,
+                head_state
+              )
+            end)
         end
       end)
       map({ 'i', 'n' }, panel.close_key, close_branch_picker, { desc = 'Close branch picker' })
@@ -356,10 +747,6 @@ function M.branches(root)
       session:finish(branch_records)
     end)
   session:add_cancel(cancel_process)
-end
-
-function M.return_to_inspector()
-  return require('config.git.diffview').return_to_inspector()
 end
 
 return M

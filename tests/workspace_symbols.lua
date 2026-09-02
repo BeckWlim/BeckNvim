@@ -25,7 +25,6 @@ local definition_cases = {
     'Function',
     'WrappedMasterService::PutStart',
   },
-  { 'example.md', '## Project symbols', 'Section', 'Project symbols' },
 }
 
 for _, definition_case in ipairs(definition_cases) do
@@ -49,7 +48,6 @@ for _, expected_name in ipairs({
   'PROJECT_LIMIT',
   'MasterService::PutStart',
   'WrappedMasterService::PutStart',
-  'Project symbols',
 }) do
   local commands = symbols.commands(expected_name, fixture_root)
   assert(commands, 'Project definition search did not build query commands')
@@ -68,6 +66,25 @@ for _, expected_name in ipairs({
     'Project definition search omitted ' .. expected_name
   )
 end
+assert(
+  symbols.definition('example.md', '## Project symbols') == nil,
+  'Markdown headings were included in project definition results'
+)
+local markdown_query_commands = symbols.commands('Project', fixture_root)
+assert(markdown_query_commands, 'Markdown exclusion query did not build definition commands')
+local markdown_query_output = {}
+for _, markdown_query_command in ipairs(markdown_query_commands) do
+  local markdown_query_result = vim.system(markdown_query_command, { text = true }):wait()
+  assert(
+    markdown_query_result.code == 0 or markdown_query_result.code == 1,
+    'Project definition search failed: ' .. markdown_query_result.stderr
+  )
+  table.insert(markdown_query_output, markdown_query_result.stdout)
+end
+assert(
+  not table.concat(markdown_query_output, '\n'):find('example.md', 1, true),
+  'Project definition commands included Markdown results'
+)
 assert(symbols.commands('', fixture_root) == nil, 'Empty definition query triggered a full scan')
 assert(symbols.commands('x', fixture_root) == nil, 'One-character query triggered a broad scan')
 
@@ -216,6 +233,7 @@ assert(empty_query_completed, 'Opening the picker triggered a full project scan'
 
 local first_query_completions = 0
 local second_query_completions = 0
+local superseded_job_count = #symbols.commands('Indexed', fixture_root)
 picker_finder('Indexed', function() end, function()
   first_query_completions = first_query_completions + 1
 end)
@@ -223,7 +241,7 @@ picker_finder('Project', function() end, function()
   second_query_completions = second_query_completions + 1
 end)
 assert(first_query_completions == 0, 'Superseded definition query finalized a newer picker state')
-for job_index = 1, 6 do
+for job_index = 1, superseded_job_count do
   assert(fake_jobs[job_index].is_shutdown, 'Superseded ripgrep job was not stopped')
 end
 picker_finder.close()

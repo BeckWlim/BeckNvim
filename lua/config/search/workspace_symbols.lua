@@ -195,12 +195,6 @@ function M.definition(filename, source_line)
   if normalized_extension == 'vim' then
     return vim_definition(source_line)
   end
-  if normalized_extension == 'md' or normalized_extension == 'markdown' then
-    local heading_name = source_line:match('^%s*#+%s+(.+)%s*$')
-    if heading_name then
-      return definition('Section', heading_name)
-    end
-  end
   if c_family_extensions[normalized_extension] then
     return c_family_definition(source_line)
   end
@@ -275,9 +269,6 @@ function M.commands(prompt, root)
   }, '|')
   local vim_pattern = [=[\s*(?:fu\w*!?|def!?|class|com\w*!?|let|var)\s+]=]
     .. compound_name_pattern
-  local markdown_pattern = [=[\s*#{1,6}\s+[^\r\n]*\Q]=]
-    .. literal_prompt
-    .. [=[\E[^\r\n]*]=]
   local c_family_pattern = table.concat({
     [=[\s*(?:class|struct|union|namespace|concept)\s+]=] .. simple_name_pattern,
     [=[\s*enum(?:\s+(?:class|struct))?\s+]=] .. simple_name_pattern,
@@ -298,7 +289,6 @@ function M.commands(prompt, root)
     search_command({ '--glob=*.lua' }, lua_pattern),
     search_command({ '--glob=*.sh', '--glob=*.bash' }, shell_pattern),
     search_command({ '--glob=*.vim' }, vim_pattern),
-    search_command({ '--glob=*.md', '--glob=*.markdown' }, markdown_pattern),
     search_command({
       '--glob=*.c',
       '--glob=*.cc',

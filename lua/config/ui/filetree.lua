@@ -51,6 +51,10 @@ function M.on_attach(bufnr)
   local api = require('nvim-tree.api')
   api.map.on_attach.default(bufnr)
   pcall(vim.keymap.del, 'n', '<Tab>', { buffer = bufnr })
+  pcall(vim.keymap.del, 'n', '<Esc>', { buffer = bufnr })
+  pcall(vim.keymap.del, 'n', '<C-[>', { buffer = bufnr })
+  pcall(vim.keymap.del, 'n', '-', { buffer = bufnr })
+  pcall(vim.keymap.del, 'n', '<C-]>', { buffer = bufnr })
 
   vim.keymap.set('n', '<CR>', function()
     local selected_node = api.tree.get_node_under_cursor()
@@ -63,7 +67,7 @@ function M.on_attach(bufnr)
     silent = true,
     desc = 'nvim-tree: Open except parent entry',
   })
-  vim.keymap.set('n', '<C-[>', function()
+  vim.keymap.set('n', 'gh', function()
     local tree_root = current_tree_root()
     if not tree_root or M.confirm_project_change(tree_root, parent_path(tree_root)) then
       api.tree.change_root_to_parent()
@@ -72,9 +76,9 @@ function M.on_attach(bufnr)
     buffer = bufnr,
     nowait = true,
     silent = true,
-    desc = 'nvim-tree: Root out',
+    desc = 'nvim-tree: Root back',
   })
-  vim.keymap.set('n', '<C-]>', function()
+  vim.keymap.set('n', 'gl', function()
     local selected_node = api.tree.get_node_under_cursor()
     local tree_root = current_tree_root()
     if not tree_root then
@@ -89,7 +93,7 @@ function M.on_attach(bufnr)
     buffer = bufnr,
     nowait = true,
     silent = true,
-    desc = 'nvim-tree: Root in',
+    desc = 'nvim-tree: Root ahead',
   })
 end
 

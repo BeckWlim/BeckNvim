@@ -88,6 +88,12 @@ local function commit_target(commit, branch)
     or commit.branch_name
     or commit.hash
   return {
+    anchor_plan = branch and {
+      branch_name = branch.short_name or branch.refname,
+      branch_ref = branch.refname or branch.short_name,
+      branch_tip_commit = branch.tip_commit,
+      source = branch.is_remote and 'REMOTE' or 'LOCAL',
+    } or nil,
     branch_name = branch and (branch.short_name or branch.refname) or commit.branch_name,
     hash = commit.hash,
     history_ref = history_ref,
@@ -384,7 +390,7 @@ local function open_picker(context, restore_query)
             end,
           })
         elseif selected_entry.kind == 'branch' then
-          require('config.git').switch_to_branch(
+          require('config.git').review_branch(
             context.root,
             selected_entry.branch,
             context.parent_view

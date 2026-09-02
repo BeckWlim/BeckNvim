@@ -48,12 +48,7 @@ local function map_windows()
 
   map('<Tab>', '<C-w>w', 'Next window')
   map('<S-Tab>', '<C-w>W', 'Previous window')
-  map('<Space>o', function()
-    if require('config.git').return_to_inspector() then
-      return
-    end
-    vim.api.nvim_feedkeys(vim.keycode('<C-o>'), 'n', false)
-  end, 'Jump back')
+  map('<Space>o', '<C-o>', 'Jump back')
   map('<Space>p', '<C-i>', 'Jump forward')
 end
 

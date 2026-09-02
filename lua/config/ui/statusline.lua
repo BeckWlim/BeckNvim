@@ -30,6 +30,21 @@ function M.project_relative_path()
   return status_path
 end
 
+function M.refresh_git_branch()
+  local branch_component_available, branch_component = pcall(
+    require,
+    'lualine.components.branch.git_branch'
+  )
+  if branch_component_available and type(branch_component.find_git_dir) == 'function' then
+    pcall(branch_component.find_git_dir)
+  end
+
+  local lualine_available, lualine = pcall(require, 'lualine')
+  if lualine_available and type(lualine.refresh) == 'function' then
+    pcall(lualine.refresh, { force = true, place = { 'statusline' } })
+  end
+end
+
 function M.setup()
   require('lualine').setup({
     sections = {

@@ -142,12 +142,13 @@ dashboard for recent projects and files; `h/l` changes project, `j/k` changes fi
 opens the selection. Press `f` for the shared folder picker, then use `<C-h>`/`<C-l>` to browse,
 `<Tab>` to complete a path, and `<Enter>` to open the workspace.
 
-In nvim-tree, `<C-[>` moves the root outward and `<C-]>` moves it into the selected node. Crossing a
-project boundary asks for confirmation. These features are owned by `config.project` and `config.ui`.
+In nvim-tree, `gh` moves the root back to its parent and `gl` moves it ahead into the selected node.
+`<Esc>` remains unmapped instead of changing the tree root. Crossing a project boundary asks for
+confirmation. These features are owned by `config.project` and `config.ui`.
 
 #### Project Definition Search
 
-`<Space>fw` searches project definitions for Python, C/C++/CUDA, Lua, Shell, Vim script, and Markdown.
+`<Space>fw` searches project definitions for Python, C/C++/CUDA, Lua, Shell, and Vim script.
 Results show the symbol, kind, path, and syntax-aware source preview. `gd`, `gD`, `gr`, and `gI`
 remain the LSP navigation keys.
 
@@ -158,27 +159,99 @@ pinned class/function context from `config.syntax`.
 #### Git Repository Inspection
 
 `<Space>df`, `<Space>ds`, and `<Space>dr` open file, symbol, and repository history in one Diffview
-workspace. Every scope uses the same commit → file footer and `BEFORE`/`AFTER` code panes; FILE keeps
-rename tracking and SYMBOL keeps its Git line trace. `<Space>fw` searches definitions in the displayed
-historical buffer.
+workspace. Every scope uses the same commit → file footer and `BEFORE`/`AFTER` code panes. FILE keeps
+rename tracking and SYMBOL keeps its Git line trace to select related commits, while their expanded
+entries show every file modified by each commit. Scoped results initially remain a collapsed list of
+matching commits without selecting a file. Expanding a commit automatically selects, renders, and
+highlights its matched child filename, which carries a right-pinned `MATCH · FILE/SYMBOL` tag; this
+applies independently to every expanded result. Branch-tip separators split long histories. The
+one-line winbar keeps current checkout state followed by the branch segment under the footer cursor,
+while a stable second colored line shows the complete review and scope details. The winbar leads with
+`CURRENT BRANCH` for an attached checkout and `CURRENT · DETACHED` for a detached checkout. SYMBOL
+uses an ordinary full-file render and also jumps to the
+traced declaration. `<Space>fw` searches project definitions with the same global action in both
+editor and Git panes. From a Git code pane,
+`<C-q>` returns to the corresponding working-tree file. It first captures the rendered `AFTER` pane's enclosing declaration
+and the cursor's relative line distance from it. After matching that declaration in the working file,
+the return reapplies the relative distance. Matching prefers normalized declaration text, then a
+unique symbol name/kind so signature edits can still align; Tree-sitter hierarchy disambiguates
+duplicates. A missing or ambiguous match falls back to the rendered file line. From the footer it
+uses that same `AFTER` pane rather than the footer row. If that render is not ready, Git mode stays
+mounted with a `RETURN` footer message while required scoped enrichment completes. Diffview
+file/layout events and enrichment completion update the footer when the target is ready, but a deliberate second `<C-q>` performs the
+return. On exit, restoring and redrawing the editor buffer has priority; declaration matching and
+cursor placement run in a one-shot asynchronous continuation only after that redraw succeeds and
+Diffview disposal completes. The continuation expires if the user changes the tab, window, or buffer.
+Before teardown, the Git footer logs that the editor is being restored and cursor alignment follows
+rendering. The working-tree
+buffer is staged in the preserved editor tab while Git remains visible: an editor window already
+showing that file is reused, otherwise the buffer is loaded hidden into the editor's current window.
+The tab therefore switches directly from Git to the final editor buffer without exposing an
+intermediate view. The return also refreshes the statusline's checked-out branch. If that working-tree
+file does not exist, Git mode closes and the original editor state is left intact. Branch state is
+resolved from the staged editor window before the tab switch, so it is present in the first editor
+frame rather than waiting for a later search or buffer transition.
+Cursor placement, fold reveal, and centering complete as one editor-window transaction followed by
+one redraw, so no intermediate cursor position is rendered. Only then is `Git return: editor cursor
+aligned` written through the ordinary message area, matching the existing `:q` guidance style; the
+completion message clears itself after a short bounded lifetime.
+Branch state is reasserted once more at Diffview disposal completion before that cursor task is
+released, preventing teardown from blanking the branch after the jump.
+Git-owned buffer-local mappings are removed from the staged working-tree buffer before its first
+editor render, so global actions such as `<Space>de` and `<Space>fw` work immediately after return.
+If `<Space>de` is pressed before asynchronous Diffview disposal settles, one repository-search
+request is retained and released after teardown; repeated presses coalesce into that request.
+
+The editor, Telescope search, and Git footer share one dark background, grey-white base text and
+edges, and the same neutral-grey focused-row treatment. The Git footer keeps saturated semantic
+foregrounds for status, counters, and hashes without changing that shared base. Color otherwise
+remains reserved for syntax, diagnostics, and the pinned green declaration context.
 
 `<Space>de` enters repository history and opens the Telescope dispatcher for branches, commits,
 changed files, and GitHub issues. A `#<digits>` query combines exact Git subject matches with the
 origin issue or pull request. Search selection reviews and highlights a commit while preserving HEAD;
+selecting a branch likewise replaces only the reviewed Diffview ref and never checks it out. Local
+and locally fetched remote-tracking refs are both reviewable without an implicit fetch. When HEAD is
+detached and the selected branch contains that commit, the complete branch history opens with the
+detached commit retained as the selected anchor; otherwise the branch opens at its normal tip. Dirty
+buffers and worktrees do not block these read-only review transitions.
 `<Space>dm` performs guarded checkout from the footer. Current branch HEAD stays attached, and an
-older commit uses detached HEAD.
+older commit uses detached HEAD. The checked-out commit row then carries a highlighted
+`(DETACHED HEAD)` tag. A branch-scoped footer separately shows `CURRENT BRANCH` or
+`CURRENT · DETACHED`, `BRANCH REVIEW`, and the reviewed branch `TIP`, preventing the reviewed ref
+from looking checked out. Anchor replacement reuses the exact prepared ref, so commits ahead of an
+older detached anchor remain in the first rebuilt footer. The
+branch list reloads after detaching so the former branch tip loses its stale `HEAD -> branch`
+decoration and the checked-out row becomes the visible current site.
+During `<Space>dm`, the footer shows the current `ANCHOR` stage and repeated anchor moves remain
+locked until the requested commit diff has completed rendering. The previous history view is retired
+only after that render, preventing its teardown from invalidating a replacement Diffview buffer.
+The replacement's initial file render also settles before its selected-anchor render begins, so the
+two Diffview buffer loads cannot race each other.
+Branch review prepares an anchor plan containing its exact ref, source, and tip. `<Space>dm` reuses
+that plan instead of scanning every containing branch; only the target object, current dirty/HEAD
+state, and a local tip that may be attached are verified at mutation time.
+`:messages` shows the concise start/completion notices; `:DiffviewLog` opens the detailed timed
+`[Git anchor]` stages and generation/phase-tagged `[Git lifecycle]` callback decisions together with
+Diffview's underlying Git and buffer errors. When a detached
+commit is exactly a local branch tip, `<Space>dm` attaches that branch rather than retaining a
+misleading detached state. Remote-tracking-only tips remain detached.
 
 Use `<Tab>`/`<S-Tab>` between the footer and code panes, `<Space>dp` to collapse or restore the
-footer, and `<C-q>` to return from search or issue detail to history and then to the editor. Git uses
-the repository's configured transport; GitHub metadata uses the shared proxy environment. The
+footer, `<Space>dn` to preview details for the selected commit, and `<C-q>` to return from search or
+issue detail to history and then to the editor. Git uses
+an inert `<Space>n` inside its panes so an unassigned leader sequence cannot repeat an earlier `/`
+search. This does not change normal editor mappings. Git uses the repository's configured transport;
+GitHub metadata uses the shared proxy environment. The
 workflow is owned by `config.git`; detailed behavior lives in
 [`nvim-guide`](.agents/skills/nvim-guide/references/advanced-usage.md).
 
 ### Pinned Syntax Context
 
 The pinned context keeps class/function structure and the scope nearest the cursor visible within a
-six-line soft budget. `<Space>cc` moves outward through enclosing scopes. `config.syntax` provides the
-same context and highlight policy to editor, Telescope, and Diffview panes.
+six-line soft budget. Its restrained light-green declaration background ends with a distinct green
+boundary line. `<Space>cc` moves outward through enclosing scopes. `config.syntax` provides the same
+context and highlight policy to editor, Telescope, and Diffview panes.
 
 ### LSP and Diagnostics
 
@@ -234,12 +307,14 @@ modules in the current window, a vertical split, or a horizontal split.
 | `<Space>dr` | Open bounded history for the complete repository |
 | `<Space>dp` | Temporarily collapse or restore the Git history panel |
 | `<Space>dm` | In the Git history list, checkout the selected commit version |
-| `<Space>fw` | Search project definitions; inside Git history, search the selected revision buffer |
+| `<Space>dn` | In the Git history list, preview the selected commit details |
+| `<C-q>` | From Git history, return to the matching working-tree declaration or selected line |
+| `<Space>fw` | Search project definitions in both editor and Git panes |
 | `gcc` / `gc` | Comment the current line or selection |
 
 Inside the file tree, `<Tab>` keeps the global next-window behavior instead of opening a folder or
-preview. `<CR>` opens regular files and directories but ignores the `..` parent entry; use `<C-[>`
-to move the tree root out to its parent and `<C-]>` to move the root into the selected directory.
+preview. `<CR>` opens regular files and directories but ignores the `..` parent entry; use `gh`
+to move the tree root out to its parent and `gl` to move the root into the selected directory.
 `<S-Tab>` continues to select the previous window.
 
 The `<C-t>` terminal starts in terminal-input mode. Press `<Esc>` to return to Normal mode, where

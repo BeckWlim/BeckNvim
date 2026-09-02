@@ -17,6 +17,8 @@ for _, test_file in ipairs({
   'tests/treesitter_context.lua',
   'tests/grep_preview.lua',
   'tests/git.lua',
+  'tests/git_lifecycle.lua',
+  'tests/git_events.lua',
   'tests/github.lua',
   'tests/git_issue.lua',
   'tests/git_search.lua',

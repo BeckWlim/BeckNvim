@@ -33,6 +33,15 @@ The footer always uses commit → file rows. FILE and SYMBOL headers expose thei
 `<Tab>`/`<S-Tab>` between footer and code panes, `<Enter>` to expand a commit or render its file, and
 `<Space>dp` to collapse/restore the footer.
 
+`<Space>df` and `<Space>ds` start as collapsed matching commit rows and do not automatically open or
+select the matched file. Expanding a commit exposes its complete changed-file list; opening the
+matched child shows a right-pinned `MATCH · FILE/SYMBOL` tag and highlighted filename for every
+expanded result. Branch separators split long lists, and the active segment stays pinned in the
+footer winbar. The same winbar leads with `CURRENT BRANCH` when attached, or keeps a detached anchor
+separate from the reviewed branch and its `TIP`. Symbol history uses ordinary full-file folds and
+jumps to the traced declaration only after that file is opened. `<Space>dn` opens read-only details
+for the commit under the footer cursor.
+
 Inside Git mode, `<Space>de` opens search. A branch preview contains commits and files; a commit
 preview contains changed files; `#<digits>` combines exact Git subject matches with the origin's
 GitHub issue or pull request. Selecting a commit only reviews and highlights it. Selecting an issue
@@ -41,12 +50,18 @@ opens readable Markdown. `<C-q>` returns one layer: issue/search → history →
 Mutation is explicit:
 
 - `<Space>dm` checks out the selected commit after dirty-state guards. Current branch HEAD stays
-  attached; an older commit uses detached HEAD.
-- Selecting a branch result uses safe `git switch`, creating a local tracking branch only for a
-  remote-only ref.
+  attached; an older commit uses detached HEAD. A detached commit at a local branch tip reattaches
+  that branch. It reuses the currently reviewed branch's prepared ref/tip data instead of scanning
+  every branch that contains the commit.
+- Selecting a branch result changes only the reviewed local or remote-tracking ref; it never checks
+  out the branch or changes HEAD.
 
-If checkout or branch switching is refused, save/discard modified buffers and resolve staged,
-unstaged, or untracked work deliberately; never recommend forcing the transition.
+Dirty state does not block read-only review. If `<Space>dm` is refused, save/discard modified buffers
+and resolve staged, unstaged, or untracked work deliberately; never recommend forcing the transition.
+Use `:messages` for concise anchor lifecycle notices and `:DiffviewLog` for detailed timed
+`[Git anchor]` stages, generation/phase-tagged `[Git lifecycle]` callback decisions, and Diffview's
+underlying Git/buffer errors. A pending exit reports `Git exit: waiting for the current Git render`;
+press `<C-q>` again only after the footer reports that return is ready.
 
 ## Proxy, GitHub, and translation
 
@@ -65,5 +80,5 @@ diagnosed without searching Neovim messages.
 
 - In ordinary Telescope/float surfaces, normal `q` closes; prompt insert mode keeps `q` as input and
   uses `<C-q>` where configured.
-- In Git mode, `<C-q>` pops the active Git/search layer and `<Space>o` leaves the workflow.
+- In Git mode, `<C-q>` pops the active Git/search layer and `<Space>o` remains jumplist-back.
 - Do not use `:q` to dismantle one pane of a combined Diffview workspace.

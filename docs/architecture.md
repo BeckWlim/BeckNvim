@@ -46,6 +46,8 @@ lua/
 | `config/search/navigation.lua` | Go-to-referenced-file jumps from prose and code |
 | `config/git/init.lua` | File, symbol, and repository history entry points plus safe branch switching |
 | `config/git/diffview.lua` | Shared bounded history workspace, lifecycle, layout, and pane keymaps |
+| `config/git/lifecycle.lua` | Generation-checked Git render/return/anchor state machine and structured diagnostics |
+| `config/git/events.lua` | Asynchronous public event port between the Git subsystem and editor-owned consumers |
 | `config/git/github.lua` | GitHub origin parsing and cancellable read-only issue/PR REST boundary |
 | `config/git/issue.lua` | Exact-number result integration, single-buffer issue rendering, and related navigation |
 | `config/git/panel.lua` | Two-level Git panel stack and unified one-layer `<C-q>` transition |
@@ -94,7 +96,7 @@ float all consume this definition directly. Telescope explicitly disables its bu
 
 The query policy is shared across every supported language:
 
-- Python, C/C++/CUDA, Lua, Shell, Vim script, and Markdown participate in each query.
+- Python, C/C++/CUDA, Lua, Shell, and Vim script participate in each query.
 - Two-character input uses a definition-name prefix.
 - Longer input uses definition-name containment.
 - A query emits up to 1,000 Telescope candidates.
@@ -130,8 +132,8 @@ list but omitted for diagnostic details, whose quick buttons render in a muted c
 context before delegating to one `config.git.diffview` renderer:
 
 ```text
-<Space>df → file path + --follow ─────────┐
-<Space>ds → cursor structure + line range ├→ bounded FileHistory → bottom list + two code panes
+<Space>df → file path + --follow commit selector ─────┐
+<Space>ds → cursor structure + line-trace selector ──├→ bounded FileHistory → bottom list + two code panes
 <Space>dr → repository root ──────────────┘
 <Space>de → repository history ────────────→ branch/commit/issue dispatcher
 ```
@@ -146,16 +148,33 @@ cap, ensuring the target cannot be hidden beyond the first page. A selected comm
 parent on the left (`BEFORE`) with the commit on the right (`AFTER`); explicit winbars show both roles
 and revisions before the lower-priority file path, without redundant physical-side labels. The
 workflow only reads local Git state and performs no implicit fetch.
-File and symbol histories preserve Diffview's single-file and line-trace log options while adapting
-only each entry's presentation data. The existing FileHistory renderer therefore shows the same
-expandable commit → file footer hierarchy as repository history without replacing renderer methods
-or changing filter/navigation semantics. The footer winbar adds the FILE path or the SYMBOL label,
-path, and traced line range.
+File and symbol histories preserve the single-file/line-trace query as a commit selector. After that
+query identifies related commits, each entry is enriched through Diffview's parent-to-commit file
+loader without a path filter. The existing FileHistory renderer therefore shows every modified file
+for each related commit without replacing renderer methods. The footer initially remains a collapsed
+list containing only matching commit rows; neither scoped history selects a file during initial
+rendering. Explicitly expanding a commit automatically selects and renders that entry's scoped child,
+moves the footer highlight onto it, and invokes the existing file/symbol alignment. Every expanded
+row adds a right-pinned `MATCH · FILE/SYMBOL` tag and a reference-colored filename to its scoped file
+(including its rename alias), so every result retains its own target rather than only the active
+entry. Commit reference tips also add non-displacing virtual branch separators. The footer winbar
+keeps current checkout state and appends the branch segment under the footer cursor. A second colored
+virtual line consistently carries complete review and scope metadata instead of being displaced by
+branch pinning. SYMBOL
+clears Diffview's `-L` patch folds so opened code uses the ordinary full-file fold strategy, then
+focuses the traced declaration only when the scoped file is opened. The adaptive metadata line adds
+the FILE path or the SYMBOL label, path, and traced line range. Initial history resolution records the
+exact current local ref, so the winbar leads with `CURRENT BRANCH` when HEAD is attached.
+Detached status parsing never retains Git's literal `(detached)` sentinel as a branch name, so the
+winbar and selected commit row consistently expose `CURRENT · DETACHED` and `DETACHED HEAD`.
 `<Space>dp` calls the history panel's reversible toggle from either code pane or the list, preserving
 the panel contents, selected commit, and configured restored height.
+`<Space>dn` is footer-local and opens Diffview's native selected-commit detail panel. It is read-only,
+and `<C-q>` closes that detail before the history layer.
 Diffview revision buffers opt out of the editor-wide current-scope extmarks but retain the editor's
 real pinned Tree-sitter context inside the focused code pane. The pinned source lines use a shared
-light-green background and no lower underline. The remaining code render is reduced to syntax
+restrained light-green declaration background with a distinct brighter-green lower boundary. The
+remaining code render is reduced to syntax
 foregrounds, one ordinary cursor-line background, and Diffview's add/change/delete backgrounds.
 File and repository history resolve the enclosing definition of the selected hunk, open its fold,
 then restore focus to the changed line. Symbol history uses the same boundary but intentionally
@@ -163,21 +182,78 @@ leaves focus on the definition.
 
 For symbol history, the selected line-trace patch provides the changed row in each revision buffer.
 The renderer asks the shared Tree-sitter context resolver for the nearest enclosing declaration in
-each of those two buffers, reveals that declaration within Diffview's patch folds, and falls back to
-the changed row when no parser is available. Parsing is limited to the displayed target buffers.
-`<Space>fw` is overridden only inside Diffview and opens the shared definition picker over one
-in-memory revision buffer. The list defaults to the right-side `AFTER` buffer; either code pane
-targets itself. Selection returns to that Diffview pane and reveals the historical declaration, so
-the picker never substitutes the working-tree file for commit content. The buffer-local index is
-capped at 1,000 definitions, and its preview copy is cached by source buffer and changed tick.
+each of those two buffers, retains the ordinary full-file fold strategy, and falls back to the changed
+row when no parser is available. Parsing is limited to the displayed target buffers.
+`<Space>fw` keeps its global project-definition-search role in Diffview and the editor. Git mode does
+not install a buffer-local override, and return staging removes any stale historical-search mapping
+before the working buffer becomes visible.
 
-The complete tab is one lifecycle unit: buffer-local `<C-q>` and `<Space>o` mappings are installed
-after every layout pass, and command submission rejects interactive `:q`/`:quit` while the view is
-active without interfering with Diffview's internal window replacement. A whole-view close focuses
-the editing tab first and disposes an in-flight history render asynchronously. `<Space>o` falls back
-to the ordinary jumplist outside Git history. Shared Telescope/Diffview highlights keep the list and
-code planes visually consistent; diff highlights assign background tints only, preserving syntax
-foregrounds on both added and deleted lines.
+The Git workflow is an isolated subsystem around Diffview. Editor entry points call `config.git`,
+while renderer callbacks, enrichment tokens, and transition phases remain private. The only public
+callback boundary is `config.git.on(...)`, backed by `config.git.events`, which asynchronously
+publishes stable `phase`, `ready`,
+`return_started`, `editor_rendered`, `return_finished`, and `anchor_finished` events. Consumers do
+not subscribe to raw Diffview callbacks or mutate lifecycle state. Event payloads contain only
+generation, kind, phase, outcome, detail, and path metadata—never Diffview view/window objects.
+
+The complete tab is one lifecycle unit. Each mounted history receives a monotonically increasing
+generation and moves through explicit mounting/listing/enriching/rendering/ready/returning/closing/
+aligning/disposed phases. Every asynchronous callback checks both its view generation and render
+sequence, so a replaced view cannot redraw, jump, or complete a newer operation. Buffer-local
+`<C-q>` mappings are installed after every
+layout pass, and command submission rejects interactive `:q`/`:quit` while the view is active
+without interfering with Diffview's internal window replacement. The ordinary-history
+`<C-q>` layer callback is accepted only at a lifecycle-ready render boundary, then resolves the
+currently rendered `AFTER` file and its code-pane cursor.
+When ready, a whole-view close cancels configuration-owned footer enrichment and focuses the editing
+tab immediately while Diffview shuts down its own history stream and disposes the view
+asynchronously. Before the tab switch, the return looks for the target file in the preserved editor
+tab. It reuses that file's existing editor window when present; otherwise it loads the buffer hidden
+and stages it in the editor's current window while Git remains visible. The switch therefore exposes
+only the Git pane and the final editor pane, never an old or scratch intermediary. The restored
+working buffer completes one editor redraw before it schedules declaration matching and cursor
+placement. Successful redraw marks alignment ready, but the cursor task is released only after all
+Diffview views finish disposal. That continuation validates the captured tab, window, and buffer
+before moving the cursor, so a later user context cannot receive a stale jump.
+Lualine branch state is resolved inside the staged editor window before the tab becomes visible;
+the first editor frame therefore includes the checked-out branch without relying on a subsequent
+Telescope or `BufEnter` transition.
+Because Diffview teardown can update lualine's active-buffer cache, disposal completion reasserts the
+branch from the still-current staged editor window and redraws the statusline before scheduling the
+cursor task.
+After redraw and lifespan validation, the cursor continuation computes its final target without
+moving, then applies cursor placement, fold reveal, and centering in one window transaction. A
+single final redraw precedes the completed `vim.notify` message in the ordinary message area used by
+interactive `:q` guidance. That message clears after a bounded delay. Stale continuations return
+before producing the message or moving the cursor.
+The final Git-footer state logs `RETURN · restoring editor; cursor alignment follows render` before
+the tab transition without delaying teardown.
+Staging can trigger Diffview buffer hooks on the working-tree buffer. After the final buffer is
+installed in the preserved editor window, return cleanup removes only mappings whose key and
+description identify them as Git-owned. This happens before the first editor redraw, restoring the
+global `<Space>de`/`<Space>fw` actions without deleting unrelated editor-local mappings.
+Repository-search re-entry during the remaining disposal interval is stored as one keyed settled
+action. Final view disposal releases it once, preserving the history-plus-search pipeline without a
+polling loop or duplicate transition.
+When the target is still rendering, Git mode remains mounted with a `RETURN` footer status. Required
+scoped enrichment continues; cancelling it would make readiness unreachable. Diffview's
+`file_open_pre`/`file_open_post` and enrichment completion callbacks advance readiness, while one
+bounded list-settlement adapter bridges the plugin's lack of a public list-ready event. A subsequent
+deliberate `<C-q>` performs the transition.
+Return navigation performs only a synchronous Tree-sitter scope capture and one normalized
+declaration scan in the working buffer; it starts no LSP, Telescope, or Git lookup. Exact normalized
+text is preferred. If a signature changed, the shared definition parser provides a name/kind match,
+with Tree-sitter hierarchy resolving duplicate names. A matched declaration receives the captured
+cursor-to-declaration line offset, while an unmatched or ambiguous declaration uses the historical
+file line. An absent working-tree file falls back to the untouched editor state.
+Footer position never participates in the target. `<Space>o` remains the ordinary jumplist-back
+operation in every Git pane. Shared Telescope/Diffview highlights keep the list and code planes
+visually consistent with the editor. They derive their base background and
+foreground from `Normal`, use the editor `CursorLine` background for Telescope results and Diffview
+footer selection, and use neutral grey edges plus bold near-white matches/carets. Within that shared
+plane, the footer uses the established saturated semantic foregrounds for add/change/delete status,
+counts, and hashes. Diff highlights assign background tints only, preserving syntax foregrounds on
+both added and deleted lines.
 
 Git search is a temporary layer above ordinary Git history. Global `<Space>de` first mounts repository
 history, then opens the dispatcher; the same buffer-local key reopens it from Git mode. The history view retains its commit/file
@@ -196,9 +272,8 @@ Git metadata before the UI boundary, so raw `git log` and `git show` output neve
 Source, kind, branch/hash, date, and title columns have stable widths and semantic highlights.
 `<Tab>` focuses the preview and `<CR>` performs the selected branch or commit action at the cursor.
 Focused previews enable the normal editor `CursorLine` background so cursor position remains visible.
-An unmapped branch-preview header never falls through to `git switch`; branch checkout is dispatched
-only from the branch result row, while preview commit/file rows open read-only review for their mapped
-commit hash.
+An unmapped branch-preview header never dispatches an action. Branch result rows and preview
+commit/file rows both open read-only review; only their selected ref or commit differs.
 
 Selecting a commit is a read-only review operation: it leaves HEAD and the working tree untouched.
 If the target exists in the mounted FileHistoryView, the renderer preserves that complete ordered
@@ -227,9 +302,14 @@ to curl through stdin headers.
 
 `config.git.panel` models the UI as `editor ← ordinary Git history ← temporary search`. Search
 results/preview and issue detail are alternate renderers of the same top search layer, not separately
-nested modes. Commit and branch choices replace ordinary history in place at the lower layer. Every
+nested modes. Commit and branch choices replace ordinary history in place at the lower layer without
+changing Git HEAD. Every
 Git surface routes `<C-q>` through one pop operation: the top search renderer returns to the preserved
-history Diffview, while ordinary history returns to the normal editing tab.
+history Diffview, while ordinary history returns to the normal editing tab. That return captures the
+rendered `AFTER` scope's declaration line and relative cursor offset, restores and redraws the editor
+buffer, then asynchronously performs one in-buffer working-tree match. It reapplies the relative
+offset to a match, falls back to the rendered line when the declaration is absent or ambiguous, and
+refreshes lualine's checked-out branch state as part of editor restoration.
 The history list maps `<Space>dm` to the commit under its commit/file row and sends it through that
 same guarded detach path. `<CR>` remains Diffview's non-mutating fold/file render action.
 Each Git view retains its repository root, selected revision, and historical absolute file path as
@@ -246,13 +326,44 @@ unstaged, untracked, or unsaved-buffer changes. If the target is already the che
 HEAD, the branch remains attached. An older target uses `git switch --detach`, while an already-
 detached HEAD at the same object skips that duplicate operation. Reachability through `refs/heads`
 produces a `LOCAL` tag, while remote-only reachability produces `REMOTE`.
+The resulting history view retains the detached commit hash as structured view state. Diffview's
+existing reference renderer adds a highlighted `(DETACHED HEAD)` tag only to that commit row, and
+the footer winbar presents `CURRENT · DETACHED`, the reviewed branch, and its separately resolved
+`TIP` as three facts. The replacement history uses the prepared full ref rather than a short name,
+so commits between the selected anchor and the reviewed branch tip are present in the same render
+cycle instead of appearing only after another branch review.
+Detached checkout always replaces the mounted history from current Git state, even when the target
+commit was already present. This refresh removes stale pre-checkout `HEAD -> branch` decorations
+before selecting and marking the detached commit. Read-only commit review may still focus an
+already-mounted row without rebuilding the list.
+The mutation transition remains active through replacement rendering, not merely through
+`git switch`. The old view cancels optional enrichment immediately but retains its Diffview-owned
+buffers until the replacement emits a completed target-file render; only then is the old view
+disposed. This prevents teardown from deleting a same-named buffer while the new view is awaiting
+historical file content. Inside the successor, its automatic initial file render must finish before
+the selected anchor starts a second render; this serial handoff prevents Diffview from invalidating
+its own in-flight buffer. The footer exposes the current `ANCHOR` stage. Concise start/completion
+notices go to `:messages`, while every resolve/status/ref/switch/render stage records its elapsed time
+under `[Git anchor]` in Diffview's existing `:DiffviewLog` file. A failed or expired render unlocks
+the transition with a warning that distinguishes completed HEAD mutation from incomplete rendering.
+If detached HEAD and the selected commit equal the tip of a containing local branch, the explicit
+`<Space>dm` mutation attaches that branch and rebuilds decorations; remote-only refs never create an
+implicit local branch.
+Each branch review also owns a prepared anchor plan with its exact ref, local/remote source, and tip
+hash. `<Space>dm` consumes that plan directly and never performs a whole-ref containment search.
+It still resolves the selected object, checks live porcelain-v2 dirty/HEAD state, and re-verifies a
+local tip immediately before attaching it. Context-free callers use the exact commit without trying
+to guess an owning branch. Detached-history discovery is separate and deliberately prefers a
+containing local ref before a remote-tracking ref.
 
-The branch drill-down remains a bounded Telescope picker. It prioritizes the current branch and uses
-`git switch` without force. Remote-only refs become tracking branches, while an existing local
-counterpart is selected directly. Switching is rejected before Git runs if any loaded repository
-buffer is modified; disk-level working-tree conflicts remain under Git's own refusal rules. After a
-successful switch, a repository history for the selected branch is mounted before the old history is
-retired, so Git mode and its bottom commit list remain continuously available.
+Branch selection is a read-only ref transition. It mounts `refs/heads/...` or the locally available
+`refs/remotes/...` history before retiring the old view; it never fetches, creates a tracking branch,
+or invokes `git switch`. The footer labels this as `BRANCH REVIEW` and separately exposes the actual
+attached branch or detached hash. For detached HEAD, an ancestry check against the selected ref
+retains and selects that commit when contained; the list becomes unbounded only for that retention so
+the anchor cannot fall outside the normal history cap. If it is not contained, the selected branch
+still opens normally. Dirty buffers and worktrees remain valid review inputs. `<Space>dm` remains the
+only Git-mode action that changes the real commit anchor and owns the mutation guard.
 
 ## Shared Network Proxy
 

@@ -16,6 +16,7 @@ local branch_format = table.concat({
   '%(HEAD)',
   '%(refname)',
   '%(refname:short)',
+  '%(objectname)',
   '%(upstream:short)',
   '%(committerdate:short)',
   '%(subject)',
@@ -68,7 +69,6 @@ end
 
 function M.parse_branches(output)
   local branches = {}
-  local local_branch_names = {}
   for _, output_line in ipairs(M.output_lines(output)) do
     if #branches >= M.max_branch_entries then
       break
@@ -78,40 +78,20 @@ function M.parse_branches(output)
     local short_name = fields[3] or ''
     local is_remote = vim.startswith(refname, 'refs/remotes/')
     local is_remote_head = is_remote and refname:match('/HEAD$') ~= nil
-    if refname:match('^refs/heads/') and short_name ~= '' then
-      local_branch_names[short_name] = true
-    end
     if short_name ~= '' and not is_remote_head then
       branches[#branches + 1] = {
         current = fields[1] == '*',
         is_remote = is_remote,
         refname = refname,
         short_name = short_name,
-        upstream = fields[4] or '',
-        date = fields[5] or '',
-        subject = table.concat(fields, '\t', 6),
+        tip_commit = fields[4] or '',
+        upstream = fields[5] or '',
+        date = fields[6] or '',
+        subject = table.concat(fields, '\t', 7),
       }
     end
   end
-
-  for _, branch in ipairs(branches) do
-    if branch.is_remote then
-      local remote_branch_name = branch.refname:match('^refs/remotes/[^/]+/(.+)$')
-      branch.local_name = remote_branch_name or branch.short_name
-      branch.track_remote = not local_branch_names[branch.local_name]
-    else
-      branch.local_name = branch.short_name
-      branch.track_remote = false
-    end
-  end
   return branches
-end
-
-function M.commands.switch_branch(branch)
-  if branch.track_remote then
-    return { 'git', 'switch', '--track', branch.short_name }
-  end
-  return { 'git', 'switch', branch.local_name }
 end
 
 function M.commands.resolve_commit(commit_id)
@@ -124,6 +104,7 @@ end
 
 function M.parse_head_state(output)
   local head_state = {
+    branch_name = nil,
     commit = nil,
     detached = false,
     dirty = false,
@@ -135,6 +116,9 @@ function M.parse_head_state(output)
       head_state.commit = commit_hash
     elseif head_name then
       head_state.detached = head_name == '(detached)'
+      if not head_state.detached then
+        head_state.branch_name = head_name
+      end
     elseif not vim.startswith(output_line, '# ') then
       head_state.dirty = true
     end
@@ -146,6 +130,10 @@ function M.commands.detach_commit(commit_hash)
   return { 'git', 'switch', '--detach', commit_hash }
 end
 
+function M.commands.attach_branch(branch_name)
+  return { 'git', 'switch', branch_name }
+end
+
 function M.commands.commit_sources(commit_hash)
   return {
     'git',
@@ -155,6 +143,10 @@ function M.commands.commit_sources(commit_hash)
     'refs/heads',
     'refs/remotes',
   }
+end
+
+function M.commands.commit_is_ancestor(commit_hash, refname)
+  return { 'git', 'merge-base', '--is-ancestor', commit_hash, refname }
 end
 
 function M.commands.search_commits(query, history_options)
@@ -324,7 +316,7 @@ function M.parse_commit_location(output)
   if remote_branch_name then
     return { branch_name = remote_branch_name, source = 'REMOTE' }
   end
-  return { branch_name = 'DETACHED', source = 'LOCAL' }
+  return { branch_name = nil, source = 'LOCAL' }
 end
 
 function M.start(command, root, callback)

@@ -50,6 +50,22 @@ as a new float.
 - Keep layouts adaptive and restrained. Reuse shared dimensions, border groups, close policy, and
   focus transitions before adding feature-local constants.
 
+## Keep one visual language
+
+- Treat the resolved editor `Normal` background and foreground as the canonical base plane for the
+  editor, file tree, ordinary floats, completion, Telescope, and Diffview. Do not introduce a
+  feature-specific base background when these surfaces should read as one workspace.
+- Reuse the editor `CursorLine` background for active rows across the editor, file tree, Telescope
+  results and previews, completion, and the Diffview commit/file footer. Search scope presentation
+  and Git footer rows must use the same selection strategy.
+- Use dark neutral backgrounds, grey borders and secondary text, and grey-white primary text. Make
+  matches, carets, and focused metadata visible through contrast and weight; avoid neon accents or
+  blue-tinted selection backgrounds for ordinary focus.
+- Reserve chromatic color for semantics: syntax, diagnostics, Git add/change/delete states and
+  compact Git metadata, and the pinned declaration context. Git footer accents may be saturated but
+  must retain the shared base and selection treatment. The pinned context intentionally keeps its
+  restrained light-green background and distinct green lower boundary.
+
 ## Preserve interaction invariants
 
 - Give one key one role per active surface. Avoid overloads that depend on an invisible state.
