@@ -1,4 +1,5 @@
 local M = {}
+local rainbow_attached_buffers = {}
 
 -- Parsers the config features depend on beyond Neovim's bundled set.
 local required_parsers = { 'python', 'cpp' }
@@ -9,7 +10,26 @@ local function start_highlighting(buffer_number)
       or vim.treesitter.highlighter.active[buffer_number] then
     return
   end
+  local buffer_name = vim.api.nvim_buf_get_name(buffer_number)
+  if vim.startswith(buffer_name, 'diffview://')
+      and #vim.fn.win_findbuf(buffer_number) == 0 then
+    return
+  end
   pcall(vim.treesitter.start, buffer_number)
+end
+
+function M.ensure_highlighting(buffer_number)
+  start_highlighting(buffer_number)
+  if not vim.g.loaded_rainbow_delimiters or rainbow_attached_buffers[buffer_number] then
+    return
+  end
+  local rainbow_loaded, rainbow = pcall(require, 'rainbow-delimiters.lib')
+  if rainbow_loaded and type(rainbow.attach) == 'function' then
+    local attach_succeeded = pcall(rainbow.attach, buffer_number)
+    if attach_succeeded then
+      rainbow_attached_buffers[buffer_number] = true
+    end
+  end
 end
 
 local function start_loaded_buffers(parser_languages)
@@ -30,10 +50,17 @@ function M.setup()
   treesitter.setup()
 
   -- The main branch no longer starts highlighting itself; Neovim owns it.
+  local highlight_group = vim.api.nvim_create_augroup('config-treesitter-highlight', { clear = true })
   vim.api.nvim_create_autocmd('FileType', {
-    group = vim.api.nvim_create_augroup('config-treesitter-highlight', { clear = true }),
+    group = highlight_group,
     callback = function(event)
       start_highlighting(event.buf)
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWipeout', {
+    group = highlight_group,
+    callback = function(event)
+      rainbow_attached_buffers[event.buf] = nil
     end,
   })
 

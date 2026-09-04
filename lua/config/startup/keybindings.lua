@@ -53,6 +53,7 @@ local function map_windows()
 end
 
 local function map_editing_aids()
+  local open_target = require('config.ui.open_target')
   local folds = require('config.syntax.folds')
   local navigation = require('config.search.navigation')
   local treesitter_context = require('config.syntax.treesitter_context')
@@ -69,6 +70,11 @@ local function map_editing_aids()
   map('<Space>gx', function()
     navigation.goto_referenced_file_in_split('split')
   end, 'Go to referenced file (horizontal split)')
+  map('gx', open_target.open_at_cursor, 'Open filepath or URI')
+  vim.keymap.set('x', 'gx', open_target.open_selection, {
+    silent = true,
+    desc = 'Open selected filepath or URI',
+  })
 
   map('<F3>', '<cmd>NvimTreeToggle<CR>', 'Toggle file tree')
   map('<Space>h', require('config.ui.dashboard').open, 'Open dashboard')
@@ -93,7 +99,7 @@ local function map_finders()
   map('<Space>fw', workspace_symbols.open, 'Project workspace symbols')
   map('<Space>ft', workspace_symbols.open_for_cursor, 'Project definitions of cursor word')
   local git = require('config.git')
-  map('<Space>de', git.search_repository, 'Enter Git mode and search repository')
+  map('<Space>de', git.search_repository, 'Search Git branches, commits, and issues')
   map('<Space>df', git.history_file, 'Git history for current file')
   map('<Space>ds', git.history_symbol, 'Git history for cursor symbol')
   map('<Space>dr', git.history_repository, 'Git history for repository')

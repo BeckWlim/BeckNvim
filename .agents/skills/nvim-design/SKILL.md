@@ -32,6 +32,18 @@ Use the existing shared owners:
 - `config.git.*` for Git mode. Read [references/git-mode.md](references/git-mode.md) before changing
   Git history, search, issue rendering, checkout, or Diffview behavior.
 
+## Keep I/O asynchronous and bounded
+
+Do not block Neovim's main loop on child-process, filesystem, LSP, or network work. Use bounded
+parallel jobs for naturally independent partitions, stream structured partial results through
+scheduled callbacks, and make the smallest useful list interactive before optional enrichment.
+
+Every async workflow must own a generation or request token, cancellation handles, a readiness
+boundary, and teardown behavior. Reject stale callbacks by both generation and current target when
+selection can change inside one session. Use result caps and lazy per-item work as backpressure;
+never fan out one Git or network request per rendered row. A timeout must enter an explicit failure
+state that the user can still close safely.
+
 ## Render through existing components
 
 Reuse the renderer that already owns the surface. Adapt structured input or supported configuration
@@ -40,13 +52,12 @@ as a new float.
 
 - Telescope search is a results list plus a real preview pane; do not move preview content into a
   footer or prompt hint.
-- Diffview owns historical code panes and the File History footer. Preserve its objects and render
-  lifecycle. Presentation-only adaptations must not change Git scope or navigation semantics.
+- Diffview owns historical code panes, footer rendering, folds, selection, and file opening. Preserve
+  its objects and render lifecycle; Git integration adds data and lifecycle safety only.
 - File, symbol, and repository histories share the commit → file footer hierarchy. FILE keeps
   `--follow`; SYMBOL keeps Git `-L`; their footer metadata identifies the active filter.
-- Use winbars for stable scope/role metadata and existing highlight groups for selection, syntax,
-  diff modifications, and pinned context. Do not introduce competing line, underline, or whole-scope
-  backgrounds.
+- Use winbars for stable scope/role metadata. Do not add configuration-owned footer highlights,
+  cursor restoration, fold dispatch, or competing backgrounds.
 - Keep layouts adaptive and restrained. Reuse shared dimensions, border groups, close policy, and
   focus transitions before adding feature-local constants.
 
@@ -55,15 +66,13 @@ as a new float.
 - Treat the resolved editor `Normal` background and foreground as the canonical base plane for the
   editor, file tree, ordinary floats, completion, Telescope, and Diffview. Do not introduce a
   feature-specific base background when these surfaces should read as one workspace.
-- Reuse the editor `CursorLine` background for active rows across the editor, file tree, Telescope
-  results and previews, completion, and the Diffview commit/file footer. Search scope presentation
-  and Git footer rows must use the same selection strategy.
+- Reuse the editor `CursorLine` background for configuration-owned active rows. Leave Diffview footer
+  selection styling to Diffview and the active colorscheme.
 - Use dark neutral backgrounds, grey borders and secondary text, and grey-white primary text. Make
   matches, carets, and focused metadata visible through contrast and weight; avoid neon accents or
   blue-tinted selection backgrounds for ordinary focus.
-- Reserve chromatic color for semantics: syntax, diagnostics, Git add/change/delete states and
-  compact Git metadata, and the pinned declaration context. Git footer accents may be saturated but
-  must retain the shared base and selection treatment. The pinned context intentionally keeps its
+- Reserve chromatic color for semantics: syntax, diagnostics, native Git add/change/delete states,
+  and the pinned declaration context. The pinned context intentionally keeps its
   restrained light-green background and distinct green lower boundary.
 
 ## Preserve interaction invariants

@@ -82,6 +82,32 @@ assert(
 )
 vim.env.http_proxy = previous_http_proxy
 
+local inherited_http_proxy = vim.env.http_proxy
+local inherited_https_proxy = vim.env.https_proxy
+local inherited_no_proxy = vim.env.NO_PROXY
+local temporary_state_directory = vim.fn.tempname()
+local temporary_state_path = vim.fs.joinpath(temporary_state_directory, 'proxy.json')
+vim.env.http_proxy = 'http://system.example:8080'
+vim.env.https_proxy = 'http://system.example:8443'
+vim.env.NO_PROXY = 'localhost,.internal'
+local initial_proxy = proxy.initialize({ state_path = temporary_state_path })
+assert(
+  next(initial_proxy) == nil
+    and next(proxy.resolve()) == nil
+    and vim.env.http_proxy == nil
+    and vim.env.https_proxy == nil
+    and vim.env.NO_PROXY == nil,
+  'Proxy initialization without saved state did not clear inherited routes and start direct'
+)
+assert(
+  not vim.uv.fs_stat(temporary_state_path),
+  'Missing proxy state was unexpectedly materialized during initialization'
+)
+proxy.reset_session_override()
+vim.env.http_proxy = inherited_http_proxy
+vim.env.https_proxy = inherited_https_proxy
+vim.env.NO_PROXY = inherited_no_proxy
+
 assert(proxy.valid_address('127.0.0.1:7890'), 'Proxy UI rejected an IP:port address')
 assert(proxy.valid_address('socks5h://localhost:7891'), 'Proxy UI rejected a SOCKS URL')
 assert(not proxy.valid_address('not a proxy'), 'Proxy UI accepted an invalid address')
@@ -217,6 +243,66 @@ assert(
   'Session proxy did not set HTTP and HTTPS consistently'
 )
 assert(proxy.resolve().NO_PROXY == 'localhost,.internal', 'Session bypass was not activated')
+local persisted_state = vim.json.decode(table.concat(vim.fn.readfile(temporary_state_path), '\n'))
+local persisted_state_stat = vim.uv.fs_stat(temporary_state_path)
+assert(
+  persisted_state.version == 1
+    and persisted_state.environment.http_proxy == 'http://session.example:8123'
+    and persisted_state.environment.https_proxy == 'http://session.example:8123'
+    and persisted_state.environment.NO_PROXY == 'localhost,.internal',
+  'Explicit proxy selection was not persisted as a complete versioned route'
+)
+assert(
+  persisted_state_stat and bit.band(persisted_state_stat.mode, 511) == 384,
+  'Persisted proxy state was not restricted to the current user'
+)
+
+proxy.reset_session_override()
+for _, environment_name in ipairs(proxy_environment_names) do
+  vim.env[environment_name] = nil
+end
+local restored_proxy, restored_label, restoration_error = proxy.initialize({
+  state_path = temporary_state_path,
+})
+assert(
+  not restoration_error
+    and restored_proxy.http_proxy == 'http://session.example:8123'
+    and restored_proxy.https_proxy == 'http://session.example:8123'
+    and restored_proxy.NO_PROXY == 'localhost,.internal'
+    and restored_label == 'session.example:8123'
+    and vim.env.https_proxy == 'http://session.example:8123',
+  'A new proxy initialization did not restore and apply the last explicit selection'
+)
+
+local original_notify = vim.notify
+local proxy_notifications = {}
+vim.notify = function(message, level)
+  proxy_notifications[#proxy_notifications + 1] = { level = level, message = message }
+end
+assert(proxy_ui.apply_choice({
+  action = 'proxy',
+  address = 'http://ui.example:9000',
+  no_proxy = 'localhost',
+}), 'Proxy UI did not apply its proxy action')
+assert(
+  proxy.resolve().https_proxy == 'http://ui.example:9000',
+  'Proxy UI action did not activate the selected proxy'
+)
+assert(
+  proxy_ui.apply_choice({ action = 'bypass', no_proxy = 'localhost,.internal' }),
+  'Proxy UI did not apply its bypass action'
+)
+assert(
+  proxy.resolve().NO_PROXY == 'localhost,.internal',
+  'Proxy UI action did not update the bypass list'
+)
+assert(
+  proxy_ui.apply_choice({ action = 'direct' }),
+  'Proxy UI did not apply its direct action'
+)
+assert(#proxy_notifications == 3, 'Proxy UI actions did not report their resulting state')
+vim.notify = original_notify
+
 local direct_proxy = proxy.set_session(nil, '')
 assert(
   not direct_proxy.http_proxy and not direct_proxy.https_proxy,
@@ -226,8 +312,45 @@ assert(
   proxy.resolve().http_proxy == nil,
   'Direct mode fell back to a discovered proxy instead of honoring the session choice'
 )
+proxy.reset_session_override()
+vim.env.http_proxy = 'http://system.example:8080'
+local restored_direct_proxy, restored_direct_label, direct_restoration_error = proxy.initialize({
+  state_path = temporary_state_path,
+})
+assert(
+  not direct_restoration_error
+    and next(restored_direct_proxy) == nil
+    and restored_direct_label == nil
+    and vim.env.http_proxy == nil,
+  'Persisted direct mode did not remain direct on the next initialization'
+)
+
+vim.fn.writefile({ '{broken' }, temporary_state_path)
+proxy.reset_session_override()
+vim.env.http_proxy = 'http://system.example:8080'
+local invalid_state_proxy, invalid_state_label, invalid_state_error = proxy.initialize({
+  state_path = temporary_state_path,
+})
+assert(
+  invalid_state_error
+    and next(invalid_state_proxy) == nil
+    and invalid_state_label == nil
+    and vim.env.http_proxy == nil,
+  'Invalid persisted proxy state did not fail safely to direct mode'
+)
 
 proxy.reset_session_override()
 for _, environment_name in ipairs(proxy_environment_names) do
   vim.env[environment_name] = saved_proxy_environment[environment_name]
 end
+vim.fn.delete(temporary_state_directory, 'rf')
+
+proxy_ui.setup()
+assert(vim.fn.exists(':Proxy') == 2, 'Canonical :Proxy command was not registered')
+local lowercase_proxy_abbreviation = vim.fn.maparg('proxy', 'c', true, true)
+assert(
+  type(lowercase_proxy_abbreviation) == 'table'
+    and next(lowercase_proxy_abbreviation) == nil,
+  'Lowercase :proxy command-line abbreviation was retained'
+)
+vim.api.nvim_del_user_command('Proxy')

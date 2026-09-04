@@ -42,8 +42,31 @@ return {
       'nvim-tree/nvim-web-devicons',
     },
     opts = {
+      debounce = 1,
+      custom_handlers = {
+        markdown = require('config.syntax.markdown').handler,
+      },
       file_types = { 'markdown' },
+      on = {
+        attach = require('config.syntax.markdown').attach,
+        clear = require('config.syntax.markdown').clear,
+        render = require('config.syntax.markdown').render,
+      },
+      pipe_table = {
+        enabled = false,
+      },
       preset = 'lazy',
+      win_options = {
+        breakindent = { default = false, rendered = true },
+        breakindentopt = {
+          default = '',
+          rendered = 'shift:2,min:20',
+        },
+        linebreak = { default = false, rendered = true },
+        showbreak = { default = '', rendered = '↳ ' },
+        smoothscroll = { default = false, rendered = true },
+        wrap = { default = false, rendered = true },
+      },
     },
   },
   {

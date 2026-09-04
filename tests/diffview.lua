@@ -1,13 +1,16 @@
 local replaced_modules = {
   'config.git',
   'config.git.diffview',
+  'config.git.footer_loader',
   'config.git.issue',
   'config.git.search',
   'config.search.workspace_symbols',
+  'config.syntax.treesitter',
   'config.syntax.treesitter_context',
   'config.ui.statusline',
   'diffview',
   'diffview.actions',
+  'diffview.async',
   'diffview.lib',
   'diffview.vcs.utils',
 }
@@ -30,9 +33,14 @@ local enclosing_structure_result
 local statusline_branch_refreshes = 0
 local branch_info_visible = true
 local full_file_list_calls = {}
+local syntax_highlight_buffers = {}
 local queued_full_file_dictionary
 local pending_full_file_list_callback
 local defer_full_file_list = false
+local defer_footer_detail = false
+local footer_detail_requests = 0
+local pending_footer_detail
+local footer_attach_handlers
 local previous_editing_tabpage
 
 package.loaded['config.git'] = {
@@ -63,6 +71,50 @@ package.loaded['config.git.search'] = {
     return true
   end,
 }
+package.loaded['config.git.footer_loader'] = {
+  attach = function(view, history_options, handlers)
+    footer_attach_handlers = handlers
+    if history_options.history_ref and not history_options.unbounded then
+      view.git_footer_loader = { list_ready = true }
+      return true
+    end
+    return false
+  end,
+  detach = function(view)
+    if view then
+      view.git_footer_loader = nil
+    end
+    return true
+  end,
+  initial_limit = function(history_options)
+    return history_options.unbounded and 100000 or 1
+  end,
+  initial_ref = function(history_options)
+    return history_options.history_ref
+  end,
+  list_is_ready = function()
+    return true
+  end,
+  window_is_settled = function()
+    return true
+  end,
+  on_cursor = function() end,
+  ensure_entry = function(_, entry, callback)
+    footer_detail_requests = footer_detail_requests + 1
+    if defer_footer_detail then
+      pending_footer_detail = { callback = callback, entry = entry }
+      return true
+    end
+    callback(entry ~= nil)
+    return entry ~= nil
+  end,
+  prepare_selected = function(_, history_options, callback)
+    local prepared_options = vim.deepcopy(history_options)
+    prepared_options.window_start_offset = 0
+    callback(prepared_options)
+    return function() end
+  end,
+}
 package.loaded['diffview.actions'] = {
   open_commit_log = function()
     commit_detail_calls = commit_detail_calls + 1
@@ -70,6 +122,19 @@ package.loaded['diffview.actions'] = {
   select_entry = function()
     if native_history_selection then
       native_history_selection()
+    end
+  end,
+}
+package.loaded['diffview.async'] = {
+  await = function(waitable)
+    if type(waitable) == 'function' then
+      return waitable()
+    end
+    return waitable
+  end,
+  void = function(callback)
+    return function(...)
+      callback(...)
     end
   end,
 }
@@ -84,6 +149,11 @@ package.loaded['config.syntax.treesitter_context'] = {
   enclosing_structure = function()
     return enclosing_structure_result
       or (enclosing_structure_line and { first_line = enclosing_structure_line } or nil)
+  end,
+}
+package.loaded['config.syntax.treesitter'] = {
+  ensure_highlighting = function(buffer)
+    syntax_highlight_buffers[#syntax_highlight_buffers + 1] = buffer
   end,
 }
 package.loaded['config.ui.statusline'] = {
@@ -271,6 +341,57 @@ assert(
   'Anchor transition did not expose its render stage in the footer'
 )
 detached_footer_view.git_anchor_waiting = nil
+
+local preview_commit = string.rep('e', 40)
+local preview_subject = 'Selected commit stays collapsed'
+local preview_entry = {
+  commit = {
+    hash = preview_commit,
+    ref_names = 'HEAD, release-tag',
+    subject = preview_subject,
+  },
+  folded = true,
+}
+local preview_buffer = vim.api.nvim_create_buf(false, true)
+local preview_line = 'M  2 files | 30  19 | eeeeeeee ' .. preview_subject
+vim.api.nvim_buf_set_lines(preview_buffer, 0, -1, false, { preview_line })
+local previous_preview_buffer = vim.api.nvim_get_current_buf()
+vim.api.nvim_win_set_buf(0, preview_buffer)
+local preview_footer_view = {
+  git_branch_name = 'main',
+  git_checked_out_branch = 'main',
+  git_footer_tree = false,
+  git_history_options = { kind = 'repository', review_only = true },
+  git_result_source = 'LOCAL',
+  git_review_tip_commit = string.rep('a', 40),
+  panel = {
+    bufid = preview_buffer,
+    entries = { preview_entry },
+    components = {
+      log = {
+        entries = {
+          {
+            comp = { context = preview_entry },
+            commit = { comp = { lstart = 0 } },
+          },
+        },
+      },
+    },
+    render = function() end,
+    redraw = function() end,
+    winid = vim.api.nvim_get_current_win(),
+  },
+}
+assert(not diffview.adapt_history_footer(preview_footer_view))
+assert(vim.wait(100, function()
+  return preview_footer_view.git_footer_render_pending == nil
+end, 5), 'Footer render policy did not settle')
+assert(
+  preview_entry.commit.ref_names == 'HEAD, release-tag' and preview_entry.folded,
+  'Searched commit handling rewrote Git refs or expanded the target row'
+)
+vim.api.nvim_win_set_buf(0, previous_preview_buffer)
+vim.api.nvim_buf_delete(preview_buffer, { force = true })
 
 for _, scoped_kind in ipairs({ 'file', 'symbol' }) do
   local scoped_detached_entry = {
@@ -483,7 +604,7 @@ for _, extmark in ipairs(vim.api.nvim_buf_get_extmarks(
   end
   if virtual_text and virtual_text:match('MATCH · FILE') then
     target_match_tags = target_match_tags + 1
-    assert(details.hl_group == 'DiffviewReference', 'Scoped target filename was not highlighted')
+    assert(details.hl_group == nil, 'Scoped target filename retained custom highlighting')
   end
   if virtual_line:match('^── BRANCH') then
     branch_separator_tags = branch_separator_tags + 1
@@ -500,13 +621,12 @@ assert(
     and initial_metadata_line
     and initial_metadata_line:match('REVIEW · LOCAL · BRANCH')
     and initial_metadata_line:match('SCOPE · FILE · lua/example.lua')
-    and initial_metadata_highlights.GitHistorySectionDivider
-    and initial_metadata_highlights.GitHistoryScopeTag,
+    and initial_metadata_highlights.Normal,
   'Scoped footer did not tag every target file and split its branch segments'
 )
 assert(
   vim.wo[annotated_footer_view.panel.winid].winbar:match('CURRENT BRANCH · main')
-    and vim.wo[annotated_footer_view.panel.winid].winbar:match('GitHistoryCurrentTag')
+    and vim.wo[annotated_footer_view.panel.winid].winbar:match('%%#Normal#')
     and vim.wo[annotated_footer_view.panel.winid].winbar:match(
       'PINNED BRANCH · main · origin/main'
     ),
@@ -546,10 +666,40 @@ vim.api.nvim_buf_delete(annotated_footer_buffer, { force = true })
 current_view = root_history_view
 
 local seed_destroyed = false
+local warmed_revision_buffers = 0
+local seed_revision_files = {
+  {
+    create_buffer = function()
+      return function()
+        warmed_revision_buffers = warmed_revision_buffers + 1
+      end
+    end,
+    is_valid = function()
+      return false
+    end,
+    nulled = false,
+  },
+  {
+    create_buffer = function()
+      return function()
+        warmed_revision_buffers = warmed_revision_buffers + 1
+      end
+    end,
+    is_valid = function()
+      return false
+    end,
+    nulled = false,
+  },
+}
 local seed_file = {
   destroy = function()
     seed_destroyed = true
   end,
+  layout = {
+    files = function()
+      return seed_revision_files
+    end,
+  },
   path = 'lua/example.lua',
   opened = true,
   revs = { a = 'parent-revision', b = 'commit-revision' },
@@ -569,6 +719,30 @@ local target_file = {
   end,
 }
 queued_full_file_dictionary = { working = { unrelated_file, target_file } }
+local lazy_status_updates = 0
+local lazy_stats_updates = 0
+local lazy_seed_file = {
+  layout = {
+    files = function()
+      return {}
+    end,
+  },
+  path = 'lua/example.lua',
+  revs = { a = 'lazy-parent-revision', b = 'lazy-commit-revision' },
+  set_active = function() end,
+}
+local lazy_entry = {
+  commit = { hash = string.rep('b', 40) },
+  files = { lazy_seed_file },
+  folded = true,
+  single_file = true,
+  update_stats = function()
+    lazy_stats_updates = lazy_stats_updates + 1
+  end,
+  update_status = function()
+    lazy_status_updates = lazy_status_updates + 1
+  end,
+}
 local entry_status_updates = 0
 local entry_stats_updates = 0
 local expanded_entry = {
@@ -605,7 +779,7 @@ local expanded_view = {
   },
   panel = {
     cur_item = { expanded_entry, seed_file },
-    entries = { expanded_entry },
+    entries = { expanded_entry, lazy_entry },
     render = function()
       expanded_render_calls = expanded_render_calls + 1
     end,
@@ -614,7 +788,14 @@ local expanded_view = {
     end,
     set_cur_item = function(self, item)
       self.cur_item = item
-      item[2]:set_active(true)
+      if item[2] then
+        item[2]:set_active(true)
+      end
+    end,
+    set_entry_fold = function(_, entry, open)
+      if open == entry.folded then
+        entry.folded = not open
+      end
     end,
     update_components = function()
       expanded_component_updates = expanded_component_updates + 1
@@ -632,48 +813,82 @@ local expanded_view = {
   },
   set_file = function(view, file)
     selected_expanded_file = file
+    file.opened = true
+    view.cur_entry = file
     view.panel:set_cur_item({ expanded_entry, file })
     view.panel:highlight_item(file)
   end,
   tabpage = vim.api.nvim_get_current_tabpage(),
 }
+local expanded_lifecycle = require('config.git.lifecycle')
+expanded_lifecycle.attach(expanded_view, 'symbol')
+expanded_lifecycle.transition(expanded_view, 'listing', 'test scoped history')
+expanded_lifecycle.mark_list_ready(expanded_view, 2)
+local initial_full_file_list_count = #full_file_list_calls
 assert(diffview.enrich_history_footer(expanded_view), 'Scoped history enrichment did not start')
-assert(vim.wait(100, function()
+assert(vim.wait(200, function()
   return not expanded_view.git_footer_enriching
-end, 10), 'Scoped history enrichment did not finish')
+    and expanded_view.git_diff_opened == false
+end, 10), 'Scoped history did not settle its lazy footer')
 assert(
-  #full_file_list_calls == 1
-    and vim.deep_equal(full_file_list_calls[1].path_args, {})
-    and full_file_list_calls[1].left == 'parent-revision'
-    and full_file_list_calls[1].right == 'commit-revision'
-    and full_file_list_calls[1].options.show_untracked == false,
-  'Scoped history did not request the complete parent-to-commit file list'
+  #full_file_list_calls == initial_full_file_list_count,
+  'Scoped footer settlement eagerly loaded commit children'
+)
+assert(
+  diffview.enrich_history_footer_entry(expanded_view, expanded_entry),
+  'The shared detail-window hook did not start commit child loading'
+)
+assert(vim.wait(200, function()
+  return expanded_entry.git_files_enriched == true
+end, 10), 'The selected detail entry did not finish loading')
+local detail_file_list_call = full_file_list_calls[#full_file_list_calls]
+assert(
+  vim.deep_equal(detail_file_list_call.path_args, {})
+    and detail_file_list_call.left == 'parent-revision'
+    and detail_file_list_call.right == 'commit-revision'
+    and detail_file_list_call.options.show_untracked == false,
+  'Detail loading did not use the unfiltered parent-to-commit file loader'
 )
 assert(
   #expanded_entry.files == 2
     and expanded_entry.files[1] == unrelated_file
     and expanded_entry.files[2] == seed_file
     and expanded_entry.git_target_file == seed_file
-    and selected_expanded_file == nil,
-  'Scoped history did not retain the rendered target while adding the commit file list'
+    and expanded_entry.git_files_enriched == true
+    and entry_status_updates == 1
+    and entry_stats_updates == 1,
+  'Detail loading did not install the selected commit complete file list'
+)
+assert(
+  lazy_entry.git_files_enriched == false
+    and #lazy_entry.files == 1
+    and lazy_entry.files[1] == lazy_seed_file
+    and lazy_entry.git_target_file == lazy_seed_file,
+  'Older matched commits did not stay lazy behind the explicit loader'
+)
+assert(
+  selected_expanded_file == nil
+    and expanded_view.cur_entry == nil
+    and expanded_view.panel.cur_item[2] == nil
+    and expanded_view.git_diff_opened == false,
+  'Scoped history did not stay idle while proactively loading recent commits'
 )
 assert(
   not expanded_entry.single_file
     and expanded_entry.folded
     and expanded_view.panel.single_file == false
-    and highlighted_expanded_item == expanded_entry
-    and expanded_component_updates == 1
-    and expanded_render_calls == 1
-    and expanded_redraw_calls == 1
-    and entry_status_updates == 1
-    and entry_stats_updates == 1,
-  'Scoped history did not rebuild a collapsed commit-only footer through its owned renderer'
+    and highlighted_expanded_item == nil,
+  'Scoped history expanded or moved its selection while rebuilding the commit-only footer'
 )
 assert(not seed_destroyed, 'Active filtered file was destroyed before Diffview selected its replacement')
+assert(
+  warmed_revision_buffers == 0,
+  'Scoped history warmed code buffers before an explicit file open'
+)
 
 current_view = expanded_view
 native_history_selection = function()
-  expanded_entry.folded = false
+  expanded_entry.folded = not expanded_entry.folded
 end
 for _, scoped_kind in ipairs({ 'file', 'symbol' }) do
   expanded_entry.folded = true
@@ -681,17 +896,112 @@ for _, scoped_kind in ipairs({ 'file', 'symbol' }) do
   expanded_view.git_history_options.kind = scoped_kind
   selected_expanded_file = nil
   highlighted_expanded_item = nil
+  expanded_view.panel.cur_item = { expanded_entry, nil }
+  local calls_before_expand = #full_file_list_calls
   find_mapping('file_history_panel', '<cr>')[3]()
-  assert(vim.wait(100, function()
-    return selected_expanded_file == seed_file
-  end, 5), ('Expanded %s commit did not open its target file'):format(scoped_kind))
+  vim.wait(20)
   assert(
-    highlighted_expanded_item == seed_file
+    #full_file_list_calls == calls_before_expand,
+    ('Expanded %s commit loaded file lists instead of only highlighting its matched file'):format(
+      scoped_kind
+    )
+  )
+  assert(
+    highlighted_expanded_item == nil
+      and selected_expanded_file == nil
+      and expanded_view.git_diff_opened == false
       and expanded_view.panel.cur_item[1] == expanded_entry
-      and expanded_view.panel.cur_item[2] == seed_file,
-    ('Expanded %s commit did not highlight its target child row'):format(scoped_kind)
+      and expanded_view.panel.cur_item[2] == nil,
+    ('Expanded %s commit performed an automatic child jump'):format(scoped_kind)
+  )
+  find_mapping('file_history_panel', '<cr>')[3]()
+  assert(
+    expanded_entry.folded and expanded_view.panel.cur_item[2] == nil,
+    ('Expanded %s commit did not collapse from its own title row'):format(scoped_kind)
   )
 end
+expanded_view.panel.get_item_at_cursor = function()
+  return lazy_entry
+end
+local calls_before_load = #full_file_list_calls
+find_mapping('file_history_panel', '<Space>dl')[3]()
+assert(vim.wait(200, function()
+  return lazy_entry.git_files_enriched == true
+end, 10), '<Space>dl did not load the cursored commit file list')
+assert(
+  #full_file_list_calls == calls_before_load + 1
+    and lazy_entry.folded == false
+    and #lazy_entry.files == 2
+    and lazy_entry.files[1] == unrelated_file
+    and lazy_entry.files[2] == lazy_seed_file
+    and lazy_entry.git_target_file == lazy_seed_file
+    and lazy_status_updates == 1
+    and lazy_stats_updates == 1,
+  '<Space>dl did not unfold and install the older commit complete file list'
+)
+find_mapping('file_history_panel', '<Space>dl')[3]()
+assert(
+  #full_file_list_calls == calls_before_load + 1,
+  '<Space>dl reloaded a commit whose file list was already loaded'
+)
+expanded_view.panel.get_item_at_cursor = function()
+  return seed_file
+end
+native_history_selection = function()
+  expanded_view:set_file(seed_file)
+end
+find_mapping('file_history_panel', '<cr>')[3]()
+assert(
+  selected_expanded_file == seed_file and expanded_view.git_diff_opened,
+  'Explicit Enter on the highlighted scoped file did not open its code panes'
+)
+native_history_selection = nil
+current_view = root_history_view
+
+local ordinary_file = { path = 'lua/ordinary.lua' }
+local ordinary_entry = { commit = { hash = string.rep('6', 40) }, files = { ordinary_file } }
+local ordinary_selected_file
+local ordinary_view = {
+  git_diff_opened = false,
+  git_footer_tree = false,
+  panel = {
+    cur_item = { ordinary_entry, nil },
+    entries = { ordinary_entry },
+    get_item_at_cursor = function()
+      return ordinary_file
+    end,
+    is_focused = function()
+      return true
+    end,
+  },
+  set_file = function(_, file)
+    ordinary_selected_file = file
+  end,
+  tabpage = vim.api.nvim_get_current_tabpage(),
+}
+current_view = ordinary_view
+native_history_selection = function()
+  ordinary_entry.folded = false
+end
+ordinary_view.panel.get_item_at_cursor = function()
+  return ordinary_entry
+end
+find_mapping('file_history_panel', '<cr>')[3]()
+assert(
+  ordinary_selected_file == nil and ordinary_view.git_diff_opened == false,
+  'Opening an ordinary commit folder rendered a file without an explicit file-row open'
+)
+ordinary_view.panel.get_item_at_cursor = function()
+  return ordinary_file
+end
+native_history_selection = function()
+  ordinary_view:set_file(ordinary_file)
+end
+find_mapping('file_history_panel', '<cr>')[3]()
+assert(
+  ordinary_selected_file == ordinary_file and ordinary_view.git_diff_opened,
+  'Ordinary history did not render the explicitly opened file row'
+)
 native_history_selection = nil
 current_view = root_history_view
 
@@ -710,6 +1020,22 @@ assert(
   'Git search did not remain available while branch history was rendering'
 )
 current_view.panel.updating = false
+
+local mounting_search_view = {
+  git_history_options = history_options,
+  git_repository_root = '/work/repository',
+}
+current_view = mounting_search_view
+find_mapping('view', '<Space>de')[3]()
+assert(
+  #search_calls == 2
+    and search_calls[2].root == '/work/repository'
+    and search_calls[2].history_options == history_options
+    and search_calls[2].parent_view == mounting_search_view,
+  'Git search rejected Space-de before the initial history panel was created'
+)
+table.remove(search_calls)
+current_view = root_history_view
 
 local list_commit_hash = string.rep('d', 40)
 local rendered_history_file = {
@@ -758,7 +1084,7 @@ local branch_view = opened_views[1]
 assert(
   vim.deep_equal(history_calls[1].arguments, {
     '-C/work/repository',
-    '--max-count=50',
+    '--max-count=1',
     '--follow',
     'lua/example.lua',
   }),
@@ -773,6 +1099,7 @@ assert(panel.level() == 'git', 'Opening branch history did not enter the Git pan
 
 local rendered_window = vim.api.nvim_get_current_win()
 local rendered_buffer = vim.api.nvim_create_buf(false, true)
+local rendered_left_buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_win_set_buf(rendered_window, rendered_buffer)
 vim.api.nvim_buf_set_lines(rendered_buffer, 0, -1, false, {
   'local function changed_scope()',
@@ -780,6 +1107,11 @@ vim.api.nvim_buf_set_lines(rendered_buffer, 0, -1, false, {
   '  if value then',
   '    value = value + 1',
   '  end',
+  'end',
+})
+vim.api.nvim_buf_set_lines(rendered_left_buffer, 0, -1, false, {
+  'local function previous_scope()',
+  '  return 0',
   'end',
 })
 vim.wo[rendered_window].foldmethod = 'manual'
@@ -790,7 +1122,7 @@ enclosing_structure_line = 1
 branch_view.cur_layout = {
   a = {
     file = {
-      bufnr = rendered_buffer,
+      bufnr = rendered_left_buffer,
       path = 'lua/example.lua',
       rev = { commit = string.rep('1', 40) },
     },
@@ -835,18 +1167,24 @@ history_lifecycle.mark_enrichment_ready(
   rendered_event_entry.commit.hash,
   rendered_event_file.path
 )
+branch_view.git_diff_opened = true
 branch_view.events.file_open_pre(nil, rendered_event_file)
 branch_view.events.file_open_post(nil, rendered_event_file)
 vim.wait(100, function()
   return history_lifecycle.is_ready(branch_view)
 end, 5)
 assert(
+  vim.list_contains(syntax_highlight_buffers, rendered_left_buffer)
+    and vim.list_contains(syntax_highlight_buffers, rendered_buffer),
+  'Diffview render completion did not start syntax highlighting in both diff panes'
+)
+assert(
   vim.wo[rendered_window].cursorline and vim.wo[rendered_window].cursorlineopt == 'line',
   'Diffview code pane did not reduce its cursor hint to one whole-line background'
 )
 assert(
-  vim.fn.foldclosed(2) == -1 and vim.api.nvim_win_get_cursor(rendered_window)[1] == 4,
-  'Selected diff hunk did not reveal its enclosing definition while retaining the changed line'
+  vim.fn.foldclosed(2) == 2 and vim.api.nvim_win_get_cursor(rendered_window)[1] == 3,
+  'History render performed an automatic fold or cursor alignment on the input path'
 )
 local already_rendered_completion
 branch_view.git_render_ready_callback = function(_, render_succeeded, detail)
@@ -899,6 +1237,51 @@ assert(
   'Selected commit render did not resume after the replacement initial diff was ready'
 )
 
+do
+  local lazy_selected_hash = string.rep('7', 40)
+  local lazy_placeholder_file = { path = '[loading]' }
+  local lazy_selected_entry = {
+    commit = { hash = lazy_selected_hash },
+    files = { lazy_placeholder_file },
+    git_details_loaded = false,
+  }
+  local lazy_selected_file = { path = 'lua/lazy-selected.lua' }
+  local lazy_selected_render
+  local lazy_selected_view = {
+    panel = {
+      cur_item = {},
+      entries = { lazy_selected_entry },
+      updating = false,
+    },
+    set_file = function(_, file)
+      lazy_selected_render = file
+    end,
+  }
+  defer_footer_detail = true
+  local detail_requests_before_focus = footer_detail_requests
+  assert(diffview.focus_history_commit(lazy_selected_view, lazy_selected_hash))
+  assert(diffview.focus_history_commit(lazy_selected_view, lazy_selected_hash))
+  assert(
+    lazy_selected_render == nil
+      and footer_detail_requests == detail_requests_before_focus + 1
+      and pending_footer_detail
+      and pending_footer_detail.entry == lazy_selected_entry,
+    'First-choice rendering used a placeholder or duplicated its prioritized detail request'
+  )
+  lazy_selected_entry.files = { lazy_selected_file }
+  lazy_selected_entry.git_target_file = lazy_selected_file
+  lazy_selected_entry.git_details_loaded = true
+  local complete_footer_detail = pending_footer_detail.callback
+  pending_footer_detail = nil
+  defer_footer_detail = false
+  complete_footer_detail(true)
+  assert(
+    lazy_selected_render == lazy_selected_file
+      and lazy_selected_view.git_review_hydration == nil,
+    'First-choice rendering did not resume with the hydrated commit file'
+  )
+end
+
 local existing_commit_hash = string.rep('e', 40)
 local existing_file = { path = 'lua/existing.lua' }
 local existing_target_file = { path = 'lua/example.lua' }
@@ -924,8 +1307,12 @@ assert(diffview.open_search_commit(
   { hash = existing_commit_hash, source = 'LOCAL' }
 ))
 assert(
-  #history_calls == 1 and selected_history_file == existing_target_file,
-  'Search review replaced history or missed the scoped file in the mounted list'
+  #history_calls == 1
+    and selected_history_file == nil
+    and branch_view.panel.cur_item[1].commit.hash == existing_commit_hash
+    and branch_view.panel.cur_item[2] == nil
+    and branch_view.git_diff_opened == false,
+  'Search review replaced history, expanded the target, or rendered a file before final focus'
 )
 
 local loaded_commit = {
@@ -946,6 +1333,7 @@ local loaded_commit_view = opened_views[2]
 assert(
   vim.deep_equal(history_calls[2].arguments, {
     '-C/work/repository',
+    '--max-count=1',
     '--range=refs/heads/main',
   })
     and not loaded_commit_view.git_parent_view
@@ -953,6 +1341,7 @@ assert(
     and loaded_commit_view.git_detached_head_commit == detached_head_commit
     and loaded_commit_view.git_history_options.review_only
     and loaded_commit_view.git_search_options.kind == 'repository'
+    and loaded_commit_view.git_search_options.detached_head_commit == detached_head_commit
     and loaded_commit_view.git_search_options.revision == nil
     and loaded_commit_view.git_search_options.history_ref == nil
     and loaded_commit_view.git_search_options.selected_commit == nil
@@ -1008,6 +1397,7 @@ local selected_commit_view = opened_views[3]
 assert(
   vim.deep_equal(history_calls[3].arguments, {
     '-C/work/repository',
+    '--max-count=1',
     '--range=refs/heads/main',
   })
     and not selected_commit_view.git_parent_view,
@@ -1046,9 +1436,26 @@ local performance_seed_file = {
   revs = { a = 'performance-parent', b = 'performance-commit' },
 }
 local performance_entry = {
+  commit = { hash = string.rep('8', 40) },
   files = { performance_seed_file },
   folded = true,
 }
+local performance_entries = { performance_entry }
+for performance_index = 2, 50 do
+  performance_entries[#performance_entries + 1] = {
+    commit = { hash = ('%040d'):format(performance_index) },
+    files = {
+      {
+        path = 'lua/example.lua',
+        revs = {
+          a = 'performance-parent-' .. performance_index,
+          b = 'performance-commit-' .. performance_index,
+        },
+      },
+    },
+    folded = true,
+  }
+end
 defer_full_file_list = true
 pending_full_file_list_callback = nil
 local performance_call_count = #full_file_list_calls
@@ -1063,34 +1470,40 @@ performance_view.get_default_merge_layout = function()
 end
 performance_view.panel = {
   cur_item = nil,
-  entries = { performance_entry },
+  entries = performance_entries,
   log_options = {},
   updating = false,
   winid = vim.api.nvim_get_current_win(),
 }
 assert(vim.wait(200, function()
-  return pending_full_file_list_callback ~= nil
-end, 10), 'Scoped footer enrichment did not expose its in-flight diff request')
+  return not performance_view.git_footer_enriching
+end, 10), 'Scoped footer did not become ready without eager file-list expansion')
+assert(
+  #full_file_list_calls == performance_call_count
+    and pending_full_file_list_callback == nil,
+  'Scoped footer settlement loaded details outside the shared footer loader'
+)
+local old_entry = performance_entries[30]
+assert(
+  diffview.enrich_history_footer_entry(performance_view, old_entry)
+    and #full_file_list_calls == performance_call_count + 1
+    and pending_full_file_list_callback ~= nil,
+  'Selected older scoped commit did not expose its lazy in-flight diff request'
+)
 current_view = performance_view
 assert(
-  not diffview.handle_ctrl_q(),
-  'Ctrl-Q exited while required scoped enrichment was still running'
+  diffview.handle_ctrl_q(),
+  'Ctrl-Q did not cancel Git history during initial scoped enrichment'
 )
 assert(
-  performance_view.git_footer_enriching
-    and performance_view.git_footer_enrichment_token ~= nil
-    and history_lifecycle.phase(performance_view) == 'enriching',
-  'Pending Git exit cancelled the work required to reach a stable render boundary'
-)
-performance_view.panel.updating = true
-assert(diffview.close(), 'Rendering Git history refused an exit request')
-assert(
-  not performance_view.git_footer_enriching,
-  'Git exit retained configuration-owned footer enrichment'
+  not performance_entry.git_files_enriching
+    and not old_entry.git_files_enriching,
+  'Git exit retained selected-entry footer enrichment'
 )
 assert(vim.wait(100, function()
   return performance_view.closed
-end, 10), 'Plugin-owned history loading unnecessarily delayed Git exit')
+    and history_lifecycle.phase(performance_view) == 'disposed'
+end, 10), 'Initial scoped enrichment delayed Git exit')
 local stale_file_destroyed = false
 local stale_file = {
   destroy = function()
@@ -1103,10 +1516,45 @@ assert(vim.wait(100, function()
 end, 10), 'Cancelled footer enrichment leaked its in-flight file results')
 assert(
   #full_file_list_calls == performance_call_count + 1,
-  'Cancelled footer enrichment continued launching commit diff requests'
+  'Cancelled lazy footer enrichment launched duplicate commit diff requests'
 )
 defer_full_file_list = false
 pending_full_file_list_callback = nil
+statusline_branch_refreshes = 0
+
+local initializing_exit_view = {
+  close = function(self)
+    self.closed = true
+  end,
+  cur_entry = nil,
+  git_result_source = 'LOCAL',
+  panel = {
+    cur_item = nil,
+    entries = {},
+    log_options = {},
+    updating = true,
+    winid = vim.api.nvim_get_current_win(),
+  },
+  tabpage = vim.api.nvim_get_current_tabpage(),
+}
+history_lifecycle.attach(initializing_exit_view, 'repository')
+history_lifecycle.transition(initializing_exit_view, 'listing', 'test initial history')
+current_view = initializing_exit_view
+panel.enter_git(initializing_exit_view, function()
+  diffview.return_to_editor_line()
+end)
+assert(
+  diffview.handle_ctrl_q(),
+  'Ctrl-Q did not accept an exit while Git history was initializing'
+)
+assert(vim.wait(100, function()
+  return initializing_exit_view.closed
+end, 10), 'Early Git exit did not dispose the initializing view')
+assert(
+  panel.level() == 'editor'
+    and history_lifecycle.phase(initializing_exit_view) == 'disposed',
+  'Early Git exit retained the Git panel layer'
+)
 statusline_branch_refreshes = 0
 
 local waiting_view = {
@@ -1127,21 +1575,20 @@ current_view = waiting_view
 panel.enter_git(waiting_view, function()
   diffview.return_to_editor_line()
 end)
-assert(not diffview.handle_ctrl_q(), 'Unready Ctrl-Q return incorrectly exited Git mode')
-assert(
-  panel.level() == 'git'
-    and not waiting_view.closed
-    and waiting_view.git_return_requested
-    and vim.wo[waiting_view.panel.winid].winbar:match('REMOTE · RETURN')
-    and vim.wo[waiting_view.panel.winid].winbar:match('waiting for the rendered AFTER file'),
-  'Unready Ctrl-Q return did not remain in Git mode with a footer explanation'
-)
+assert(diffview.handle_ctrl_q(), 'Unready Ctrl-Q return did not exit Git mode immediately')
+assert(vim.wait(100, function()
+  return panel.level() == 'editor' and waiting_view.closed
+end, 10), 'Unready Git history remained mounted after its editor handoff')
+statusline_branch_refreshes = 0
 
 local editor_tabpage = vim.api.nvim_get_current_tabpage()
 vim.cmd({ cmd = 'edit', args = { 'README.md' } })
 vim.keymap.set('n', '<Space>fw', function() end, { desc = 'Project workspace symbols' })
-vim.keymap.set('n', '<Space>de', function() end, { desc = 'Enter Git mode and search repository' })
+vim.keymap.set('n', '<Space>de', function() end, {
+  desc = 'Search Git branches, commits, and issues',
+})
 local return_editor_window = vim.api.nvim_get_current_win()
+vim.api.nvim_win_set_cursor(return_editor_window, { 1, 0 })
 vim.cmd('tabnew')
 local git_tabpage = vim.api.nvim_get_current_tabpage()
 local historical_window = vim.api.nvim_get_current_win()
@@ -1198,12 +1645,9 @@ end)
 local original_schedule = vim.schedule
 local original_cmd = vim.cmd
 local original_return_defer = vim.defer_fn
-local original_set_current_tabpage = vim.api.nvim_set_current_tabpage
 local original_set_editor_buffer = vim.api.nvim_win_set_buf
-local scheduled_declaration_jump
+local scheduled_editor_apply
 local pending_return_close
-local editor_buffer_at_focus
-local branch_refreshes_at_focus
 local return_phase_order = {}
 vim.cmd = function(command)
   if command == 'redraw' and vim.api.nvim_get_current_tabpage() == editor_tabpage then
@@ -1213,7 +1657,7 @@ vim.cmd = function(command)
 end
 vim.schedule = function(callback)
   return_phase_order[#return_phase_order + 1] = 'jump'
-  scheduled_declaration_jump = callback
+  scheduled_editor_apply = callback
 end
 vim.defer_fn = function(callback, delay)
   if delay == 0 then
@@ -1221,14 +1665,6 @@ vim.defer_fn = function(callback, delay)
     return
   end
   return original_return_defer(callback, delay)
-end
-vim.api.nvim_set_current_tabpage = function(tabpage)
-  if tabpage == editor_tabpage then
-    local editor_window = vim.api.nvim_tabpage_get_win(editor_tabpage)
-    editor_buffer_at_focus = vim.api.nvim_win_get_buf(editor_window)
-    branch_refreshes_at_focus = statusline_branch_refreshes
-  end
-  return original_set_current_tabpage(tabpage)
 end
 vim.api.nvim_win_set_buf = function(window, buffer)
   local set_result = original_set_editor_buffer(window, buffer)
@@ -1246,24 +1682,33 @@ vim.api.nvim_win_set_buf = function(window, buffer)
   return set_result
 end
 assert(diffview.handle_ctrl_q(), 'Ctrl-Q did not invoke the Git line return callback')
+-- Git mode exits immediately; the restored editor only displays the existing file.
+assert(
+  vim.api.nvim_get_current_tabpage() == editor_tabpage,
+  'Footer Ctrl-Q did not return to the editor tab immediately'
+)
+local return_message_buffer = vim.fn.bufnr(editor_target_path)
+assert(return_message_buffer > 0, 'Git exit did not address a target buffer')
+assert(vim.b[return_message_buffer].git_return_cursor == nil,
+  'Git exit retained an automatic cursor message')
+assert(
+  scheduled_editor_apply and vim.deep_equal(return_phase_order, { 'jump' }),
+  'Git exit performed render work itself instead of handing it to the editor'
+)
+scheduled_editor_apply()
 vim.api.nvim_win_set_buf = original_set_editor_buffer
-vim.api.nvim_set_current_tabpage = original_set_current_tabpage
 vim.schedule = original_schedule
 vim.defer_fn = original_return_defer
 vim.cmd = original_cmd
 assert(
-  vim.api.nvim_get_current_tabpage() == editor_tabpage
-    and vim.fs.normalize(vim.api.nvim_buf_get_name(0)) == editor_target_path,
-  'Footer Ctrl-Q did not prioritize restoring the working-tree editor buffer'
+  vim.fs.normalize(vim.api.nvim_buf_get_name(0)) == editor_target_path
+    and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
+    and vim.b[return_message_buffer].git_return_cursor == nil,
+  'The editor return changed the cursor instead of only displaying the file'
 )
 assert(
-  editor_buffer_at_focus
-    and vim.fs.normalize(vim.api.nvim_buf_get_name(editor_buffer_at_focus)) == editor_target_path,
-  'Git return exposed an intermediate editor buffer before the Diffview file'
-)
-assert(
-  branch_refreshes_at_focus == 1,
-  'Git return did not prepare branch state before the first editor frame'
+  vim.deep_equal(return_phase_order, { 'jump', 'render' }),
+  'The editor did not redraw after displaying the return file'
 )
 local restored_workspace_mapping = vim.fn.maparg('<Space>fw', 'n', false, true)
 assert(
@@ -1274,7 +1719,7 @@ assert(
 local restored_git_search_mapping = vim.fn.maparg('<Space>de', 'n', false, true)
 assert(
   restored_git_search_mapping.buffer == 0
-    and restored_git_search_mapping.desc == 'Enter Git mode and search repository',
+    and restored_git_search_mapping.desc == 'Search Git branches, commits, and issues',
   'Git return retained a buffer-local search mapping that cannot re-enter Git mode'
 )
 local preserved_editor_mapping = vim.fn.maparg('<Space>dx', 'n', false, true)
@@ -1285,12 +1730,8 @@ assert(
 )
 assert(
   vim.wo[footer_window].winbar:match('RETURN')
-    and vim.wo[footer_window].winbar:match('cursor alignment follows render'),
-  'Git footer did not log the pending render-gated cursor alignment'
-)
-assert(
-  not scheduled_declaration_jump and vim.deep_equal(return_phase_order, { 'render' }),
-  'Git return scheduled cursor alignment before Diffview teardown'
+    and vim.wo[footer_window].winbar:match('restoring editor'),
+  'Git footer did not log the immediate editor restore'
 )
 local settled_reentry_calls = 0
 assert(diffview.defer_until_settled('repository_search', function()
@@ -1299,95 +1740,21 @@ end), 'Git return did not accept an immediate editor re-entry action')
 assert(diffview.defer_until_settled('repository_search', function()
   settled_reentry_calls = settled_reentry_calls + 1
 end), 'Git return did not coalesce its immediate editor re-entry action')
-local alignment_notification
-local original_alignment_notify = vim.notify
-local original_alignment_defer = vim.defer_fn
-local original_alignment_cmd = vim.cmd
-local original_alignment_set_cursor = vim.api.nvim_win_set_cursor
-local restored_editor_window = vim.api.nvim_get_current_win()
-local alignment_cursor_at_notification
-local alignment_cursor_updates = {}
-local alignment_redraws = 0
-local transient_clear_callback
-local transient_clear_delay
-vim.notify = function(message, level)
-  alignment_notification = { level = level, message = message }
-  alignment_cursor_at_notification = vim.api.nvim_win_get_cursor(restored_editor_window)
-end
-vim.defer_fn = function(callback, delay)
-  transient_clear_callback = callback
-  transient_clear_delay = delay
-end
-vim.cmd = function(command)
-  if command == 'redraw' then
-    alignment_redraws = alignment_redraws + 1
-  end
-  return original_alignment_cmd(command)
-end
-vim.api.nvim_win_set_cursor = function(window, cursor)
-  if window == restored_editor_window then
-    alignment_cursor_updates[#alignment_cursor_updates + 1] = vim.deepcopy(cursor)
-  end
-  return original_alignment_set_cursor(window, cursor)
-end
 assert(pending_return_close, 'Git return did not schedule Diffview teardown')
 pending_return_close()
 assert(vim.wait(100, function()
   return return_view.closed
     and settled_reentry_calls == 1
-    and alignment_notification ~= nil
-    and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 2, 4 })
-end, 10), 'Git teardown did not release the async cursor alignment task')
-vim.api.nvim_win_set_cursor = original_alignment_set_cursor
-vim.cmd = original_alignment_cmd
-vim.defer_fn = original_alignment_defer
-vim.notify = original_alignment_notify
+    and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
+end, 10), 'Git teardown did not preserve the already interactive editor target')
 assert(
   branch_info_visible and statusline_branch_refreshes == 2,
-  'Diffview teardown erased branch state before cursor alignment'
+  'Diffview teardown erased restored branch state'
 )
 assert(
-  alignment_notification
-    and alignment_notification.level == vim.log.levels.INFO
-    and alignment_notification.message == 'Git return: editor cursor aligned',
-  'Editor-side cursor alignment did not log completion in the ordinary message area'
+  vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 }),
+  'Editor handoff moved the cursor while opening the historical file'
 )
-assert(
-  vim.deep_equal(alignment_cursor_at_notification, { 2, 4 }) and alignment_redraws == 1,
-  'Git return logged completion before the final aligned editor frame'
-)
-assert(
-  #alignment_cursor_updates == 1
-    and vim.deep_equal(alignment_cursor_updates[1], { 2, 4 }),
-  'Git return rendered intermediate cursor positions during alignment'
-)
-assert(
-  type(transient_clear_callback) == 'function' and transient_clear_delay == 1200,
-  'Git return completion notice did not receive a bounded transient lifespan'
-)
-local original_alignment_echo = vim.api.nvim_echo
-local transient_clear_call
-vim.api.nvim_echo = function(chunks, history, options)
-  transient_clear_call = {
-    chunks = vim.deepcopy(chunks),
-    history = history,
-    options = vim.deepcopy(options),
-  }
-end
-transient_clear_callback()
-vim.api.nvim_echo = original_alignment_echo
-assert(
-  transient_clear_call
-    and vim.deep_equal(transient_clear_call.chunks, {})
-    and transient_clear_call.history == false
-    and vim.deep_equal(transient_clear_call.options, {}),
-  'Git return completion notice did not clear the ordinary message area'
-)
-assert(
-  vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 2, 4 }),
-  'Rendered editor did not preserve the cursor distance from the matched declaration'
-)
-assert(statusline_branch_refreshes == 2, 'Cursor alignment erased restored branch statusline state')
 enclosing_structure_result = nil
 
 vim.api.nvim_set_current_tabpage(git_tabpage)
@@ -1421,17 +1788,23 @@ enclosing_structure_result = {
 panel.enter_git(fallback_view, function()
   diffview.return_to_editor_line()
 end)
-assert(diffview.handle_ctrl_q(), 'Unmatched declaration prevented Git mode from closing')
+assert(diffview.handle_ctrl_q(), 'Direct editor routing did not close Git mode')
 assert(
-  vim.api.nvim_get_current_tabpage() == editor_tabpage
-    and vim.fs.normalize(vim.api.nvim_buf_get_name(0)) == editor_target_path,
+  vim.api.nvim_get_current_tabpage() == editor_tabpage,
+  'Fallback return did not hand back to the editor tab immediately'
+)
+assert(
+  vim.wait(100, function()
+    return vim.api.nvim_get_current_tabpage() == editor_tabpage
+      and vim.fs.normalize(vim.api.nvim_buf_get_name(0)) == editor_target_path
+  end, 5),
   'Fallback return did not restore the working-tree editor buffer first'
 )
 assert(
   vim.wait(100, function()
-    return vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 2, 4 })
+    return vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
   end, 5),
-  'Async unmatched declaration did not fall back to the rendered AFTER file line'
+  'Direct editor routing moved the cursor while opening the AFTER file'
 )
 enclosing_structure_result = nil
 assert(vim.wait(100, function()
@@ -1463,7 +1836,6 @@ panel.enter_git(render_failure_view, function()
   diffview.return_to_editor_line()
 end)
 local render_failure_notified = false
-local render_failure_scheduled_jump = false
 local original_notify = vim.notify
 vim.cmd = function(command)
   if command == 'redraw' and vim.api.nvim_get_current_tabpage() == editor_tabpage then
@@ -1476,21 +1848,15 @@ vim.notify = function(message)
     render_failure_notified = true
   end
 end
-vim.schedule = function()
-  render_failure_scheduled_jump = true
-end
 assert(diffview.handle_ctrl_q(), 'Editor render failure prevented Git mode teardown')
-vim.schedule = original_schedule
+assert(vim.wait(200, function()
+  return render_failure_notified
+end, 10), 'Editor render failure was not reported')
 vim.notify = original_notify
 vim.cmd = original_cmd
-assert(render_failure_notified, 'Editor render failure was not reported')
 assert(vim.wait(100, function()
   return render_failure_view.closed
 end, 10), 'Render-failure Git return did not dispose its history view')
-assert(
-  not render_failure_scheduled_jump,
-  'Git return scheduled a cursor jump after the editor render failed'
-)
 if vim.api.nvim_tabpage_is_valid(git_tabpage) then
   vim.api.nvim_set_current_tabpage(git_tabpage)
   vim.cmd('tabclose')
@@ -1507,23 +1873,24 @@ vim.api.nvim_buf_set_lines(preserved_editor_buffer, 0, -1, false, {
 })
 vim.api.nvim_win_set_cursor(preserved_editor_window, { 2, 5 })
 vim.cmd('tabnew')
-local absent_git_tabpage = vim.api.nvim_get_current_tabpage()
-local absent_after_window = vim.api.nvim_get_current_win()
-local absent_view = {
+local idle_git_tabpage = vim.api.nvim_get_current_tabpage()
+local idle_after_window = vim.api.nvim_get_current_win()
+local idle_view = {
   close = function(self)
     self.closed = true
   end,
-  cur_entry = { absolute_path = '/work/missing-from-working-tree.lua', opened = true },
-  cur_layout = { b = { id = absent_after_window } },
+  cur_entry = editor_target_file,
+  cur_layout = { b = { id = idle_after_window } },
+  git_diff_opened = false,
   panel = { cur_item = nil, log_options = {}, updating = false },
-  tabpage = absent_git_tabpage,
+  tabpage = idle_git_tabpage,
 }
 previous_editing_tabpage = preserved_editor_tabpage
-current_view = absent_view
-panel.enter_git(absent_view, function()
+current_view = idle_view
+panel.enter_git(idle_view, function()
   diffview.return_to_editor_line()
 end)
-assert(diffview.handle_ctrl_q(), 'Absent working-tree target did not exit Git mode')
+assert(diffview.handle_ctrl_q(), 'Idle Git history did not exit Git mode')
 assert(
   vim.api.nvim_get_current_tabpage() == preserved_editor_tabpage
     and vim.api.nvim_get_current_win() == preserved_editor_window
@@ -1533,17 +1900,17 @@ assert(
       vim.api.nvim_buf_get_lines(preserved_editor_buffer, 0, -1, false),
       { 'unsaved editor state', 'must remain untouched' }
     ),
-  'Absent working-tree target changed the preserved editor state'
+  'Idle Git history changed the editor state preserved before entry'
 )
 assert(vim.wait(100, function()
-  return absent_view.closed
-end, 10), 'Absent-target Git view was not disposed')
+  return idle_view.closed
+end, 10), 'Idle Git view was not disposed')
 assert(
   statusline_branch_refreshes == 7,
-  'Absent-target Git return did not restore branch statusline state'
+  'Idle Git return did not restore branch statusline state'
 )
-if vim.api.nvim_tabpage_is_valid(absent_git_tabpage) then
-  vim.api.nvim_set_current_tabpage(absent_git_tabpage)
+if vim.api.nvim_tabpage_is_valid(idle_git_tabpage) then
+  vim.api.nvim_set_current_tabpage(idle_git_tabpage)
   vim.cmd('tabclose')
 end
 vim.api.nvim_win_set_buf(preserved_editor_window, restored_editor_buffer)
@@ -1558,9 +1925,15 @@ local symbol_view = diffview.open_file_history({
     structure = { first_line = 1, label = 'changed_scope', last_line = 6 },
   },
   range = { 1, 6 },
+  cursor_target = {
+    line = 1,
+    path = 'lua/example.lua',
+    structure = { first_line = 1, label = 'changed_scope', last_line = 6 },
+  },
 })
 local symbol_window = vim.api.nvim_get_current_win()
 vim.api.nvim_win_set_buf(symbol_window, rendered_buffer)
+vim.api.nvim_win_set_cursor(symbol_window, { 3, 0 })
 vim.wo[symbol_window].foldmethod = 'manual'
 vim.cmd('2,5fold')
 vim.cmd('normal! zc')
@@ -1592,6 +1965,7 @@ local symbol_entry = {
 local highlighted_symbol_file
 symbol_view.cur_layout = {
   a = { file = symbol_file, id = symbol_window },
+  b = { file = symbol_file, id = symbol_window },
 }
 symbol_view.cur_entry = symbol_file
 symbol_view.panel = {
@@ -1615,6 +1989,7 @@ history_lifecycle.mark_enrichment_ready(
   symbol_entry.commit.hash,
   symbol_file.path
 )
+symbol_view.git_diff_opened = true
 local symbol_file_open_pre = assert(symbol_view.events.file_open_pre)
 local symbol_file_open_post = assert(symbol_view.events.file_open_post)
 symbol_file_open_pre(nil, symbol_file)
@@ -1627,10 +2002,332 @@ assert(
     and symbol_file.custom_folds == nil
     and highlighted_symbol_file == symbol_file
     and vim.api.nvim_win_get_cursor(symbol_window)[1] == 1,
-  'Symbol history did not use ordinary full-file folds, highlight its opened target, and jump'
+  'Symbol history did not use ordinary folds and jump to the traced declaration on open'
 )
 enclosing_structure_line = nil
 
+local file_target_view = diffview.open_file_history({
+  kind = 'file',
+  location = {
+    relative_path = 'lua/example.lua',
+    root = '/work/repository',
+  },
+  cursor_target = { line = 2, path = 'lua/example.lua' },
+})
+local file_target_window = vim.api.nvim_get_current_win()
+vim.api.nvim_win_set_buf(file_target_window, rendered_buffer)
+vim.wo[file_target_window].foldmethod = 'manual'
+vim.api.nvim_win_set_cursor(file_target_window, { 4, 0 })
+local file_target_file = {
+  bufnr = rendered_buffer,
+  opened = true,
+  path = 'lua/example.lua',
+  rev = { commit = string.rep('5', 40) },
+}
+local file_target_entry = {
+  commit = { hash = string.rep('5', 40) },
+  files = { file_target_file },
+  folded = false,
+  get_diff = function()
+    return { hunks = {} }
+  end,
+}
+file_target_view.cur_layout = {
+  a = { file = file_target_file, id = file_target_window },
+  b = { file = file_target_file, id = file_target_window },
+}
+file_target_view.cur_entry = file_target_file
+file_target_view.panel = {
+  cur_item = { file_target_entry, file_target_file },
+  entries = { file_target_entry },
+  find_entry = function()
+    return file_target_entry
+  end,
+  log_options = {},
+  updating = false,
+  winid = file_target_window,
+}
+file_target_view.git_footer_enriching = false
+history_lifecycle.mark_list_ready(file_target_view, 1)
+history_lifecycle.mark_enrichment_ready(
+  file_target_view,
+  file_target_entry.commit.hash,
+  file_target_file.path
+)
+file_target_view.git_diff_opened = true
+file_target_view.events.file_open_pre(nil, file_target_file)
+file_target_view.events.file_open_post(nil, file_target_file)
+vim.wait(100, function()
+  return history_lifecycle.is_ready(file_target_view)
+end, 5)
+assert(
+  vim.api.nvim_win_get_cursor(file_target_window)[1] == 2,
+  'File history explicit open did not land on the cursor-target line'
+)
+assert(
+  vim.wo[file_target_window].foldmethod == 'manual',
+  'File history without a line range rewrote the code pane fold method'
+)
+
+do
+  local native_seed_hash = string.rep('3', 40)
+  local native_seed_file = { path = 'lua/first-only.lua' }
+  local native_seed_entry = {
+    commit = { hash = native_seed_hash, ref_names = '' },
+    files = { native_seed_file },
+  }
+  local native_seed_view = diffview.open_file_history({
+    history_ref = 'refs/heads/main',
+    kind = 'repository',
+    location = { root = '/work/repository' },
+    preview_commit = native_seed_hash,
+    selected_commit = native_seed_hash,
+  })
+  native_seed_view.panel = {
+    bufid = vim.api.nvim_get_current_buf(),
+    cur_item = { native_seed_entry, nil },
+    entries = { native_seed_entry },
+    log_options = {},
+    render = function() end,
+    redraw = function() end,
+    update_components = function() end,
+    updating = false,
+  }
+  local native_seed_installed = false
+  footer_attach_handlers.install_rows(native_seed_view, {
+    {
+      author = 'Author',
+      hash = native_seed_hash,
+      parent_hashes = { string.rep('2', 40) },
+      ref_names = '',
+      reflog_selector = '',
+      rel_date = 'now',
+      subject = 'Native seed is incomplete',
+      time = 1,
+      time_offset = '+0000',
+    },
+  }, 'initial', function(installed)
+    native_seed_installed = installed
+  end)
+  assert(
+    native_seed_installed
+      and native_seed_view.panel.entries[1] == native_seed_entry
+      and native_seed_entry.git_details_loaded == false
+      and native_seed_entry.folded == true,
+    'A reused native seed was treated as complete or expanded during metadata install'
+  )
+end
+
+local exact_detached_commit = string.rep('4', 40)
+local exact_detached_view = diffview.open_file_history({
+  detached_head_commit = exact_detached_commit,
+  kind = 'repository',
+  location = { root = '/work/repository' },
+  revision = exact_detached_commit,
+  unbounded = true,
+})
+assert(
+  vim.deep_equal(history_calls[#history_calls].arguments, {
+    '-C/work/repository',
+    '--max-count=100000',
+    '--range=' .. exact_detached_commit .. '^!',
+  })
+    and exact_detached_view.git_search_options.detached_head_commit == exact_detached_commit
+    and exact_detached_view.git_search_options.revision == nil,
+  'Fresh detached history did not mount one exact commit and preserve its dispatcher anchor'
+)
+
+local standalone_commit_hash = string.rep('6', 40)
+local standalone_history_count = #history_calls
+assert(diffview.open_search_commit(nil, {
+  checked_out_branch = 'main',
+  detached_head_commit = exact_detached_commit,
+  kind = 'repository',
+  location = { root = '/work/repository' },
+}, {
+  branch_name = 'main',
+  hash = standalone_commit_hash,
+  history_ref = 'refs/heads/main',
+  source = 'REMOTE',
+}))
+local standalone_commit_view = opened_views[#opened_views]
+standalone_commit_view.panel = {
+  cur_item = {},
+  entries = {},
+  log_options = {},
+  updating = false,
+}
+assert(
+  #history_calls == standalone_history_count + 1
+    and vim.deep_equal(history_calls[#history_calls].arguments, {
+      '-C/work/repository',
+      '--max-count=1',
+      '--range=refs/heads/main',
+    })
+    and standalone_commit_view.git_checked_out_branch == 'main'
+    and standalone_commit_view.git_detached_head_commit == exact_detached_commit
+    and standalone_commit_view.git_history_options.selected_commit == standalone_commit_hash
+    and panel.level() == 'git',
+  'Standalone commit selection did not open Git mode at the requested revision'
+)
+assert(
+  not vim.wait(100, function()
+    return #history_calls > standalone_history_count + 1
+  end, 5),
+  'Missing preview commit remounted the complete branch instead of staying bounded'
+)
+
+local implicit_history_view = diffview.open_file_history({
+  kind = 'repository',
+  location = { root = '/work/repository' },
+})
+local implicit_file_activations = {}
+local implicit_revision_disposals = 0
+local implicit_revision_files = {
+  {
+    dispose_buffer = function(self)
+      implicit_revision_disposals = implicit_revision_disposals + 1
+      self.bufnr = nil
+    end,
+    nulled = false,
+  },
+  {
+    dispose_buffer = function(self)
+      implicit_revision_disposals = implicit_revision_disposals + 1
+      self.bufnr = nil
+    end,
+    nulled = true,
+  },
+}
+local implicit_history_file = {
+  layout = {
+    files = function()
+      return implicit_revision_files
+    end,
+  },
+  opened = false,
+  path = 'lua/implicit.lua',
+  set_active = function(_, active)
+    implicit_file_activations[#implicit_file_activations + 1] = active
+  end,
+}
+local implicit_history_entry = {
+  commit = { hash = string.rep('7', 40) },
+  files = { implicit_history_file },
+}
+local implicit_null_opens = 0
+implicit_history_view.cur_layout = {
+  detach_files = function() end,
+  open_null = function()
+    implicit_null_opens = implicit_null_opens + 1
+  end,
+}
+implicit_history_view.panel = {
+  cur_item = { implicit_history_entry, implicit_history_file },
+  entries = { implicit_history_entry },
+  set_cur_item = function(self, current_item)
+    self.cur_item = current_item
+  end,
+  updating = false,
+}
+implicit_history_view.events.file_open_pre(nil, implicit_history_file)
+assert(
+  implicit_revision_files[1].nulled and implicit_revision_files[2].nulled,
+  'History initialization did not suppress its implicit historical blob load'
+)
+implicit_history_view.cur_entry = implicit_history_file
+implicit_history_view.events.file_open_post(nil, implicit_history_file)
+implicit_history_file.opened = true
+assert(
+  implicit_file_activations[1] == false,
+  'History initialization did not deactivate Diffview\'s implicit first file before loading'
+)
+assert(vim.wait(200, function()
+  return implicit_history_view.cur_entry == nil
+end, 5), 'History initialization retained Diffview\'s implicit first file')
+assert(
+  implicit_null_opens > 0
+    and implicit_history_view.panel.cur_item[1] == implicit_history_entry
+    and implicit_history_view.panel.cur_item[2] == nil
+    and implicit_history_view.git_diff_opened == false,
+  'History initialization did not settle directly onto its native null layout'
+)
+assert(
+  not implicit_revision_files[1].nulled
+    and implicit_revision_files[2].nulled
+    and implicit_revision_disposals == 2,
+  'History initialization did not restore reusable revision files after its null warm-up'
+)
+
+-- Diffview fires one more auto-open from its trailing throttled stream render after
+-- the list has settled; a ready history must retire it instead of rendering code.
+local trailing_view = diffview.open_file_history({
+  kind = 'file',
+  location = { relative_path = 'lua/implicit.lua', root = '/work/repository' },
+})
+local trailing_activations = {}
+local trailing_revision_files = {
+  { dispose_buffer = function(self) self.bufnr = nil end, nulled = false },
+  { dispose_buffer = function(self) self.bufnr = nil end, nulled = false },
+}
+local trailing_file = {
+  layout = {
+    files = function()
+      return trailing_revision_files
+    end,
+  },
+  opened = false,
+  path = 'lua/implicit.lua',
+  set_active = function(_, active)
+    trailing_activations[#trailing_activations + 1] = active
+  end,
+}
+local trailing_entry = {
+  commit = { hash = string.rep('8', 40) },
+  files = { trailing_file },
+  folded = true,
+}
+local trailing_null_opens = 0
+trailing_view.cur_layout = {
+  detach_files = function() end,
+  open_null = function()
+    trailing_null_opens = trailing_null_opens + 1
+  end,
+}
+trailing_view.panel = {
+  cur_item = { trailing_entry, nil },
+  entries = { trailing_entry },
+  set_cur_item = function(self, current_item)
+    self.cur_item = current_item
+  end,
+  updating = false,
+}
+history_lifecycle.mark_idle_ready(trailing_view, 'test scoped idle readiness')
+assert(
+  history_lifecycle.is_ready(trailing_view),
+  'Scoped test view did not reach its idle ready state'
+)
+trailing_view.panel.cur_item = { trailing_entry, trailing_file }
+trailing_view.events.file_open_pre(nil, trailing_file)
+trailing_view.cur_entry = trailing_file
+trailing_view.events.file_open_post(nil, trailing_file)
+assert(
+  trailing_activations[1] == false,
+  'A ready scoped history did not deactivate Diffview\'s trailing auto-open'
+)
+assert(vim.wait(200, function()
+  return trailing_view.cur_entry == nil
+end, 5), 'A ready scoped history did not retire its trailing auto-open')
+assert(
+  trailing_null_opens > 0
+    and trailing_view.panel.cur_item[1] == trailing_entry
+    and trailing_view.panel.cur_item[2] == nil
+    and trailing_view.git_diff_opened == false
+    and history_lifecycle.phase(trailing_view) == 'ready',
+  'A ready scoped history rendered Diffview\'s trailing auto-open instead of retiring it'
+)
+
+vim.api.nvim_buf_delete(rendered_left_buffer, { force = true })
 vim.api.nvim_buf_delete(rendered_buffer, { force = true })
 
 vim.keymap.del('n', '<Space>fw')

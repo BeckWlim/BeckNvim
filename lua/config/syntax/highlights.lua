@@ -34,6 +34,17 @@ local context_colors = {
 
 local cursor_line_background = '#3A3D3F'
 
+local markdown_heading_four_colors = {
+  background = '#363139',
+  foreground = '#F8F8F2',
+  accent = '#FFB3D1',
+}
+
+local markdown_table_colors = {
+  icon = '#89E051',
+  label = '#A6A69C',
+}
+
 local function history_ui_palette(editor_background, editor_foreground)
   return {
     added = '#A6E22E',
@@ -70,8 +81,18 @@ local current_scope_background = require('config.syntax.visuals').current_scope_
 
 local function apply()
   local normal_highlight = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
+  local code_block_highlight = vim.api.nvim_get_hl(0, {
+    name = 'ColorColumn',
+    link = false,
+  })
+  local inline_code_highlight = vim.api.nvim_get_hl(0, {
+    name = '@markup.raw.markdown_inline',
+    link = false,
+  })
   local editor_background = normal_highlight.bg or 0x272822
   local editor_foreground = normal_highlight.fg or 0xF8F8F2
+  local inline_code_foreground = inline_code_highlight.fg or 0xAE81FF
+  local markdown_block_background = code_block_highlight.bg or cursor_line_background
   local history_colors = history_ui_palette(editor_background, editor_foreground)
   vim.api.nvim_set_hl(0, 'NormalFloat', {
     bg = editor_background,
@@ -151,6 +172,48 @@ local function apply()
   })
   vim.api.nvim_set_hl(0, 'TypeInformationPreview', { bg = '#2B2C26' })
   vim.api.nvim_set_hl(0, 'TypeInformationCursorLine', { bg = cursor_line_background })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownH4', {
+    fg = markdown_heading_four_colors.accent,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownH4Bg', {
+    bg = markdown_heading_four_colors.background,
+    fg = markdown_heading_four_colors.foreground,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownTableRule', {
+    bg = markdown_block_background,
+    fg = '#49483E',
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownTableRowRule', {
+    bg = markdown_block_background,
+    fg = '#3E3D32',
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownTableHeader', {
+    bg = markdown_block_background,
+    fg = editor_foreground,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownTableCell', {
+    bg = markdown_block_background,
+    fg = editor_foreground,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownTableCode', {
+    bg = cursor_line_background,
+    fg = inline_code_foreground,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownTableIcon', {
+    bg = markdown_block_background,
+    fg = markdown_table_colors.icon,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownTableLabel', {
+    bg = markdown_block_background,
+    fg = markdown_table_colors.label,
+  })
+  vim.api.nvim_set_hl(0, '@markup.table.markdown', {
+    bg = markdown_block_background,
+  })
   vim.api.nvim_set_hl(0, 'TranslationFloat', {
     bg = editor_background,
     fg = editor_foreground,
@@ -263,12 +326,6 @@ local function apply()
     fg = history_colors.focus,
     bold = true,
   })
-  vim.api.nvim_set_hl(0, 'DiffviewCursorLine', { bg = history_colors.selected })
-  vim.api.nvim_set_hl(0, 'DiffviewFilePanelSelected', {
-    bg = history_colors.selected,
-    fg = history_colors.selected_foreground,
-    bold = true,
-  })
   vim.api.nvim_set_hl(0, 'DiffviewFilePanelFileName', {
     bg = history_colors.background,
     fg = history_colors.foreground,
@@ -288,40 +345,6 @@ local function apply()
   vim.api.nvim_set_hl(0, 'GitHistoryMessageMatch', {
     fg = history_colors.focus,
     bold = true,
-  })
-  vim.api.nvim_set_hl(0, 'GitHistoryLocalTag', {
-    bg = history_colors.selected,
-    fg = history_colors.focus,
-    bold = true,
-  })
-  vim.api.nvim_set_hl(0, 'GitHistoryRemoteTag', {
-    bg = history_colors.selected,
-    fg = history_colors.information,
-    bold = true,
-  })
-  vim.api.nvim_set_hl(0, 'GitHistoryCurrentTag', {
-    bg = history_colors.background,
-    fg = history_colors.added,
-    bold = true,
-  })
-  vim.api.nvim_set_hl(0, 'GitHistoryPinnedTag', {
-    bg = history_colors.background,
-    fg = history_colors.information,
-    bold = true,
-  })
-  vim.api.nvim_set_hl(0, 'GitHistoryReviewTag', {
-    bg = history_colors.background,
-    fg = history_colors.information,
-    bold = true,
-  })
-  vim.api.nvim_set_hl(0, 'GitHistoryScopeTag', {
-    bg = history_colors.background,
-    fg = history_colors.changed,
-    bold = true,
-  })
-  vim.api.nvim_set_hl(0, 'GitHistorySectionDivider', {
-    bg = history_colors.background,
-    fg = history_colors.border,
   })
   vim.api.nvim_set_hl(0, 'DiffviewFilePanelInsertions', {
     bg = history_colors.background,

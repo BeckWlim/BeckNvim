@@ -72,21 +72,20 @@ local function search_previewer(root)
   })
 end
 
-local function emit_records(records, process_result, process_complete)
+local function emit_records(records, process_result)
   for record_index, record in ipairs(records) do
     record.index = record_index
     if process_result(record) then
-      return
+      return false
     end
   end
-  process_complete()
+  return true
 end
 
 local function commit_target(commit, branch)
   local history_ref = branch and (branch.refname or branch.short_name)
     or commit.source_ref
     or commit.branch_name
-    or commit.hash
   return {
     anchor_plan = branch and {
       branch_name = branch.short_name or branch.refname,
@@ -107,6 +106,28 @@ local function review_commit(context, commit, branch)
     context.parent_view,
     context.history_options,
     target_commit
+  )
+end
+
+local function review_commit_id(context, commit_id)
+  repository.start(
+    repository.commands.resolve_commit(commit_id),
+    context.root,
+    function(resolve_process)
+      if resolve_process.code ~= 0 then
+        vim.notify(repository.concise_error(resolve_process), vim.log.levels.ERROR)
+        return
+      end
+      local resolved_commit = repository.parse_resolved_commit(resolve_process.stdout)
+      if not resolved_commit then
+        vim.notify(('Commit not found: %s'):format(commit_id), vim.log.levels.ERROR)
+        return
+      end
+      review_commit(context, {
+        hash = resolved_commit,
+        source = 'LOCAL',
+      })
+    end
   )
 end
 
@@ -136,13 +157,17 @@ local function search_finder(context, close_callback)
       local cached_records = context.cache[query]
       if cached_records then
         context.records = cached_records
-        emit_records(cached_records, process_result, process_complete)
+        if emit_records(cached_records, process_result) then
+          process_complete()
+        end
         return
       end
       if query ~= '' and is_commit_id(query) then
         local commit_id_record = ui.commit_id_record(query)
         context.records = { commit_id_record }
-        emit_records(context.records, process_result, process_complete)
+        if emit_records(context.records, process_result) then
+          process_complete()
+        end
         return
       end
 
@@ -153,26 +178,45 @@ local function search_finder(context, close_callback)
         end
         local commit_number = query:match('^#(%d+)$')
         local branches = {}
+        local containing_refs = context.detached_containing_refs or {}
         local matching_commits = {}
         local issue_record
         local remote_error_record
         local branches_ready = false
+        local detached_commit = context.history_options.detached_head_commit
+        local containing_refs_ready = detached_commit == nil
+          or context.detached_containing_refs ~= nil
         local commits_ready = query == ''
         local issue_ready = commit_number == nil
+        local local_records_emitted = false
+        local request_completed = false
+
+        local function issue_result_record()
+          return issue_record or remote_error_record
+        end
 
         local function finish_if_ready()
           if query_generation ~= active_generation
               or not branches_ready
+              or not containing_refs_ready
               or not commits_ready
-              or not issue_ready then
+              or request_completed then
             return
           end
+          local prioritized_branches = detached_commit
+              and repository.prioritize_detached_branches(
+                branches,
+                detached_commit,
+                containing_refs,
+                context.history_options.branch_name
+              )
+            or branches
           local combined_records = {}
           local normalized_query = query:lower()
           local branch_records = {}
           local branch_record_by_source = {}
           local current_branch_record
-          for _, branch in ipairs(branches) do
+          for _, branch in ipairs(prioritized_branches) do
             local branch_record = ui.branch_record(branch)
             branch_records[#branch_records + 1] = branch_record
             branch_record_by_source[branch.refname] = branch_record
@@ -233,17 +277,34 @@ local function search_finder(context, close_callback)
           if fallback_branch_record and commits_by_branch[fallback_branch_record] then
             append_branch(fallback_branch_record, commits_by_branch[fallback_branch_record])
           end
-          if issue_record then
-            combined_records[#combined_records + 1] = issue_record
-          elseif remote_error_record then
-            combined_records[#combined_records + 1] = remote_error_record
+
+          local resolved_issue_record = issue_result_record()
+          if issue_ready and resolved_issue_record then
+            combined_records[#combined_records + 1] = resolved_issue_record
           end
           context.query = query
           context.records = combined_records
+
+          if not local_records_emitted then
+            local_records_emitted = true
+            if not emit_records(combined_records, process_result) then
+              return
+            end
+          elseif issue_ready and resolved_issue_record then
+            resolved_issue_record.index = #combined_records
+            if process_result(resolved_issue_record) then
+              return
+            end
+          end
+
+          if not issue_ready then
+            return
+          end
+          request_completed = true
           if not remote_error_record then
             context.cache[query] = combined_records
           end
-          emit_records(combined_records, process_result, process_complete)
+          process_complete()
         end
 
         cancel_functions[#cancel_functions + 1] = repository.start(
@@ -262,6 +323,26 @@ local function search_finder(context, close_callback)
             finish_if_ready()
           end
         )
+
+        if detached_commit and not containing_refs_ready then
+          cancel_functions[#cancel_functions + 1] = repository.start(
+            repository.commands.commit_sources(detached_commit),
+            context.root,
+            function(completed_process)
+              if query_generation ~= active_generation then
+                return
+              end
+              containing_refs_ready = true
+              if completed_process.code == 0 then
+                containing_refs = repository.parse_containing_refs(completed_process.stdout)
+                context.detached_containing_refs = containing_refs
+              else
+                vim.notify(repository.concise_error(completed_process), vim.log.levels.WARN)
+              end
+              finish_if_ready()
+            end
+          )
+        end
 
         if query ~= '' then
           local commit_command = repository.commands.search_commits(query, context.history_options)
@@ -396,7 +477,7 @@ local function open_picker(context, restore_query)
             context.parent_view
           )
         elseif selected_entry.kind == 'commit_id' then
-          review_commit(context, selected_entry.commit)
+          review_commit_id(context, selected_entry.commit.hash)
         else
           review_commit(context, selected_entry.commit, selected_entry.branch)
         end

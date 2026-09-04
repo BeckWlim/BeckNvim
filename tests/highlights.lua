@@ -16,9 +16,54 @@ local tree_end_of_buffer = vim.api.nvim_get_hl(0, {
   link = false,
 })
 local cursor_line = vim.api.nvim_get_hl(0, { name = 'CursorLine', link = false })
+local color_column = vim.api.nvim_get_hl(0, { name = 'ColorColumn', link = false })
+local inline_code = vim.api.nvim_get_hl(0, {
+  name = '@markup.raw.markdown_inline',
+  link = false,
+})
 local tree_cursor_line = vim.api.nvim_get_hl(0, { name = 'NvimTreeCursorLine', link = false })
 local detail_cursor_line = vim.api.nvim_get_hl(0, {
   name = 'TypeInformationCursorLine',
+  link = false,
+})
+local markdown_heading_four = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownH4',
+  link = false,
+})
+local markdown_heading_four_background = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownH4Bg',
+  link = false,
+})
+local markdown_table_rule = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownTableRule',
+  link = false,
+})
+local markdown_table_row_rule = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownTableRowRule',
+  link = false,
+})
+local markdown_table_header = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownTableHeader',
+  link = false,
+})
+local markdown_table_cell = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownTableCell',
+  link = false,
+})
+local markdown_table_code = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownTableCode',
+  link = false,
+})
+local markdown_table_source = vim.api.nvim_get_hl(0, {
+  name = '@markup.table.markdown',
+  link = false,
+})
+local markdown_table_icon = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownTableIcon',
+  link = false,
+})
+local markdown_table_label = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownTableLabel',
   link = false,
 })
 local translation_content = vim.api.nvim_get_hl(0, {
@@ -72,14 +117,6 @@ local telescope_title = vim.api.nvim_get_hl(0, {
   name = 'TelescopeResultsTitle',
   link = false,
 })
-local diffview_selection = vim.api.nvim_get_hl(0, {
-  name = 'DiffviewFilePanelSelected',
-  link = false,
-})
-local diffview_cursor_line = vim.api.nvim_get_hl(0, {
-  name = 'DiffviewCursorLine',
-  link = false,
-})
 local diffview_title = vim.api.nvim_get_hl(0, {
   name = 'DiffviewFilePanelTitle',
   link = false,
@@ -96,8 +133,6 @@ local diffview_change = vim.api.nvim_get_hl(0, {
   name = 'DiffviewDiffChange',
   link = false,
 })
-local git_local_tag = vim.api.nvim_get_hl(0, { name = 'GitHistoryLocalTag', link = false })
-local git_remote_tag = vim.api.nvim_get_hl(0, { name = 'GitHistoryRemoteTag', link = false })
 local treesitter_context = vim.api.nvim_get_hl(0, {
   name = 'TreesitterContext',
   link = false,
@@ -140,6 +175,48 @@ assert(
   'editor cursor line must use a background without an underline'
 )
 assert(detail_cursor_line.bg == cursor_line.bg, 'detail cursor line uses a different color')
+assert(
+  markdown_heading_four.fg == tonumber('FFB3D1', 16) and markdown_heading_four.bold,
+  'level-four Markdown heading marker lost its visible accent'
+)
+assert(
+  markdown_heading_four_background.bg == tonumber('363139', 16)
+    and markdown_heading_four_background.fg == tonumber('F8F8F2', 16)
+    and markdown_heading_four_background.bold,
+  'level-four Markdown heading text lost its high-contrast treatment'
+)
+assert(
+  markdown_table_rule.bg == color_column.bg
+    and markdown_table_rule.fg == tonumber('49483E', 16)
+    and markdown_table_rule.fg ~= normal_highlight.fg,
+  'Markdown table rules are not muted below normal text'
+)
+assert(
+  markdown_table_row_rule.bg == color_column.bg
+    and markdown_table_row_rule.fg == tonumber('3E3D32', 16)
+    and markdown_table_row_rule.fg ~= normal_highlight.fg,
+  'Markdown body-row separators are not quieter than ordinary text'
+)
+assert(
+  markdown_table_header.bg == color_column.bg
+    and markdown_table_header.fg == normal_highlight.fg
+    and markdown_table_header.bold
+    and markdown_table_cell.bg == color_column.bg
+    and markdown_table_cell.fg == normal_highlight.fg
+    and markdown_table_code.bg == cursor_line.bg
+    and markdown_table_code.bg ~= markdown_table_cell.bg
+    and markdown_table_code.fg == inline_code.fg
+    and markdown_table_source.bg == color_column.bg,
+  'Markdown table body or inline-code key mark uses the wrong semantic color'
+)
+assert(
+  markdown_table_icon.bg == color_column.bg
+    and markdown_table_icon.fg == tonumber('89E051', 16)
+    and markdown_table_icon.bold
+    and markdown_table_label.bg == color_column.bg
+    and markdown_table_label.fg == tonumber('A6A69C', 16),
+  'Markdown table label does not match the fenced-text identity'
+)
 assert(
   translation_float.bg == normal_highlight.bg and translation_float.fg == normal_highlight.fg,
   'translation surface does not share the editor base palette'
@@ -193,16 +270,10 @@ assert(
   'Git/search edge or title left the neutral editor palette'
 )
 assert(
-  telescope_selection.bg == diffview_selection.bg
-    and telescope_selection.fg == diffview_selection.fg
-    and diffview_cursor_line.bg == telescope_selection.bg,
-  'Telescope and Diffview selections do not share one focus treatment'
-)
-assert(
   telescope_selection.bg == cursor_line.bg
     and telescope_selection.fg == normal_highlight.fg
     and telescope_selection.bg ~= telescope_normal.bg,
-  'Search/footer selection lost the editor cursor-line treatment'
+  'Search selection lost the editor cursor-line treatment'
 )
 assert(
   telescope_selection_caret.fg == telescope_matching.fg
@@ -226,11 +297,6 @@ for _, group_name in ipairs({
   'DiffviewFilePanelPath',
   'DiffviewFilePanelCounter',
   'DiffviewHash',
-  'GitHistoryCurrentTag',
-  'GitHistoryPinnedTag',
-  'GitHistoryReviewTag',
-  'GitHistoryScopeTag',
-  'GitHistorySectionDivider',
 }) do
   local footer_highlight = vim.api.nvim_get_hl(0, { name = group_name, link = false })
   assert(
@@ -246,11 +312,6 @@ for group_name, expected_color in pairs({
   DiffviewStatusAdded = 'A6E22E',
   DiffviewStatusDeleted = 'F92672',
   DiffviewStatusModified = 'E6DB74',
-  GitHistoryCurrentTag = 'A6E22E',
-  GitHistoryPinnedTag = '66D9EF',
-  GitHistoryReviewTag = '66D9EF',
-  GitHistoryScopeTag = 'E6DB74',
-  GitHistorySectionDivider = '666666',
 }) do
   local footer_highlight = vim.api.nvim_get_hl(0, { name = group_name, link = false })
   assert(
@@ -281,12 +342,4 @@ assert(
     and treesitter_context_preview_separator.underline == true
     and treesitter_context_preview_separator.sp == treesitter_context_bottom.sp,
   'Search preview context does not share the declaration background and lower boundary'
-)
-assert(
-  git_local_tag.fg and git_local_tag.bg,
-  'Local Git search-result tag is not visible against the shared history plane'
-)
-assert(
-  git_remote_tag.fg and git_remote_tag.bg and git_remote_tag.fg ~= git_local_tag.fg,
-  'Remote Git search-result tag is not distinct on the shared history plane'
 )

@@ -1,359 +1,59 @@
-# Neovim Configuration
+# BeckNvim
 
-A personal Neovim configuration for daily development. Plugin management uses
-[lazy.nvim](https://github.com/folke/lazy.nvim), with completion, LSP, fuzzy search, Git tools,
-terminals, a file tree, Markdown rendering, rainbow delimiters, and a subtle current-scope background
-included. Within that grey code domain, the cursor line uses a stronger grey highlight for clear focus;
-scopes larger than 120 lines are left unshaded to avoid overwhelming the file.
+BeckNvim is a focused Neovim configuration for project navigation, semantic search, Git history,
+and readable code review. It keeps editor, Telescope, Diffview, Markdown, and syntax-context UI in
+one restrained visual system while preserving native plugin behavior wherever possible.
 
-## Requirements
+## Highlights
 
-- Neovim 0.11 or newer
-- Git
-- Python 3.10 or newer for the low-latency Python hierarchy index
-- `curl` for the translation component
-- [ripgrep](https://github.com/BurntSushi/ripgrep) for full-text and project-definition search
-- `make` and a C compiler for `telescope-fzf-native.nvim`
-- The [tree-sitter CLI](https://github.com/tree-sitter/tree-sitter/blob/master/crates/cli/README.md)
-  (`npm install -g tree-sitter-cli`): the `main` branch of nvim-treesitter builds parsers through
-  it. The CLI enables parser installation, sticky scope headers, grep-preview breadcrumbs,
-  Treesitter highlighting, and folding. The config installs the Python and C++ parsers automatically
-  on startup once the CLI is available.
-- A Nerd Font for the complete icon set; the GUI defaults to Hack Nerd Font
-
-Mason installs the configured language servers on demand. The current setup covers Bash,
-C/C++, Lua, Markdown, Python, and Vim script.
-
-### Linux packages
-
-Ubuntu 24.04 ships an older Neovim in its default repositories, so install Neovim 0.11 or
-newer from the [official PPA](https://github.com/neovim/neovim/blob/master/INSTALL.md#ubuntu) or a
-standalone tarball. The remaining runtime dependencies install with:
-
-```bash
-sudo apt install git curl wget unzip ripgrep make gcc python3 nodejs npm cmake ninja-build
-```
-
-- `make` and `gcc` compile `telescope-fzf-native.nvim` and the Treesitter parsers.
-- `unzip`, `wget`, and `curl` let Mason download and extract the language servers.
-- `nodejs` and `npm` are needed by Mason to install the BasedPyright Python language server, and
-  by `npm install -g tree-sitter-cli`, which nvim-treesitter needs to build its parsers.
-- `cmake` and `ninja-build` power `cmake-tools.nvim` for C/C++ builds.
-- `xclip` (X11) or `wl-clipboard` (Wayland) provides the system clipboard used by `unnamedplus`;
-  install the one matching your display server.
-- A [Nerd Font](https://www.nerdfonts.com/) such as Hack Nerd Font supplies the complete icon set.
+- Project dashboard with recent projects, files, and a shared directory picker.
+- Fast file, text, symbol, definition, reference, and type-hierarchy workflows.
+- Tree-sitter highlighting, folding, breadcrumbs, and pinned class/function context.
+- Unified Git inspection for file, symbol, and repository history plus branch/commit/issue search.
+- Diffview-owned commit expansion, collapse, file selection, and native footer presentation.
+- Width-aware Markdown, diagnostics, completion, terminals, translation, and proxy tools.
+- Asynchronous Git and network work with cancellation, bounded queues, and clean return paths.
 
 ## Quick Start
 
-Back up the existing configuration, clone this repository, and start Neovim:
+Requirements: Neovim 0.11+, Git, ripgrep, Python 3.10+, curl, a C build toolchain, Node/npm,
+the tree-sitter CLI, and a Nerd Font. See [Installation](docs/installation.md) for details.
 
 ```bash
 mv ~/.config/nvim ~/.config/nvim.bak
-git clone <repository-url> ~/.config/nvim
+git clone https://github.com/BeckWlim/BeckNvim.git ~/.config/nvim
 nvim
 ```
 
-Useful checks after the first startup:
+On first launch, lazy.nvim restores pinned plugins and Mason installs configured language servers.
+Run `:checkhealth`, `:Lazy check`, and `:Mason` if a capability is unavailable.
 
-```vim
-:Lazy check
-:Mason
-:checkhealth
-```
+Open the project dashboard with `<Space>h`. The leader policy and complete defaults live in
+[Default keybindings](docs/keybindings.md).
 
-Plugin versions are pinned in `lazy-lock.json`. Include the updated lockfile when applying
-`:Lazy update`.
-
-## Repository Layout
+## Main Modules
 
 ```text
-init.lua                         Startup entry point; calls config.setup()
-lua/
-├── config/                       Reusable, testable feature modules, grouped by area
-│   ├── init.lua                  Configuration assembly order
-│   ├── project.lua               Shared project-root and path boundary logic
-│   ├── startup/                  Editor options, autocmds, plugin bootstrap, keymaps
-│   ├── ui/                       Float/folder-picker policy, dashboard, statusline, file tree, terminal
-│   ├── search/                   Telescope wiring, pickers, definitions, LSP locations
-│   ├── git/                      History/detach workflow, Diffview UI, GitHub issue details
-│   ├── lsp/                      Servers, completion, type information, diagnostics
-│   ├── syntax/                   Treesitter context, scope visuals, highlights, folds
-│   ├── type_hierarchy/           Recursive class hierarchy and implementation pickers
-│   ├── translation/              Translation query UI and backend providers
-│   ├── python/                   Python environment and hierarchy indexing
-│   └── audit/                    Project scan and diagnostic audit modules
-└── plugins/*.lua                 Lightweight lazy.nvim plugin specifications
-tests/                            Focused regression tests
-lazy-lock.json                    Pinned plugin versions
+init.lua
+lua/config/
+├── startup/       bootstrap and startup policy
+├── search/        Telescope lifecycle, previews, and project search
+├── git/           repository boundary, search, Diffview, and panel lifecycle
+├── syntax/        Tree-sitter context, highlights, and visual policy
+├── lsp/           language navigation and type information
+├── ui/            dashboard, statusline, floats, and shared presentation
+├── network/       proxy discovery and session state
+└── translation/   translation workflow
 ```
 
-See [Architecture](docs/architecture.md) for module ownership and extension rules. The project-local
-[`nvim-design`](.agents/skills/nvim-design/SKILL.md) skill guides implementation work, while
-[`nvim-guide`](.agents/skills/nvim-guide/SKILL.md) covers installation and advanced usage.
+## Documentation
 
-## Main Functions and Keymaps
+- [Installation and requirements](docs/installation.md)
+- [Default keybindings](docs/keybindings.md)
+- [Git mode](docs/git-mode.md)
+- [Architecture](docs/architecture.md)
+- [Development and validation](docs/development.md)
 
-The default leader remains `\`. Every `<Space>` entry below uses the literal space key as its
-prefix.
+## License
 
-### Windows and Navigation
-
-| Key | Action |
-| --- | --- |
-| `<Space>wi/wj/wk/wl` | Move to the upper/left/lower/right window |
-| `<Space>wv/ws` | Create a vertical/horizontal split |
-| `<Space>wq/wo` | Close the current window/keep only the current window |
-| `<Tab>` / `<S-Tab>` | Move to the next/previous window |
-| `<Space>ri/rk/rj/rl` | Increase/decrease height or width |
-| `<Space>r=` | Equalize window sizes |
-| `<Space>o` / `<Space>p` | Move backward/forward through the jump list |
-| `<Space>h` | Return to the dashboard for recent projects or files |
-| `<Space>zz/zc/zo` | Toggle, close all, or open all folds |
-| `<Space>cc` | Jump to the nearest enclosing syntax context; repeat to move outward |
-
-### Search
-
-| Key | Action |
-| --- | --- |
-| `<Space>ff` | Find project files |
-| `<Space>fv` | Find a file and open it in a vertical split |
-| `<Space>fg` | Search project text |
-| `<Space>fb` | Find an open buffer |
-| `<Space>bv` | Find a buffer and open it in a vertical split |
-| `<Space>fr` | Find recent files |
-| `<Space>fh` | Search help tags |
-| `<Space>fk` | Search keymaps |
-| `<Space>fs` | Search symbols in the current file |
-| `<Space>fw` | Search definitions across the project |
-
-### Project Root Policy
-
-Project roots use one shared authority order across the statusline, searches, audits, and file
-tree:
-
-1. The nearest ancestor containing `.git` is authoritative.
-2. Outside Git repositories, the most specific attached LSP root is used for an open buffer.
-3. Next, the nearest workspace marker is used: `.venv`, Pyright configuration,
-   language manifests, or build-system files.
-4. The current working directory is the final fallback.
-
-The statusline shows the provider, root name, and project-relative file path. `<Space>h` opens the
-dashboard for recent projects and files; `h/l` changes project, `j/k` changes file, and `<Enter>`
-opens the selection. Press `f` for the shared folder picker, then use `<C-h>`/`<C-l>` to browse,
-`<Tab>` to complete a path, and `<Enter>` to open the workspace.
-
-In nvim-tree, `gh` moves the root back to its parent and `gl` moves it ahead into the selected node.
-`<Esc>` remains unmapped instead of changing the tree root. Crossing a project boundary asks for
-confirmation. These features are owned by `config.project` and `config.ui`.
-
-#### Project Definition Search
-
-`<Space>fw` searches project definitions for Python, C/C++/CUDA, Lua, Shell, and Vim script.
-Results show the symbol, kind, path, and syntax-aware source preview. `gd`, `gD`, `gr`, and `gI`
-remain the LSP navigation keys.
-
-Across Telescope pickers, `<Tab>` moves between results and preview, while `<C-v>` and `<C-x>` open
-the selection in a vertical or horizontal split. `config.search` owns picker behavior and reuses the
-pinned class/function context from `config.syntax`.
-
-#### Git Repository Inspection
-
-`<Space>df`, `<Space>ds`, and `<Space>dr` open file, symbol, and repository history in one Diffview
-workspace. Every scope uses the same commit → file footer and `BEFORE`/`AFTER` code panes. FILE keeps
-rename tracking and SYMBOL keeps its Git line trace to select related commits, while their expanded
-entries show every file modified by each commit. Scoped results initially remain a collapsed list of
-matching commits without selecting a file. Expanding a commit automatically selects, renders, and
-highlights its matched child filename, which carries a right-pinned `MATCH · FILE/SYMBOL` tag; this
-applies independently to every expanded result. Branch-tip separators split long histories. The
-one-line winbar keeps current checkout state followed by the branch segment under the footer cursor,
-while a stable second colored line shows the complete review and scope details. The winbar leads with
-`CURRENT BRANCH` for an attached checkout and `CURRENT · DETACHED` for a detached checkout. SYMBOL
-uses an ordinary full-file render and also jumps to the
-traced declaration. `<Space>fw` searches project definitions with the same global action in both
-editor and Git panes. From a Git code pane,
-`<C-q>` returns to the corresponding working-tree file. It first captures the rendered `AFTER` pane's enclosing declaration
-and the cursor's relative line distance from it. After matching that declaration in the working file,
-the return reapplies the relative distance. Matching prefers normalized declaration text, then a
-unique symbol name/kind so signature edits can still align; Tree-sitter hierarchy disambiguates
-duplicates. A missing or ambiguous match falls back to the rendered file line. From the footer it
-uses that same `AFTER` pane rather than the footer row. If that render is not ready, Git mode stays
-mounted with a `RETURN` footer message while required scoped enrichment completes. Diffview
-file/layout events and enrichment completion update the footer when the target is ready, but a deliberate second `<C-q>` performs the
-return. On exit, restoring and redrawing the editor buffer has priority; declaration matching and
-cursor placement run in a one-shot asynchronous continuation only after that redraw succeeds and
-Diffview disposal completes. The continuation expires if the user changes the tab, window, or buffer.
-Before teardown, the Git footer logs that the editor is being restored and cursor alignment follows
-rendering. The working-tree
-buffer is staged in the preserved editor tab while Git remains visible: an editor window already
-showing that file is reused, otherwise the buffer is loaded hidden into the editor's current window.
-The tab therefore switches directly from Git to the final editor buffer without exposing an
-intermediate view. The return also refreshes the statusline's checked-out branch. If that working-tree
-file does not exist, Git mode closes and the original editor state is left intact. Branch state is
-resolved from the staged editor window before the tab switch, so it is present in the first editor
-frame rather than waiting for a later search or buffer transition.
-Cursor placement, fold reveal, and centering complete as one editor-window transaction followed by
-one redraw, so no intermediate cursor position is rendered. Only then is `Git return: editor cursor
-aligned` written through the ordinary message area, matching the existing `:q` guidance style; the
-completion message clears itself after a short bounded lifetime.
-Branch state is reasserted once more at Diffview disposal completion before that cursor task is
-released, preventing teardown from blanking the branch after the jump.
-Git-owned buffer-local mappings are removed from the staged working-tree buffer before its first
-editor render, so global actions such as `<Space>de` and `<Space>fw` work immediately after return.
-If `<Space>de` is pressed before asynchronous Diffview disposal settles, one repository-search
-request is retained and released after teardown; repeated presses coalesce into that request.
-
-The editor, Telescope search, and Git footer share one dark background, grey-white base text and
-edges, and the same neutral-grey focused-row treatment. The Git footer keeps saturated semantic
-foregrounds for status, counters, and hashes without changing that shared base. Color otherwise
-remains reserved for syntax, diagnostics, and the pinned green declaration context.
-
-`<Space>de` enters repository history and opens the Telescope dispatcher for branches, commits,
-changed files, and GitHub issues. A `#<digits>` query combines exact Git subject matches with the
-origin issue or pull request. Search selection reviews and highlights a commit while preserving HEAD;
-selecting a branch likewise replaces only the reviewed Diffview ref and never checks it out. Local
-and locally fetched remote-tracking refs are both reviewable without an implicit fetch. When HEAD is
-detached and the selected branch contains that commit, the complete branch history opens with the
-detached commit retained as the selected anchor; otherwise the branch opens at its normal tip. Dirty
-buffers and worktrees do not block these read-only review transitions.
-`<Space>dm` performs guarded checkout from the footer. Current branch HEAD stays attached, and an
-older commit uses detached HEAD. The checked-out commit row then carries a highlighted
-`(DETACHED HEAD)` tag. A branch-scoped footer separately shows `CURRENT BRANCH` or
-`CURRENT · DETACHED`, `BRANCH REVIEW`, and the reviewed branch `TIP`, preventing the reviewed ref
-from looking checked out. Anchor replacement reuses the exact prepared ref, so commits ahead of an
-older detached anchor remain in the first rebuilt footer. The
-branch list reloads after detaching so the former branch tip loses its stale `HEAD -> branch`
-decoration and the checked-out row becomes the visible current site.
-During `<Space>dm`, the footer shows the current `ANCHOR` stage and repeated anchor moves remain
-locked until the requested commit diff has completed rendering. The previous history view is retired
-only after that render, preventing its teardown from invalidating a replacement Diffview buffer.
-The replacement's initial file render also settles before its selected-anchor render begins, so the
-two Diffview buffer loads cannot race each other.
-Branch review prepares an anchor plan containing its exact ref, source, and tip. `<Space>dm` reuses
-that plan instead of scanning every containing branch; only the target object, current dirty/HEAD
-state, and a local tip that may be attached are verified at mutation time.
-`:messages` shows the concise start/completion notices; `:DiffviewLog` opens the detailed timed
-`[Git anchor]` stages and generation/phase-tagged `[Git lifecycle]` callback decisions together with
-Diffview's underlying Git and buffer errors. When a detached
-commit is exactly a local branch tip, `<Space>dm` attaches that branch rather than retaining a
-misleading detached state. Remote-tracking-only tips remain detached.
-
-Use `<Tab>`/`<S-Tab>` between the footer and code panes, `<Space>dp` to collapse or restore the
-footer, `<Space>dn` to preview details for the selected commit, and `<C-q>` to return from search or
-issue detail to history and then to the editor. Git uses
-an inert `<Space>n` inside its panes so an unassigned leader sequence cannot repeat an earlier `/`
-search. This does not change normal editor mappings. Git uses the repository's configured transport;
-GitHub metadata uses the shared proxy environment. The
-workflow is owned by `config.git`; detailed behavior lives in
-[`nvim-guide`](.agents/skills/nvim-guide/references/advanced-usage.md).
-
-### Pinned Syntax Context
-
-The pinned context keeps class/function structure and the scope nearest the cursor visible within a
-six-line soft budget. Its restrained light-green declaration background ends with a distinct green
-boundary line. `<Space>cc` moves outward through enclosing scopes. `config.syntax` provides the same
-context and highlight policy to editor, Telescope, and Diffview panes.
-
-### LSP and Diagnostics
-
-| Key | Action |
-| --- | --- |
-| `gd` / `gD` | Find definitions/declarations |
-| `gr` / `gI` | Find references/implementations |
-| `K` | Show hover documentation |
-| `<Space>k` | Toggle inferred type and type-definition window |
-| `<Space>i` | Find implementations |
-| `<Space>D` | Find type definitions |
-| `<Space>rn` | Rename a symbol |
-| `<Space>e` | Show diagnostic details |
-| `[d` / `]d` | Move to the previous/next diagnostic |
-| `<Space>q` | Search diagnostics in the current file with Telescope |
-| `<Space>lp` | Toggle BasedPyright third-party dependency diagnostics |
-| `<Space>cd` | Find all direct and indirect derived classes under the cursor |
-| `<Space>cb` | Find all direct and indirect base classes under the cursor |
-| `<Space>ci` | Find concrete implementations of the class or method under the cursor |
-
-`<Space>k` opens inferred type information and type-definition previews; `<CR>` jumps, `y` copies,
-and `q` closes. `<Space>e` uses the same detail-window style for diagnostics. `config.lsp` owns both
-workflows and their language-server requests.
-
-#### Cancellable LSP Queries
-
-Definition, reference, type-definition, implementation, and hierarchy queries open Telescope
-immediately and stream partial LSP results into the list. Closing the picker cancels the active
-requests. Python references can seed fast local candidates before semantic results arrive.
-
-#### Type Hierarchy and Implementations
-
-`<Space>cd`, `<Space>cb`, and `<Space>ci` find derived classes, base classes, and concrete
-implementations. C/C++ uses clangd hierarchy data; Python uses the background project index. Results
-include their owning class and support Telescope preview and split actions. `config.type_hierarchy`
-owns this feature.
-
-`<Space>gf`, `<Space>gv`, and `<Space>gx` open referenced C/C++ includes, Python imports, and Lua
-modules in the current window, a vertical split, or a horizontal split.
-
-### Tools
-
-| Key | Action |
-| --- | --- |
-| `<F3>` | Toggle the file tree |
-| `<C-t>` | Toggle the horizontal terminal |
-| `<M-e>` | Apply a quick surround operation |
-| `<Space>t` | Open the centered live Chinese/English translation query (700 ms debounce) |
-| `<Space>mp` | Toggle Markdown rendering |
-| `<Space>df` | Open bounded history for the current file |
-| `<Space>de` | Enter repository Git mode and search branches, commits, and GitHub issues |
-| `<Space>ds` | Open bounded history for the function or class under the cursor |
-| `<Space>dr` | Open bounded history for the complete repository |
-| `<Space>dp` | Temporarily collapse or restore the Git history panel |
-| `<Space>dm` | In the Git history list, checkout the selected commit version |
-| `<Space>dn` | In the Git history list, preview the selected commit details |
-| `<C-q>` | From Git history, return to the matching working-tree declaration or selected line |
-| `<Space>fw` | Search project definitions in both editor and Git panes |
-| `gcc` / `gc` | Comment the current line or selection |
-
-Inside the file tree, `<Tab>` keeps the global next-window behavior instead of opening a folder or
-preview. `<CR>` opens regular files and directories but ignores the `..` parent entry; use `gh`
-to move the tree root out to its parent and `gl` to move the root into the selected directory.
-`<S-Tab>` continues to select the previous window.
-
-The `<C-t>` terminal starts in terminal-input mode. Press `<Esc>` to return to Normal mode, where
-regular scrolling and motions can inspect earlier output; press `v` to select terminal text, or
-`i`/`a` to resume terminal input. This mapping is local to ToggleTerm buffers.
-
-#### Translation Configuration
-
-`config.network` resolves process and shell proxy settings before plugin bootstrap. `:Proxy` shows
-the effective HTTP, HTTPS, fallback, and NO_PROXY routes; `<Enter>` selects or edits a session route,
-and direct mode bypasses the proxy. Shell configuration supplies persistence.
-
-`<Space>t` opens live Chinese/English translation through MyMemory. Its title shows the provider and
-proxy state, and network errors render in the same window. `config.translation` owns the query UI and
-provider parsing; GitHub metadata shares the network module.
-
-## Customization
-
-- Theme and completion colors: `lua/plugins/theme.lua`
-- Indentation, clipboard, and display options: `lua/config/startup/options.lua`
-- LSP behavior: `lua/config/lsp/init.lua`
-- Completion behavior: `lua/config/lsp/completion.lua`
-- Shared GitHub/translation proxy discovery: `lua/config/network/proxy.lua`
-- Translation providers: `lua/config/translation/providers.lua`
-- Class hierarchy and method implementations: `lua/config/type_hierarchy/`
-- Telescope and project definitions: `lua/config/search/telescope.lua`,
-  `lua/config/search/workspace_symbols.lua`
-- Plugin dependencies and loading conditions: `lua/plugins/`
-
-Local sessions use the system clipboard. SSH sessions use OSC 52 to communicate with the local
-terminal clipboard.
-
-## Validation
-
-Run the focused regression suite with a minimal Neovim runtime:
-
-```bash
-nvim --headless -u NONE -i NONE -l tests/run.lua
-```
-
-The repository `.luarc.json` supplies the Lua Language Server configuration. Changes to plugin
-declarations or startup wiring also receive a full headless startup check and keymap verification.
+Licensed under the [Apache License 2.0](LICENSE).

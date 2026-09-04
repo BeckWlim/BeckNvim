@@ -109,9 +109,9 @@ assert(
   rendered_lines[dashboard.top_padding + 6] == '',
   'dashboard did not keep a margin between its icon and title'
 )
-assert(rendered_text:find('  PROJECT DECK', 1, true), 'dashboard omitted its fixed title')
+assert(rendered_text:find('  BECKNVIM', 1, true), 'dashboard omitted its project title')
 local title_line = vim.iter(rendered_lines):find(function(line)
-  return line:find('PROJECT DECK', 1, true) ~= nil
+  return line:find('BECKNVIM', 1, true) ~= nil
 end)
 assert(title_line, 'dashboard omitted its title line')
 assert(

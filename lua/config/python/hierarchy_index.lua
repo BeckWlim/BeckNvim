@@ -174,10 +174,36 @@ function M.refresh(root)
   start_build(normalized_root, state, true)
 end
 
+function M.refresh_if_indexed(root)
+  local normalized_root = vim.fs.normalize(root)
+  local state = index_states[normalized_root]
+  if not state or state.status == 'idle' then
+    return false
+  end
+  start_build(normalized_root, state, true)
+  return true
+end
+
+function M.is_indexable_buffer(bufnr)
+  local selected_buffer = bufnr or vim.api.nvim_get_current_buf()
+  if not vim.api.nvim_buf_is_valid(selected_buffer)
+      or not vim.api.nvim_buf_is_loaded(selected_buffer)
+      or vim.bo[selected_buffer].buftype ~= '' then
+    return false
+  end
+  local buffer_name = vim.api.nvim_buf_get_name(selected_buffer)
+  return buffer_name ~= '' and not buffer_name:match('^[%a][%w+.-]*://')
+end
+
 function M.for_buffer(bufnr, callback)
   local selected_buffer = bufnr or vim.api.nvim_get_current_buf()
+  if not M.is_indexable_buffer(selected_buffer) then
+    callback(new_index_document(), 'Python hierarchy indexing requires an ordinary file buffer')
+    return false
+  end
   local root = project.for_buffer(selected_buffer)
   M.ensure(root, callback)
+  return true
 end
 
 function M.find_class(index_document, filename, line_number)
@@ -341,25 +367,15 @@ function M.setup()
   end
   setup_complete = true
   local index_group = vim.api.nvim_create_augroup('python_hierarchy_index', { clear = true })
-  vim.api.nvim_create_autocmd('FileType', {
-    group = index_group,
-    pattern = 'python',
-    callback = function(event)
-      M.for_buffer(event.buf, function() end)
-    end,
-  })
   vim.api.nvim_create_autocmd('BufWritePost', {
     group = index_group,
     pattern = '*.py',
     callback = function(event)
-      M.refresh(project.for_buffer(event.buf))
+      if M.is_indexable_buffer(event.buf) then
+        M.refresh_if_indexed(project.for_buffer(event.buf))
+      end
     end,
   })
-  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
-    if vim.api.nvim_buf_is_loaded(bufnr) and vim.bo[bufnr].filetype == 'python' then
-      M.for_buffer(bufnr, function() end)
-    end
-  end
 end
 
 return M

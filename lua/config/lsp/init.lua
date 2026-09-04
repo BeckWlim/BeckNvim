@@ -86,14 +86,22 @@ local function configure_basedpyright()
 end
 
 local function configure_clangd()
+  local clangd_command = {}
+  if vim.fn.executable('ionice') == 1 then
+    vim.list_extend(clangd_command, { 'ionice', '--class', 'idle', '--ignore' })
+  end
+  if vim.fn.executable('nice') == 1 then
+    vim.list_extend(clangd_command, { 'nice', '-n', '10' })
+  end
+  vim.list_extend(clangd_command, {
+    'clangd',
+    '--background-index',
+    '--background-index-priority=background',
+    '-j=1',
+    '--pch-storage=memory',
+  })
   vim.lsp.config('clangd', {
-    cmd = {
-      'clangd',
-      '--background-index',
-      '--background-index-priority=background',
-      '-j=2',
-      '--pch-storage=disk',
-    },
+    cmd = clangd_command,
     filetypes = { 'c', 'cpp' },
     root_markers = {
       function(name, path)

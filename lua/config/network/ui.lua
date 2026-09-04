@@ -257,6 +257,15 @@ local function notify_status(proxy_environment)
   vim.notify(current_status(proxy_environment), vim.log.levels.INFO)
 end
 
+local function notify_persistence_error(persistence_error)
+  if persistence_error then
+    vim.notify(
+      'Proxy is active for this session but could not be saved: ' .. persistence_error,
+      vim.log.levels.WARN
+    )
+  end
+end
+
 local function refresh_consumers()
   local translation = package.loaded['config.translation']
   if translation and type(translation.refresh_proxy) == 'function' then
@@ -289,21 +298,29 @@ local function apply_choice(choice)
     return false
   end
   if choice.action == 'direct' then
-    local direct_environment = proxy.set_session(nil, nil)
+    local direct_environment, _direct_label, persistence_error = proxy.set_session(nil, nil)
     refresh_consumers()
     notify_status(direct_environment)
+    notify_persistence_error(persistence_error)
     return true
   end
   if choice.action == 'bypass' then
-    local updated_environment = proxy.set_no_proxy(choice.no_proxy)
+    local updated_environment, _updated_label, persistence_error = proxy.set_no_proxy(
+      choice.no_proxy
+    )
     refresh_consumers()
     notify_status(updated_environment)
+    notify_persistence_error(persistence_error)
     return true
   end
   if choice.action == 'proxy' then
-    local updated_environment = proxy.set_session(choice.address, choice.no_proxy)
+    local updated_environment, _updated_label, persistence_error = proxy.set_session(
+      choice.address,
+      choice.no_proxy
+    )
     refresh_consumers()
     notify_status(updated_environment)
+    notify_persistence_error(persistence_error)
     return true
   end
   return false
@@ -389,10 +406,6 @@ function M.setup()
   vim.api.nvim_create_user_command('Proxy', M.open, {
     desc = 'Inspect or change the shared session proxy',
   })
-  vim.cmd([[
-    cnoreabbrev <expr> proxy
-          \ getcmdtype() ==# ':' && getcmdline() ==# 'proxy' ? 'Proxy' : 'proxy'
-  ]])
 end
 
 M.apply_choice = apply_choice

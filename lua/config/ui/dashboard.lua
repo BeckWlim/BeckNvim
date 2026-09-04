@@ -190,7 +190,7 @@ local function add_centered_line(rendered, text, layout_width)
 end
 
 local function render_title(rendered, layout_width)
-  local brand_text = '  PROJECT DECK'
+  local brand_text = '  BECKNVIM'
   local brand_width = vim.fn.strdisplaywidth(brand_text)
   local brand_padding = math.max(
     0,

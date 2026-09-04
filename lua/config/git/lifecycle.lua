@@ -5,10 +5,30 @@ local M = {}
 local generation_counter = 0
 
 local allowed_transitions = {
-  mounting = { listing = true, closing = true, failed = true },
-  listing = { enriching = true, rendering = true, ready = true, closing = true, failed = true },
-  enriching = { rendering = true, ready = true, closing = true, failed = true },
-  rendering = { rendering = true, ready = true, return_wait = true, closing = true, failed = true },
+  mounting = { listing = true, returning = true, closing = true, failed = true },
+  listing = {
+    enriching = true,
+    rendering = true,
+    ready = true,
+    returning = true,
+    closing = true,
+    failed = true,
+  },
+  enriching = {
+    rendering = true,
+    ready = true,
+    returning = true,
+    closing = true,
+    failed = true,
+  },
+  rendering = {
+    rendering = true,
+    ready = true,
+    return_wait = true,
+    returning = true,
+    closing = true,
+    failed = true,
+  },
   ready = { rendering = true, returning = true, anchoring = true, closing = true, failed = true },
   return_wait = { rendering = true, returning = true, anchoring = true, closing = true, failed = true },
   anchoring = { rendering = true, ready = true, closing = true, failed = true },
@@ -63,6 +83,7 @@ function M.attach(view, kind)
   generation_counter = generation_counter + 1
   local scoped_history = kind == 'file' or kind == 'symbol'
   local lifecycle = {
+    activities = {},
     alignment_ready = false,
     enrichment_ready = not scoped_history,
     expected_target = nil,
@@ -86,6 +107,65 @@ function M.attach(view, kind)
   return lifecycle
 end
 
+function M.set_activity(view, activity_name, label)
+  local lifecycle = lifecycle_state(view)
+  if not lifecycle
+      or terminal_phases[lifecycle.phase]
+      or type(activity_name) ~= 'string'
+      or activity_name == ''
+      or type(label) ~= 'string'
+      or label == '' then
+    return false
+  end
+  lifecycle.activities[activity_name] = label
+  log_message(lifecycle, 'async activity', 'started', activity_name .. '=' .. label, 'info')
+  return true
+end
+
+function M.clear_activity(view, activity_name)
+  local lifecycle = lifecycle_state(view)
+  if not lifecycle or not lifecycle.activities[activity_name] then
+    return false
+  end
+  local completed_label = lifecycle.activities[activity_name]
+  lifecycle.activities[activity_name] = nil
+  log_message(
+    lifecycle,
+    'async activity',
+    'completed',
+    activity_name .. '=' .. completed_label,
+    'info'
+  )
+  return true
+end
+
+function M.activity_labels(view)
+  local lifecycle = lifecycle_state(view)
+  if not lifecycle then
+    return {}
+  end
+  local labels = {}
+  local emitted_activities = {}
+  for _, activity_name in ipairs({ 'head', 'history', 'enrichment', 'selection' }) do
+    local label = lifecycle.activities[activity_name]
+    if label then
+      labels[#labels + 1] = label
+      emitted_activities[activity_name] = true
+    end
+  end
+  local remaining_names = {}
+  for activity_name in pairs(lifecycle.activities) do
+    if not emitted_activities[activity_name] then
+      remaining_names[#remaining_names + 1] = activity_name
+    end
+  end
+  table.sort(remaining_names)
+  for _, activity_name in ipairs(remaining_names) do
+    labels[#labels + 1] = lifecycle.activities[activity_name]
+  end
+  return labels
+end
+
 function M.get(view)
   return lifecycle_state(view)
 end
@@ -98,6 +178,11 @@ end
 function M.phase(view)
   local lifecycle = lifecycle_state(view)
   return lifecycle and lifecycle.phase or nil
+end
+
+function M.failure_detail(view)
+  local lifecycle = lifecycle_state(view)
+  return lifecycle and lifecycle.failure_detail or nil
 end
 
 function M.is_current(view, generation)
@@ -378,6 +463,19 @@ function M.mark_empty_ready(view, detail)
   return M.try_ready(view, detail or 'empty history')
 end
 
+function M.mark_idle_ready(view, detail)
+  local lifecycle = lifecycle_state(view)
+  if not lifecycle then
+    return false
+  end
+  lifecycle.list_ready = true
+  lifecycle.enrichment_ready = true
+  lifecycle.alignment_ready = true
+  lifecycle.expected_target = { commit = 'IDLE', path = 'IDLE' }
+  lifecycle.rendered_target = { commit = 'IDLE', path = 'IDLE', sequence = 0 }
+  return M.try_ready(view, detail or 'history waiting for an explicit file open')
+end
+
 function M.is_ready(view)
   local lifecycle = lifecycle_state(view)
   return lifecycle
@@ -401,11 +499,34 @@ function M.request_return(view, detail)
     return false
   end
   lifecycle.return_requested = true
+  if lifecycle.phase == 'failed' then
+    M.log(view, 'exit request', 'accepted after failure', detail, 'info')
+    return true
+  end
+  if lifecycle.initializing then
+    return M.transition(view, 'returning', 'initial render cancelled', detail)
+  end
   if not M.is_ready(view) then
     M.log(view, 'exit request', 'waiting for ready render', detail, 'info')
     return false
   end
   return M.transition(view, 'returning', 'exit request', detail)
+end
+
+function M.mark_failed(view, detail)
+  local lifecycle = lifecycle_state(view)
+  if not lifecycle then
+    return false
+  end
+  if lifecycle.phase == 'failed' then
+    return true
+  end
+  if terminal_phases[lifecycle.phase] then
+    return false
+  end
+  lifecycle.failure_detail = detail
+  lifecycle.initializing = false
+  return M.transition(view, 'failed', 'async lifecycle failed', detail)
 end
 
 function M.begin_anchor(view, detail)

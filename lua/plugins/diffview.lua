@@ -2,7 +2,7 @@ return {
   {
     'sindrets/diffview.nvim',
     dependencies = { 'nvim-lua/plenary.nvim' },
-    lazy = true,
+    event = 'VeryLazy',
     config = function()
       require('config.git.diffview').setup()
     end,

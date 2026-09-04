@@ -1,39 +1,118 @@
 local github = require('config.git.github')
 local panel = require('config.git.panel')
+local treesitter = require('config.syntax.treesitter')
+local open_target = require('config.ui.open_target')
 
 local M = {}
 local active_detail
+local direct_request_generation = 0
+local pending_direct_request
+
+local function clear_loading_message()
+  pcall(vim.api.nvim_echo, {}, false, {})
+end
+
+local function cancel_pending_direct_request()
+  direct_request_generation = direct_request_generation + 1
+  local pending_request = pending_direct_request
+  pending_direct_request = nil
+  if pending_request then
+    pending_request.cancel()
+    clear_loading_message()
+  end
+end
+
+local function resource_segment(github_record)
+  return github_record.kind == 'Pull request' and 'pull' or 'issues'
+end
+
+local function buffer_name(root, github_record)
+  local repository_identity = github_record.remote_repository or vim.fs.basename(root)
+  return ('github://%s/%s/%d'):format(
+    repository_identity,
+    resource_segment(github_record),
+    github_record.number
+  )
+end
 
 local function display_date(timestamp)
   return timestamp ~= '' and timestamp:gsub('T', ' '):gsub('Z$', ' UTC') or 'unknown'
 end
 
-function M.lines(issue)
-  local label_text = #issue.labels > 0 and table.concat(issue.labels, ', ') or 'none'
-  local description_lines = issue.body ~= ''
-      and vim.split(issue.body, '\n', { plain = true })
+function M.lines(github_record)
+  local label_text = #github_record.labels > 0
+      and table.concat(github_record.labels, ', ')
+    or 'none'
+  local description_lines = github_record.body ~= ''
+      and vim.split(github_record.body, '\n', { plain = true })
     or { '_No description._' }
+  local remote_identity = github_record.remote_host
+      and ('%s/%s#%d'):format(
+        github_record.remote_host,
+        github_record.remote_repository,
+        github_record.number
+      )
+    or ('GitHub #%d'):format(github_record.number)
   local rendered_lines = {
-    ('# #%d · %s'):format(issue.number, issue.title),
+    ('# #%d · %s'):format(github_record.number, github_record.title),
     '',
-    ('**%s · %s · REMOTE** · @%s'):format(issue.kind, issue.state:upper(), issue.author),
-    issue.remote_host
-        and ('Remote: `%s/%s`'):format(issue.remote_host, issue.remote_repository)
-      or 'Remote: project origin',
+    ('**%s · %s · REMOTE** · @%s'):format(
+      github_record.kind,
+      github_record.state:upper(),
+      github_record.author
+    ),
+    ('Remote: [%s](%s)'):format(remote_identity, github_record.html_url),
     ('Labels: %s'):format(label_text),
     ('Created: %s · Updated: %s · Comments: %d'):format(
-      display_date(issue.created_at),
-      display_date(issue.updated_at),
-      issue.comments
+      display_date(github_record.created_at),
+      display_date(github_record.updated_at),
+      github_record.comments
     ),
     '',
   }
   vim.list_extend(rendered_lines, description_lines)
+  vim.list_extend(rendered_lines, { '', '## Discussion', '' })
+  local discussion = github_record.discussion or {}
+  if #discussion == 0 then
+    local discussion_status = github_record.comments == 0
+        and '_No discussion._'
+      or ('_Discussion could not be loaded; open GitHub to view %d comments._'):format(
+        github_record.comments
+      )
+    rendered_lines[#rendered_lines + 1] = discussion_status
+  else
+    for comment_index, comment in ipairs(discussion) do
+      if comment_index > 1 then
+        rendered_lines[#rendered_lines + 1] = ''
+      end
+      rendered_lines[#rendered_lines + 1] = ('### @%s · %s'):format(
+        comment.author,
+        display_date(comment.created_at)
+      )
+      if comment.html_url ~= '' then
+        rendered_lines[#rendered_lines + 1] = ('[View comment](%s)'):format(comment.html_url)
+      end
+      rendered_lines[#rendered_lines + 1] = ''
+      local comment_lines = comment.body ~= ''
+          and vim.split(comment.body, '\n', { plain = true })
+        or { '_No comment text._' }
+      vim.list_extend(rendered_lines, comment_lines)
+    end
+    if not github_record.discussion_complete then
+      vim.list_extend(rendered_lines, {
+        '',
+        ('_Showing %d of %d comments; open GitHub for the remaining discussion._'):format(
+          #discussion,
+          github_record.comments
+        ),
+      })
+    end
+  end
   vim.list_extend(rendered_lines, {
     '',
-    ('[Open on GitHub](%s)'):format(issue.html_url),
-    '',
-    '_`q` / `<Space>de` returns to search · `<C-q>` returns to Git history · `o` opens GitHub._',
+    '_`j`/`k`/`<C-d>`/`<C-u>` scroll · `q`/`<Space>de` returns to search · '
+      .. '`<C-q>` closes detail · `za` folds Markdown sections · '
+      .. '`o` opens GitHub._',
   })
   return rendered_lines
 end
@@ -47,15 +126,17 @@ local function set_buffer_lines(buffer, rendered_lines)
   vim.bo[buffer].modifiable = false
 end
 
-function M.render_buffer(buffer, issue)
+function M.render_buffer(buffer, github_record)
   if not vim.api.nvim_buf_is_valid(buffer) then
     return
   end
   vim.bo[buffer].filetype = 'markdown'
-  vim.b[buffer].git_issue_number = tostring(issue.number)
-  vim.b[buffer].git_issue_url = issue.html_url
+  vim.b[buffer].git_issue_number = tostring(github_record.number)
+  vim.b[buffer].git_issue_url = github_record.html_url
   vim.b[buffer].git_result_source = 'REMOTE'
-  set_buffer_lines(buffer, M.lines(issue))
+  set_buffer_lines(buffer, M.lines(github_record))
+  treesitter.ensure_highlighting(buffer)
+  M.attach_external_mappings(buffer)
 end
 
 local function issue_number_under_cursor(buffer, window)
@@ -104,10 +185,25 @@ local function open_external_url(buffer)
     vim.notify('GitHub URL is not available', vim.log.levels.INFO)
     return
   end
-  vim.ui.open(issue_url)
+  open_target.open_external(issue_url)
 end
 
-local function attach_mappings(buffer, root)
+function M.attach_external_mappings(buffer)
+  vim.keymap.set('n', 'o', function()
+    open_external_url(buffer)
+  end, { buffer = buffer, silent = true, desc = 'Open issue on GitHub' })
+  vim.keymap.set('n', 'gx', function()
+    open_external_url(buffer)
+  end, { buffer = buffer, silent = true, desc = 'Open issue on GitHub' })
+end
+
+local function attach_mappings(buffer, root, fetch_related)
+  vim.keymap.set('n', '<Tab>', '<Nop>', {
+    buffer = buffer,
+    nowait = true,
+    silent = true,
+    desc = 'Ignore Tab in GitHub detail',
+  })
   vim.keymap.set('n', 'q', function()
     close_detail(true)
   end, {
@@ -130,14 +226,8 @@ local function attach_mappings(buffer, root)
     buffer = buffer,
     nowait = true,
     silent = true,
-    desc = 'Close current Git panel layer',
+    desc = 'Close GitHub detail layer',
   })
-  vim.keymap.set('n', 'o', function()
-    open_external_url(buffer)
-  end, { buffer = buffer, silent = true, desc = 'Open issue on GitHub' })
-  vim.keymap.set('n', 'gx', function()
-    open_external_url(buffer)
-  end, { buffer = buffer, silent = true, desc = 'Open issue on GitHub' })
   vim.keymap.set('n', '<CR>', function()
     local issue_window = vim.fn.bufwinid(buffer)
     if issue_window == -1 then
@@ -150,7 +240,7 @@ local function attach_mappings(buffer, root)
       return
     end
     set_buffer_lines(buffer, { ('Loading GitHub issue #%s…'):format(related_issue_number) })
-    github.fetch_issue(root, related_issue_number, function(related_issue, issue_error)
+    fetch_related(related_issue_number, function(related_issue, issue_error)
       if not vim.api.nvim_buf_is_valid(buffer) then
         return
       end
@@ -164,18 +254,22 @@ local function attach_mappings(buffer, root)
       end
       vim.api.nvim_buf_set_name(
         buffer,
-        ('github://%s/issues/%d'):format(vim.fs.basename(root), related_issue.number)
+        buffer_name(root, related_issue)
       )
       M.render_buffer(buffer, related_issue)
     end)
   end, { buffer = buffer, silent = true, desc = 'Open related GitHub issue' })
 end
 
-function M.open_file(root, issue, options)
+function M.open_file(root, github_record, options)
+  cancel_pending_direct_request()
   close_detail(false)
   local detail_options = options or {}
   local parent_tabpage = detail_options.parent_tabpage or vim.api.nvim_get_current_tabpage()
-  local parent_window = vim.api.nvim_get_current_win()
+  local parent_window = detail_options.parent_window or vim.api.nvim_get_current_win()
+  local fetch_related = detail_options.fetch_related or function(issue_number, callback)
+    return github.fetch_issue(root, issue_number, callback)
+  end
   if parent_tabpage and vim.api.nvim_tabpage_is_valid(parent_tabpage) then
     vim.api.nvim_set_current_tabpage(parent_tabpage)
   end
@@ -183,11 +277,8 @@ function M.open_file(root, issue, options)
   vim.bo[detail_buffer].bufhidden = 'wipe'
   vim.bo[detail_buffer].buftype = 'nofile'
   vim.bo[detail_buffer].swapfile = false
-  vim.api.nvim_buf_set_name(
-    detail_buffer,
-    ('github://%s/issues/%d'):format(vim.fs.basename(root), issue.number)
-  )
-  M.render_buffer(detail_buffer, issue)
+  vim.api.nvim_buf_set_name(detail_buffer, buffer_name(root, github_record))
+  M.render_buffer(detail_buffer, github_record)
   local available_width = math.max(1, vim.o.columns - 4)
   local available_height = math.max(1, vim.o.lines - 4)
   local detail_width = math.min(available_width, math.max(60, math.floor(vim.o.columns * 0.72)))
@@ -199,12 +290,19 @@ function M.open_file(root, issue, options)
     relative = 'editor',
     row = math.max(0, math.floor((vim.o.lines - detail_height) / 2) - 1),
     style = 'minimal',
-    title = (' GitHub #%d · REMOTE '):format(issue.number),
+    title = (' GitHub #%d · %s · REMOTE '):format(
+      github_record.number,
+      github_record.kind:upper()
+    ),
     title_pos = 'center',
     width = detail_width,
   })
-  attach_mappings(detail_buffer, root)
+  attach_mappings(detail_buffer, root, fetch_related)
   vim.wo[detail_window].cursorline = true
+  vim.wo[detail_window].foldenable = true
+  vim.wo[detail_window].foldexpr = 'v:lua.vim.treesitter.foldexpr()'
+  vim.wo[detail_window].foldlevel = 99
+  vim.wo[detail_window].foldmethod = 'expr'
   vim.wo[detail_window].linebreak = true
   vim.wo[detail_window].wrap = true
   local detail = {
@@ -221,12 +319,65 @@ function M.open_file(root, issue, options)
   return true
 end
 
+function M.open_url(target)
+  local record_reference = github.parse_record_url(target)
+  if not record_reference then
+    return false
+  end
+
+  cancel_pending_direct_request()
+  local request_generation = direct_request_generation
+  local parent_tabpage = vim.api.nvim_get_current_tabpage()
+  local parent_window = vim.api.nvim_get_current_win()
+  local request_completed = false
+  vim.notify(
+    ('GitHub %s #%d: loading detail…'):format(
+      record_reference.kind:lower(),
+      record_reference.number
+    ),
+    vim.log.levels.INFO
+  )
+  local cancel_request = github.fetch_record(record_reference, function(github_record)
+    request_completed = true
+    if request_generation ~= direct_request_generation then
+      return
+    end
+    pending_direct_request = nil
+    clear_loading_message()
+    if not github_record then
+      open_target.open_external(target)
+      return
+    end
+    local remote = record_reference.remote
+    local function fetch_related(issue_number, callback)
+      return github.fetch_record({
+        number = tonumber(issue_number),
+        remote = remote,
+      }, callback)
+    end
+    M.open_file(remote.repository, github_record, {
+      fetch_related = fetch_related,
+      parent_tabpage = parent_tabpage,
+      parent_window = parent_window,
+    })
+  end)
+  if not request_completed then
+    pending_direct_request = {
+      cancel = cancel_request,
+      generation = request_generation,
+    }
+  end
+  return true
+end
+
 function M.is_active()
   return active_detail ~= nil
 end
 
 function M.close()
-  return close_detail(false)
+  local request_was_pending = pending_direct_request ~= nil
+  cancel_pending_direct_request()
+  return close_detail(false) or request_was_pending
 end
 
 return M

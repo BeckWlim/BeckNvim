@@ -1,5 +1,6 @@
 local repository = require('config.git.repository')
 local git_ui = require('config.git.ui')
+local project = require('config.project')
 
 assert(repository.max_history_entries == 50, 'Git history cap changed unexpectedly')
 assert(repository.max_branch_entries == 100, 'Git branch cap changed unexpectedly')
@@ -32,6 +33,16 @@ assert(
   'Branch list command did not bound its result count'
 )
 assert(vim.tbl_contains(branch_command, '--sort=-HEAD'), 'Current branch was not prioritized')
+local pointing_branch_command = repository.commands.branches_pointing_at(string.rep('1', 40))
+assert(
+  vim.tbl_contains(pointing_branch_command, '--points-at=' .. string.rep('1', 40)),
+  'Exact detached-tip lookup did not use Git ref identity'
+)
+assert(
+  repository.match_detached_tip_branch({ branches[2], branches[1] }, string.rep('1', 40))
+      == branches[1],
+  'Exact detached-tip matching did not prefer the local branch'
+)
 
 local branch_record = git_ui.branch_record(branches[1])
 assert(branch_record.display_text:match('LOCAL'), 'Branch row lost its local/remote kind')
@@ -56,6 +67,85 @@ assert(
     and vim.tbl_contains(exact_search_command, '--follow')
     and exact_search_command[#exact_search_command] == 'src/master_service.cpp',
   'Exact-number search command lost its numeric boundary, cap, or history scope'
+)
+local history_rows_command = repository.commands.history_rows({
+  history_ref = 'refs/heads/main',
+  kind = 'file',
+  location = { relative_path = 'src/master_service.cpp' },
+}, 200, 200)
+assert(
+  vim.tbl_contains(history_rows_command, '--follow')
+    and vim.tbl_contains(history_rows_command, '--no-patch')
+    and vim.tbl_contains(history_rows_command, '--skip=200')
+    and vim.tbl_contains(history_rows_command, '--max-count=200')
+    and history_rows_command[#history_rows_command - 1] == '--'
+    and history_rows_command[#history_rows_command] == 'src/master_service.cpp',
+  'Lightweight file-history rows lost their branch window or path scope'
+)
+local history_row_separator = string.char(30)
+local history_field_separator = string.char(31)
+local parsed_history_rows = repository.parse_history_rows(
+  history_row_separator .. table.concat({
+    string.rep('c', 40),
+    string.rep('b', 40),
+    'Commit Author',
+    '1788451200',
+    '2026-09-04 08:00:00 +0800',
+    '2 hours ago',
+    'HEAD -> main, origin/main',
+    '',
+    'Keep footer details lazy',
+  }, history_field_separator) .. '\n'
+)
+assert(
+  #parsed_history_rows == 1
+    and parsed_history_rows[1].hash == string.rep('c', 40)
+    and parsed_history_rows[1].parent_hashes[1] == string.rep('b', 40)
+    and parsed_history_rows[1].time == 1788451200
+    and parsed_history_rows[1].time_offset == '+0800'
+    and parsed_history_rows[1].ref_names == 'HEAD -> main, origin/main'
+    and parsed_history_rows[1].subject == 'Keep footer details lazy',
+  'Lightweight history metadata did not preserve Diffview commit fields'
+)
+local detail_hash_a = string.rep('d', 40)
+local detail_hash_b = string.rep('e', 40)
+local detail_command = repository.commands.history_detail_rows(
+  { detail_hash_a, detail_hash_b },
+  'name-status'
+)
+assert(
+  vim.tbl_contains(detail_command, '--name-status')
+    and detail_command[#detail_command - 1] == detail_hash_a
+    and detail_command[#detail_command] == detail_hash_b,
+  'Commit-child batches did not share one boundary-preserving Git request'
+)
+local detail_name_output = table.concat({
+  history_row_separator .. detail_hash_a,
+  '',
+  'M\tlua/config/git/footer_loader.lua',
+  'A\ttests/git_footer_loader.lua',
+  history_row_separator .. detail_hash_b,
+  '',
+}, '\n')
+local detail_numstat_output = table.concat({
+  history_row_separator .. detail_hash_a,
+  '',
+  '12\t3\tlua/config/git/footer_loader.lua',
+  '40\t0\ttests/git_footer_loader.lua',
+  history_row_separator .. detail_hash_b,
+  '',
+}, '\n')
+local parsed_history_details = repository.parse_history_details(
+  detail_name_output,
+  detail_numstat_output
+)
+assert(
+  #parsed_history_details[detail_hash_a] == 2
+    and parsed_history_details[detail_hash_a][1].status == 'M'
+    and parsed_history_details[detail_hash_a][1].stats.additions == 12
+    and parsed_history_details[detail_hash_a][1].stats.deletions == 3
+    and #parsed_history_details[detail_hash_b] == 0,
+  'Batched commit-child parsing lost a commit boundary, status, or diff stat'
 )
 local parsed_search_commits = repository.parse_commit_search(table.concat({
   table.concat({
@@ -165,6 +255,11 @@ assert(
   'Commit overview did not verify the requested object as a commit'
 )
 assert(
+  repository.parse_resolved_commit(string.rep('d', 40) .. '\n') == string.rep('d', 40)
+    and repository.parse_resolved_commit('not a hash\n') == nil,
+  'Resolved commit parsing accepted a non-object or lost the canonical hash'
+)
+assert(
   vim.deep_equal(repository.commands.detach_commit('resolved'), {
     'git', 'switch', '--detach', 'resolved',
   }),
@@ -180,23 +275,38 @@ assert(
   }),
   'Detached-commit retention did not use an explicit ancestry check'
 )
+local containing_refs = repository.parse_containing_refs(table.concat({
+  'refs/remotes/origin/HEAD',
+  'refs/remotes/origin/main',
+  'refs/heads/main',
+}, '\n'))
 assert(
-  repository.parse_commit_source('refs/remotes/origin/topic\n') == 'REMOTE'
-    and repository.parse_commit_source('refs/heads/main\nrefs/remotes/origin/main\n') == 'LOCAL',
-  'Commit source did not prioritize local-branch reachability over remote refs'
+  containing_refs['refs/heads/main']
+    and containing_refs['refs/remotes/origin/main']
+    and not containing_refs['refs/remotes/origin/HEAD'],
+  'Detached branch relation parsing retained a remote HEAD pseudo-ref'
 )
-local remote_commit_location = repository.parse_commit_location(
-  'refs/remotes/origin/topic\n'
-)
-local local_commit_location = repository.parse_commit_location(
-  'refs/remotes/origin/main\nrefs/heads/main\n'
+local detached_commit = string.rep('1', 40)
+local prioritized_branches = repository.prioritize_detached_branches(
+  { branches[3], branches[2], branches[1] },
+  detached_commit,
+  containing_refs,
+  'main'
 )
 assert(
-  remote_commit_location.source == 'REMOTE'
-    and remote_commit_location.branch_name == 'origin/topic'
-    and local_commit_location.source == 'LOCAL'
-    and local_commit_location.branch_name == 'main',
-  'Commit location did not retain the best containing branch for panel rendering'
+  prioritized_branches[1].short_name == 'main'
+    and prioritized_branches[1].detached_relation == 'tip'
+    and prioritized_branches[2].short_name == 'origin/main'
+    and prioritized_branches[2].detached_relation == 'tip'
+    and prioritized_branches[3].short_name == 'origin/feature/topic'
+    and prioritized_branches[3].detached_relation == nil,
+  'Detached branch ranking did not prioritize related local and remote refs'
+)
+local detached_branch_record = git_ui.branch_record(prioritized_branches[1])
+assert(
+  detached_branch_record.display_text:match('DETACHED HEAD TIP')
+    and detached_branch_record.display_text:match('◆'),
+  'Related branch row did not explain its detached HEAD relationship'
 )
 local clean_head_state = repository.parse_head_state(table.concat({
   '# branch.oid resolved',
@@ -224,8 +334,10 @@ assert(
 local original_git_module = package.loaded['config.git']
 local original_diffview_module = package.loaded['config.git.diffview']
 local original_search_module = package.loaded['config.git.search']
+local original_treesitter_context_module = package.loaded['config.syntax.treesitter_context']
 local original_repository_start = repository.start
 local started_commands = {}
+local history_operation_order = {}
 local overview_close_calls = 0
 local overview_options
 local replacement_call
@@ -243,16 +355,71 @@ local head_status_output = table.concat({
 local resolved_commit = string.rep('a', 40)
 local ancestor_exit_code = 0
 local commit_source_output = 'refs/remotes/origin/topic\n'
+local pointing_branch_output = table.concat({
+  table.concat({
+    ' ',
+    'refs/remotes/origin/release/v0.3.13',
+    'origin/release/v0.3.13',
+    resolved_commit,
+    '',
+    '2026-08-31',
+    'Bump version',
+  }, '\t'),
+  table.concat({
+    ' ',
+    'refs/heads/release/v0.3.13',
+    'release/v0.3.13',
+    resolved_commit,
+    'origin/release/v0.3.13',
+    '2026-08-31',
+    'Bump version',
+  }, '\t'),
+}, '\n')
+local pending_symbol_resolution
+local symbol_resolution_calls = 0
 package.loaded['config.git.diffview'] = {
   close = function()
     overview_close_calls = overview_close_calls + 1
   end,
   open_file_history = function(options)
+    history_operation_order[#history_operation_order + 1] = 'mount'
     overview_options = options
+    local search_options = vim.deepcopy(options)
+    search_options.history_ref = nil
+    search_options.revision = nil
+    search_options.selected_commit = nil
+    search_options.unbounded = nil
+    opened_history_view.git_search_options = search_options
     if options.render_ready_callback then
       options.render_ready_callback(opened_history_view, true, 'test render ready')
     end
     return opened_history_view
+  end,
+  open_selected_history = function(parent_view, options)
+    overview_options = options
+    if parent_view then
+      replacement_call = { options = options, parent_view = parent_view }
+    end
+    if options.render_ready_callback then
+      options.render_ready_callback(parent_view or opened_history_view, true, 'test selected ready')
+    end
+    return true
+  end,
+  apply_history_context = function(view, options)
+    overview_options = options
+    view.git_search_options = vim.deepcopy(options)
+    return true
+  end,
+  attach_history_head_request = function(_, cancel_resolution)
+    opened_history_view.cancel_head_resolution = cancel_resolution
+    return true
+  end,
+  finish_history_head_request = function()
+    return true
+  end,
+  set_history_activity = function(_, _, progress_label)
+    opened_history_view.head_progress = progress_label
+    return true
   end,
   is_active = function()
     return false
@@ -298,14 +465,32 @@ package.loaded['config.git.search'] = {
     return true
   end,
 }
+package.loaded['config.syntax.treesitter_context'] = {
+  enclosing_structure_async = function(_, _, _, callback)
+    symbol_resolution_calls = symbol_resolution_calls + 1
+    pending_symbol_resolution = callback
+  end,
+}
 repository.start = function(command, root, callback)
+  history_operation_order[#history_operation_order + 1] = command[2]
   started_commands[#started_commands + 1] = { command = vim.deepcopy(command), root = root }
   if command[2] == 'rev-parse' then
     callback({ code = 0, stderr = '', stdout = resolved_commit .. '\n' })
   elseif command[2] == 'status' then
     callback({ code = 0, stderr = '', stdout = head_status_output })
   elseif command[2] == 'for-each-ref' then
-    callback({ code = 0, stderr = '', stdout = commit_source_output })
+    local points_at_commit = false
+    for _, argument in ipairs(command) do
+      if vim.startswith(argument, '--points-at=') then
+        points_at_commit = true
+        break
+      end
+    end
+    callback({
+      code = 0,
+      stderr = '',
+      stdout = points_at_commit and pointing_branch_output or commit_source_output,
+    })
   elseif command[2] == 'merge-base' then
     callback({ code = ancestor_exit_code, stderr = '', stdout = '' })
   elseif command[2] == 'switch' then
@@ -323,6 +508,51 @@ assert(
     and not git.supports_event('diffview_file_open_post'),
   'Git subsystem did not expose a stable renderer-independent event port'
 )
+
+local original_location_buffer = vim.api.nvim_get_current_buf()
+local history_location_buffer = vim.api.nvim_create_buf(true, false)
+vim.api.nvim_buf_set_name(history_location_buffer, '/work/repository/src/master_service.cpp')
+vim.api.nvim_set_current_buf(history_location_buffer)
+local original_detect_repository = project.detect_repository
+project.detect_repository = function()
+  return '/work/repository'
+end
+overview_options = nil
+git.history_file()
+assert(
+  overview_options
+    and overview_options.kind == 'file'
+    and overview_options.location.relative_path == 'src/master_service.cpp'
+    and overview_options.location.structure == nil
+    and symbol_resolution_calls == 0,
+  'File history performed unnecessary cursor-symbol parsing or lost its scoped path'
+)
+overview_options = nil
+git.history_symbol()
+assert(
+  overview_options == nil
+    and symbol_resolution_calls == 1
+    and type(pending_symbol_resolution) == 'function',
+  'Symbol history blocked instead of waiting on cooperative Tree-sitter resolution'
+)
+pending_symbol_resolution({
+  first_line = 40,
+  label = 'MasterService::run',
+  last_line = 90,
+  node_type = 'function_definition',
+})
+assert(
+  overview_options
+    and overview_options.kind == 'symbol'
+    and vim.deep_equal(overview_options.range, { 40, 90 })
+    and overview_options.location.structure.label == 'MasterService::run',
+  'Cooperative symbol resolution did not mount the shared history pipeline'
+)
+project.detect_repository = original_detect_repository
+vim.api.nvim_set_current_buf(original_location_buffer)
+vim.api.nvim_buf_delete(history_location_buffer, { force = true })
+overview_options = nil
+
 defer_git_search = true
 assert(git.search_repository())
 assert(
@@ -342,10 +572,11 @@ assert(
     and direct_search_call.history_options.kind == 'repository'
     and direct_search_call.history_options.checked_out_branch == 'main'
     and direct_search_call.history_options.branch_name == 'main'
-    and direct_search_call.history_options.history_ref == 'refs/heads/main'
+    and direct_search_call.history_options.history_ref == nil
     and direct_search_call.history_options.branch_tip_commit == 'previous'
-    and direct_search_call.parent_view == opened_history_view,
-  'Direct Git search did not mount repository history beneath its picker'
+    and direct_search_call.parent_view == nil
+    and overview_options == nil,
+  'Direct Git search mounted repository history before a result was selected'
 )
 
 started_commands = {}
@@ -357,20 +588,33 @@ head_status_output = table.concat({
 }, '\n')
 assert(git.search_repository())
 assert(
-  #started_commands == 3
+  #started_commands == 2
     and started_commands[1].command[2] == 'status'
-    and started_commands[2].command[2] == 'for-each-ref'
-    and started_commands[3].command[2] == 'rev-parse'
+    and vim.tbl_contains(started_commands[2].command, '--points-at=' .. resolved_commit)
     and direct_search_call
-    and direct_search_call.history_options.branch_name == 'origin/topic'
-    and direct_search_call.history_options.history_ref == 'refs/remotes/origin/topic'
-    and direct_search_call.history_options.selected_commit == resolved_commit
+    and direct_search_call.history_options.branch_name == 'release/v0.3.13'
+    and direct_search_call.history_options.history_ref == nil
+    and direct_search_call.history_options.revision == nil
+    and direct_search_call.history_options.selected_commit == nil
     and direct_search_call.history_options.detached_head_commit == resolved_commit
-    and direct_search_call.history_options.anchor_plan.branch_ref
-      == 'refs/remotes/origin/topic'
-    and direct_search_call.history_options.anchor_plan.branch_tip_commit == resolved_commit
-    and direct_search_call.history_options.unbounded,
-  'Dirty detached Git entry did not use a containing local or remote-tracking branch history'
+    and direct_search_call.history_options.anchor_plan == nil
+    and direct_search_call.history_options.unbounded == nil
+    and direct_search_call.parent_view == nil
+    and overview_options == nil,
+  'Detached Git search did not preserve its exact local branch tip for result routing'
+)
+
+started_commands = {}
+direct_search_call = nil
+pointing_branch_output = ''
+assert(git.search_repository())
+assert(
+  #started_commands == 2
+    and direct_search_call
+    and direct_search_call.history_options.branch_name == nil
+    and direct_search_call.history_options.anchor_plan == nil
+    and overview_options == nil,
+  'Unmatched detached Git search did not retain the exact commit for result routing'
 )
 
 started_commands = {}
@@ -380,15 +624,17 @@ head_status_output = table.concat({
 }, '\n')
 assert(git.detach_commit_overview('/work/repository', 'aaaaaaa'))
 assert(
-  #started_commands == 3
-    and started_commands[3].command[2] == 'switch'
+  #started_commands == 4
+    and started_commands[3].command[2] == 'merge-base'
+    and started_commands[4].command[2] == 'switch'
     and overview_close_calls == 1
     and overview_options.selected_commit == resolved_commit
-    and overview_options.history_ref == resolved_commit
+    and overview_options.history_ref == 'refs/heads/main'
+    and overview_options.branch_name == 'main'
     and overview_options.detached_head_commit == resolved_commit
-    and overview_options.unbounded
+    and not overview_options.unbounded
     and overview_options.source == 'LOCAL',
-  'Context-free commit overview searched branches instead of using the exact commit anchor'
+  'Context-free commit overview did not match the detached commit against the current branch'
 )
 assert(
   #anchor_logs >= 5
@@ -417,7 +663,8 @@ head_status_output = table.concat({
 }, '\n')
 assert(git.detach_commit_overview('/work/repository', 'aaaaaaa'))
 assert(
-  #started_commands == 2
+  #started_commands == 3
+    and started_commands[3].command[2] == 'merge-base'
     and overview_close_calls == 3
     and overview_options.detached_head_commit == nil,
   'A commit already checked out as branch HEAD was detached unnecessarily'
@@ -453,24 +700,76 @@ assert(git.detach_commit_overview('/work/repository', 'aaaaaaa', parent_view, {
   source = 'REMOTE',
 }))
 assert(
-  #started_commands == 3
+  #started_commands == 4
     and started_commands[1].command[2] == 'rev-parse'
     and started_commands[2].command[2] == 'status'
-    and started_commands[3].command[2] == 'switch'
+    and vim.deep_equal(started_commands[3].command, {
+      'git',
+      'merge-base',
+      '--is-ancestor',
+      resolved_commit,
+      'refs/heads/main',
+    })
+    and started_commands[4].command[2] == 'switch'
     and overview_close_calls == 3
     and focus_history_calls == 0
     and replacement_call
     and replacement_call.parent_view == parent_view
     and replacement_call.options.selected_commit == resolved_commit
-    and replacement_call.options.history_ref == 'refs/remotes/origin/chosen-topic'
-    and replacement_call.options.unbounded
-    and replacement_call.options.branch_name == 'origin/chosen-topic'
-    and replacement_call.options.branch_tip_commit == string.rep('b', 40)
+    and replacement_call.options.history_ref == 'refs/heads/main'
+    and not replacement_call.options.unbounded
+    and replacement_call.options.branch_name == 'main'
+    and replacement_call.options.branch_tip_commit == 'previous'
+    and replacement_call.options.anchor_plan.branch_name == 'main'
+    and replacement_call.options.anchor_plan.branch_tip_commit == 'previous'
     and replacement_call.options.checked_out_branch == nil
     and replacement_call.options.detached_head_commit == resolved_commit
-    and replacement_call.options.source == 'REMOTE',
-  'In-mode commit detach reused stale branch decorations instead of refreshing history'
+    and replacement_call.options.source == 'LOCAL',
+  'In-mode commit detach did not match and render the current branch context'
 )
+
+started_commands = {}
+replacement_call = nil
+ancestor_exit_code = 1
+assert(git.detach_commit_overview('/work/repository', 'aaaaaaa', parent_view, {
+  anchor_plan = {
+    branch_name = 'main',
+    branch_ref = 'refs/heads/main',
+    branch_tip_commit = string.rep('c', 40),
+    source = 'LOCAL',
+  },
+  branch_name = 'main',
+  source = 'LOCAL',
+}))
+assert(
+  #started_commands == 4
+    and started_commands[1].command[2] == 'rev-parse'
+    and started_commands[2].command[2] == 'status'
+    and started_commands[3].command[2] == 'merge-base'
+    and vim.deep_equal(started_commands[3].command, {
+      'git',
+      'merge-base',
+      '--is-ancestor',
+      resolved_commit,
+      'refs/heads/main',
+    })
+    and vim.deep_equal(started_commands[4].command, {
+      'git',
+      'switch',
+      '--detach',
+      resolved_commit,
+    })
+    and replacement_call
+    and replacement_call.options.selected_commit == resolved_commit
+    and replacement_call.options.revision == resolved_commit
+    and replacement_call.options.history_ref == nil
+    and replacement_call.options.branch_name == nil
+    and replacement_call.options.anchor_plan == nil
+    and replacement_call.options.detached_head_commit == resolved_commit
+    and not replacement_call.options.unbounded,
+  'Detached target outside the reviewed branch did not render as an independent commit'
+)
+ancestor_exit_code = 0
 
 started_commands = {}
 replacement_call = nil
@@ -528,7 +827,7 @@ assert(
     and replacement_call.options.detached_head_commit == resolved_commit
     and replacement_call.options.selected_commit == resolved_commit
     and replacement_call.options.review_only
-    and replacement_call.options.unbounded,
+    and not replacement_call.options.unbounded,
   'Dirty read-only branch review did not retain a contained detached HEAD commit'
 )
 
@@ -548,7 +847,54 @@ assert(
     and not replacement_call.options.unbounded,
   'Branch review changed HEAD or retained a detached commit outside the selected ref'
 )
+
+started_commands = {}
+history_operation_order = {}
+head_status_output = table.concat({
+  '# branch.oid previous',
+  '# branch.head main',
+}, '\n')
+git.history_repository()
+assert(
+  history_operation_order[1] == 'mount'
+    and history_operation_order[2] == 'status'
+    and overview_options.head_resolution_pending == nil
+    and overview_options.branch_name == 'main',
+  'Repository history waited for HEAD metadata before mounting its native panel'
+)
+
+local original_project_for_buffer = project.for_buffer
+local original_project_detect_repository = project.detect_repository
+local original_notify = vim.notify
+local repository_gate_notices = {}
+project.for_buffer = function()
+  return '/work/non-git-project'
+end
+project.detect_repository = function()
+  return nil
+end
+vim.notify = function(message)
+  repository_gate_notices[#repository_gate_notices + 1] = message
+end
+started_commands = {}
+direct_search_call = nil
+overview_options = nil
+assert(not git.search_repository(), 'Git search accepted a workspace without a repository')
+git.history_repository()
+assert(
+  #started_commands == 0
+    and direct_search_call == nil
+    and overview_options == nil
+    and #repository_gate_notices == 2
+    and repository_gate_notices[1] == 'The current workspace is not a Git repository',
+  'Git mode crossed the non-repository workspace gate'
+)
+vim.notify = original_notify
+project.for_buffer = original_project_for_buffer
+project.detect_repository = original_project_detect_repository
+
 repository.start = original_repository_start
 package.loaded['config.git.diffview'] = original_diffview_module
 package.loaded['config.git.search'] = original_search_module
+package.loaded['config.syntax.treesitter_context'] = original_treesitter_context_module
 package.loaded['config.git'] = original_git_module

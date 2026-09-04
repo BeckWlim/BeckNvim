@@ -213,6 +213,50 @@ local function structural_node_label(source_buffer, structural_node)
   return vim.trim(source_line):gsub('%s+', ' ')
 end
 
+local function syntax_tree_for_range(parser, source_range)
+  local language_tree = parser:language_for_range(source_range)
+  if not language_tree then
+    return
+  end
+  return language_tree:tree_for_range(source_range, { ignore_injections = true })
+end
+
+local function structural_context_from_tree(source_buffer, syntax_tree, source_row, source_column)
+  if not syntax_tree then
+    return
+  end
+  local syntax_root = syntax_tree:root()
+  local enclosing_node = syntax_root:named_descendant_for_range(
+    source_row,
+    source_column,
+    source_row,
+    source_column
+  )
+  local nearest_structural_node
+  local labels = {}
+  while enclosing_node do
+    if structural_node_types[enclosing_node:type()] then
+      nearest_structural_node = nearest_structural_node or enclosing_node
+      local context_label = structural_node_label(source_buffer, enclosing_node)
+      if context_label ~= '' then
+        table.insert(labels, 1, context_label)
+      end
+    end
+    enclosing_node = enclosing_node:parent()
+  end
+  if not nearest_structural_node then
+    return
+  end
+  local start_row, _, end_row, end_column = nearest_structural_node:range()
+  local final_line = end_row + (end_column == 0 and 0 or 1)
+  return {
+    first_line = start_row + 1,
+    last_line = math.max(start_row + 1, final_line),
+    label = table.concat(labels, ' › '),
+    node_type = nearest_structural_node:type(),
+  }
+end
+
 function M.prioritize(context_ranges, context_lines, line_budget, is_structural_context)
   if context_height(context_ranges) <= line_budget then
     return context_ranges, context_lines
@@ -333,30 +377,14 @@ function M.structural_context_labels(source_buffer, source_row, source_column)
     return {}
   end
 
-  local language_tree = parser:language_for_range(source_range)
-  local syntax_tree = language_tree:tree_for_range(source_range, { ignore_injections = true })
-  if not syntax_tree then
-    return {}
-  end
-
-  local syntax_root = syntax_tree:root()
-  local enclosing_node = syntax_root:named_descendant_for_range(
-    source_row,
-    source_column,
+  local syntax_tree = syntax_tree_for_range(parser, source_range)
+  local structure = structural_context_from_tree(
+    source_buffer,
+    syntax_tree,
     source_row,
     source_column
   )
-  local labels = {}
-  while enclosing_node do
-    if structural_node_types[enclosing_node:type()] then
-      local context_label = structural_node_label(source_buffer, enclosing_node)
-      if context_label ~= '' then
-        table.insert(labels, 1, context_label)
-      end
-    end
-    enclosing_node = enclosing_node:parent()
-  end
-  return labels
+  return structure and vim.split(structure.label, ' › ', { plain = true }) or {}
 end
 
 function M.enclosing_structure(source_buffer, source_row, source_column)
@@ -370,32 +398,162 @@ function M.enclosing_structure(source_buffer, source_row, source_column)
     return
   end
 
-  local language_tree = parser:language_for_range(source_range)
-  local syntax_tree = language_tree:tree_for_range(source_range, { ignore_injections = true })
-  if not syntax_tree then
+  local syntax_tree = syntax_tree_for_range(parser, source_range)
+  return structural_context_from_tree(source_buffer, syntax_tree, source_row, source_column)
+end
+
+local function declaration_leaf_name(structure)
+  local label = structure and structure.label or ''
+  return vim.trim(label:match('([^›]+)$') or '')
+end
+
+-- Reuse the buffer's existing parser (the displayed buffer is already highlighted)
+-- and find the structural declaration carrying the structure's leaf name. Prefer
+-- the candidate closest to the structure's original first line.
+local function match_declaration_line_with_parser(source_buffer, structure)
+  local leaf_name = declaration_leaf_name(structure)
+  if leaf_name == '' then
+    return nil
+  end
+  local parser
+  local parser_available = pcall(function()
+    parser = vim.treesitter.get_parser(source_buffer)
+  end)
+  if not parser_available or not parser then
+    return nil
+  end
+  local hint_line = structure.first_line or 1
+  local best_line
+  local best_distance
+  local matched = pcall(function()
+    parser:parse()
+    for _, syntax_tree in ipairs(parser:trees()) do
+      local pending_nodes = { syntax_tree:root() }
+      while #pending_nodes > 0 do
+        local node = table.remove(pending_nodes)
+        local node_type_matches = structure.node_type and node:type() == structure.node_type
+          or (not structure.node_type and structural_node_types[node:type()])
+        if node_type_matches
+            and structural_node_label(source_buffer, node) == leaf_name then
+          local node_line = node:range() + 1
+          local distance = math.abs(node_line - hint_line)
+          if not best_distance
+              or distance < best_distance
+              or (distance == best_distance and node_line < best_line) then
+            best_distance = distance
+            best_line = node_line
+          end
+        end
+        for child_node in node:iter_children() do
+          pending_nodes[#pending_nodes + 1] = child_node
+        end
+      end
+    end
+  end)
+  if not matched then
+    return nil
+  end
+  return best_line
+end
+
+-- Light fallback for buffers without a parser: a word-boundary text search for the
+-- declaration's leaf name, again preferring the hit closest to the original line.
+local function match_declaration_line_by_text(source_buffer, structure)
+  local leaf_name = declaration_leaf_name(structure)
+  if leaf_name == '' then
+    return nil
+  end
+  local hint_line = structure.first_line or 1
+  local needle = vim.pesc(leaf_name)
+  if leaf_name:match('^[%w_]') then
+    needle = '%f[%w_]' .. needle
+  end
+  if leaf_name:match('[%w_]$') then
+    needle = needle .. '%f[^%w_]'
+  end
+  local best_line
+  local best_distance
+  for line_index, line_text in
+    ipairs(vim.api.nvim_buf_get_lines(source_buffer, 0, -1, false)) do
+    if line_text:find(needle) then
+      local distance = math.abs(line_index - hint_line)
+      if not best_distance
+          or distance < best_distance
+          or (distance == best_distance and line_index < best_line) then
+        best_distance = distance
+        best_line = line_index
+      end
+    end
+  end
+  return best_line
+end
+
+---Locate a previously resolved structure inside another revision of its file.
+---@param source_buffer integer
+---@param structure table|nil # { first_line, label, node_type? }
+---@return integer|nil # 1-indexed declaration line
+function M.match_declaration_line(source_buffer, structure)
+  if not source_buffer
+      or not vim.api.nvim_buf_is_valid(source_buffer)
+      or not structure then
+    return nil
+  end
+  return match_declaration_line_with_parser(source_buffer, structure)
+    or match_declaration_line_by_text(source_buffer, structure)
+end
+
+function M.enclosing_structure_async(source_buffer, source_row, source_column, callback)
+  local source_range = { source_row, source_column, source_row, source_column + 1 }
+  local callback_scheduled = false
+  local function schedule_result(resolved_structure, resolution_error)
+    if callback_scheduled then
+      return
+    end
+    callback_scheduled = true
+    vim.schedule(function()
+      callback(resolved_structure, resolution_error)
+    end)
+  end
+  local parser
+  local parser_available = pcall(function()
+    parser = vim.treesitter.get_parser(source_buffer)
+  end)
+  if not parser_available or not parser then
+    schedule_result(nil, 'parser unavailable')
     return
   end
 
-  local syntax_root = syntax_tree:root()
-  local enclosing_node = syntax_root:named_descendant_for_range(
-    source_row,
-    source_column,
-    source_row,
-    source_column
-  )
-  while enclosing_node do
-    if structural_node_types[enclosing_node:type()] then
-      local start_row, _, end_row, end_column = enclosing_node:range()
-      local final_line = end_row + (end_column == 0 and 0 or 1)
-      local labels = M.structural_context_labels(source_buffer, source_row, source_column)
-      return {
-        first_line = start_row + 1,
-        last_line = math.max(start_row + 1, final_line),
-        label = table.concat(labels, ' › '),
-        node_type = enclosing_node:type(),
-      }
-    end
-    enclosing_node = enclosing_node:parent()
+  local parse_failure
+  local parse_started = xpcall(function()
+    parser:parse(nil, function(async_error)
+      if async_error then
+        schedule_result(nil, async_error)
+        return
+      end
+      local resolved_structure
+      local structure_failure
+      local structure_resolved = xpcall(function()
+        local syntax_tree = syntax_tree_for_range(parser, source_range)
+        resolved_structure = structural_context_from_tree(
+          source_buffer,
+          syntax_tree,
+          source_row,
+          source_column
+        )
+      end, function(error_message)
+        structure_failure = tostring(error_message)
+      end)
+      if not structure_resolved then
+        schedule_result(nil, structure_failure)
+        return
+      end
+      schedule_result(resolved_structure)
+    end)
+  end, function(error_message)
+    parse_failure = tostring(error_message)
+  end)
+  if not parse_started then
+    schedule_result(nil, parse_failure)
   end
 end
 

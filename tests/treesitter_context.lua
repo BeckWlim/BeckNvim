@@ -118,6 +118,27 @@ assert(
   enclosing_structure.node_type == 'function_definition',
   'enclosing structure selected a block instead of the nearest symbol'
 )
+local async_structure
+local async_structure_error
+treesitter_context.enclosing_structure_async(
+  navigation_buffer,
+  4,
+  16,
+  function(resolved_structure, resolution_error)
+    async_structure = resolved_structure
+    async_structure_error = resolution_error
+  end
+)
+assert(vim.wait(500, function()
+  return async_structure ~= nil or async_structure_error ~= nil
+end, 5), 'Cooperative enclosing-structure resolution did not complete')
+assert(
+  async_structure_error == nil
+    and async_structure
+    and async_structure.label == 'Service › run'
+    and async_structure.first_line == 2,
+  'Cooperative enclosing-structure resolution changed the selected symbol'
+)
 treesitter_context.go_to_nearest_context()
 assert(vim.api.nvim_win_get_cursor(0)[1] == 4, 'nearest context did not jump to with')
 treesitter_context.go_to_nearest_context()
@@ -168,3 +189,78 @@ assert(
 )
 package.loaded['treesitter-context'] = original_context_plugin
 package.loaded['treesitter-context.context'] = original_context_provider
+
+-- Declaration matching reuses the buffer parser when available and otherwise
+-- falls back to a light word-boundary text scan.
+local declaration_buffer = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(declaration_buffer, 0, -1, false, {
+  'local helper = 1',
+  '',
+  'local function changed_scope()',
+  '  return helper',
+  'end',
+  '',
+  'local function changed_scope_duplicate()',
+  '  return helper',
+  'end',
+  '',
+  'local function changed_scope()',
+  '  return helper + 1',
+  'end',
+})
+vim.bo[declaration_buffer].filetype = 'lua'
+assert(
+  treesitter_context.match_declaration_line(declaration_buffer, {
+    first_line = 7,
+    label = 'changed_scope',
+    node_type = 'function_declaration',
+  }) == 3,
+  'Parser declaration match did not prefer the nearest exact declaration'
+)
+assert(
+  treesitter_context.match_declaration_line(declaration_buffer, {
+    first_line = 12,
+    label = 'changed_scope',
+    node_type = 'function_declaration',
+  }) == 11,
+  'Parser declaration match did not follow the hint toward the later declaration'
+)
+assert(
+  treesitter_context.match_declaration_line(declaration_buffer, {
+    first_line = 1,
+    label = 'changed_scope_duplicate',
+    node_type = 'function_declaration',
+  }) == 7,
+  'Parser declaration match confused a name prefix with the full declaration'
+)
+
+local plain_buffer = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(plain_buffer, 0, -1, false, {
+  'int changed_scope_marker(int x) {',
+  '  return x;',
+  '}',
+  'int changed_scope(int x);',
+  'int changed_scope(int x) {',
+  '  return x + 1;',
+  '}',
+})
+assert(
+  treesitter_context.match_declaration_line(plain_buffer, {
+    first_line = 6,
+    label = 'changed_scope',
+  }) == 5,
+  'Text declaration match did not honor word boundaries and the hint distance'
+)
+assert(
+  treesitter_context.match_declaration_line(plain_buffer, {
+    first_line = 1,
+    label = 'absent_symbol',
+  }) == nil,
+  'Text declaration match invented a location for an absent symbol'
+)
+assert(
+  treesitter_context.match_declaration_line(plain_buffer, nil) == nil,
+  'Declaration matching accepted a missing structure'
+)
+vim.api.nvim_buf_delete(declaration_buffer, { force = true })
+vim.api.nvim_buf_delete(plain_buffer, { force = true })

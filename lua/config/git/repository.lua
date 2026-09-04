@@ -1,6 +1,18 @@
 local M = {}
+local footer_settings = require('config.git.settings').footer()
 
 M.max_history_entries = 50
+M.footer_list_batch_entries = footer_settings.list_batch_entries
+M.footer_list_max_entries = footer_settings.list_max_entries
+M.footer_list_margin_entries = footer_settings.list_margin_entries
+M.footer_preview_headroom_entries = footer_settings.preview_headroom_entries
+M.footer_detail_batch_entries = footer_settings.detail_batch_entries
+M.footer_detail_worker_count = footer_settings.detail_worker_count
+M.footer_request_timeout_ms = footer_settings.request_timeout_ms
+-- Diffview's own log defaults cap every file-history walk at 256 commits
+-- (`-n256`); an "unbounded" mount must still pass an explicit ceiling or old
+-- commits silently fall out of the list.
+M.unbounded_history_entries = 100000
 M.max_branch_entries = 100
 
 local commit_search_format = table.concat({
@@ -29,6 +41,18 @@ local preview_format = table.concat({
   '%h',
   '%ad',
   '%an',
+  '%s',
+}, '%x1f')
+
+local history_row_format = table.concat({
+  '%H',
+  '%P',
+  '%an',
+  '%at',
+  '%ai',
+  '%ar',
+  '%D',
+  '%gd',
   '%s',
 }, '%x1f')
 
@@ -67,6 +91,28 @@ function M.commands.branches()
   }
 end
 
+function M.commands.branches_pointing_at(commit_hash)
+  return {
+    'git',
+    'for-each-ref',
+    '--sort=refname',
+    '--format=' .. branch_format,
+    '--points-at=' .. commit_hash,
+    'refs/heads',
+    'refs/remotes',
+  }
+end
+
+function M.commands.remote_urls()
+  return {
+    'git',
+    'config',
+    '--null',
+    '--get-regexp',
+    '^remote\\..*\\.url$',
+  }
+end
+
 function M.parse_branches(output)
   local branches = {}
   for _, output_line in ipairs(M.output_lines(output)) do
@@ -94,8 +140,28 @@ function M.parse_branches(output)
   return branches
 end
 
+function M.match_detached_tip_branch(branches, detached_commit)
+  local remote_match
+  for _, branch in ipairs(branches) do
+    if branch.tip_commit == detached_commit then
+      if not branch.is_remote then
+        return branch
+      end
+      remote_match = remote_match or branch
+    end
+  end
+  return remote_match
+end
+
 function M.commands.resolve_commit(commit_id)
   return { 'git', 'rev-parse', '--verify', '--end-of-options', commit_id .. '^{commit}' }
+end
+
+function M.parse_resolved_commit(output)
+  local resolved_hash = M.output_lines(output)[1]
+  if resolved_hash and resolved_hash:match('^[0-9a-fA-F]+$') then
+    return resolved_hash
+  end
 end
 
 function M.commands.head_state()
@@ -147,6 +213,211 @@ end
 
 function M.commands.commit_is_ancestor(commit_hash, refname)
   return { 'git', 'merge-base', '--is-ancestor', commit_hash, refname }
+end
+
+function M.commands.commit_position(commit_hash, refname)
+  return {
+    'git',
+    'rev-list',
+    '--count',
+    commit_hash .. '..' .. refname,
+  }
+end
+
+function M.parse_count(output)
+  return tonumber(M.output_lines(output)[1])
+end
+
+function M.commands.history_rows(history_options, skip_count, row_count)
+  local selected_options = history_options or {}
+  local history_location = selected_options.location or {}
+  local command = {
+    'git',
+    '--no-pager',
+    'log',
+    '--topo-order',
+    '--no-patch',
+    '--max-count=' .. row_count,
+    '--skip=' .. skip_count,
+    '--format=%x1e' .. history_row_format,
+  }
+  local history_ref = selected_options.history_ref
+  local revision = selected_options.revision
+  command[#command + 1] = history_ref or (revision and (revision .. '^!')) or 'HEAD'
+  if selected_options.kind == 'symbol'
+      and selected_options.range
+      and history_location.relative_path then
+    command[#command + 1] = ('-L%d,%d:%s'):format(
+      selected_options.range[1],
+      selected_options.range[2],
+      history_location.relative_path
+    )
+  elseif selected_options.kind == 'file' and history_location.relative_path then
+    table.insert(command, 6, '--follow')
+    command[#command + 1] = '--'
+    command[#command + 1] = history_location.relative_path
+  end
+  return command
+end
+
+function M.commands.history_detail_rows(commit_hashes, output_kind)
+  local command = {
+    'git',
+    '--no-pager',
+    '-c',
+    'core.quotePath=false',
+    'show',
+    '--format=%x1e%H',
+    '--first-parent',
+    '-m',
+    '--root',
+    output_kind == 'numstat' and '--numstat' or '--name-status',
+  }
+  for _, commit_hash in ipairs(commit_hashes or {}) do
+    command[#command + 1] = commit_hash
+  end
+  return command
+end
+
+local function parse_detail_sections(output)
+  local sections = {}
+  for raw_section in (output or ''):gmatch(
+      preview_record_separator .. '([^' .. preview_record_separator .. ']*)'
+    ) do
+    local section_lines = M.output_lines(raw_section)
+    local commit_hash = vim.trim(section_lines[1] or '')
+    if commit_hash:match('^[0-9a-fA-F]+$') then
+      table.remove(section_lines, 1)
+      while section_lines[1] == '' do
+        table.remove(section_lines, 1)
+      end
+      sections[commit_hash] = section_lines
+    end
+  end
+  return sections
+end
+
+function M.parse_history_details(name_status_output, numstat_output)
+  local name_sections = parse_detail_sections(name_status_output)
+  local numstat_sections = parse_detail_sections(numstat_output)
+  local details_by_hash = {}
+  for commit_hash, name_lines in pairs(name_sections) do
+    local numstat_lines = numstat_sections[commit_hash]
+    if numstat_lines then
+      local detail_files = {}
+      for line_index, name_line in ipairs(name_lines) do
+        local name_fields = vim.split(name_line, '\t', { plain = true })
+        local status = name_fields[1]
+        local original_path = #name_fields >= 3 and name_fields[2] or nil
+        local path = #name_fields >= 3 and name_fields[3] or name_fields[2]
+        local stat_fields = vim.split(numstat_lines[line_index] or '', '\t', { plain = true })
+        if status and status ~= '' and path and path ~= '' then
+          local additions = tonumber(stat_fields[1])
+          local deletions = tonumber(stat_fields[2])
+          detail_files[#detail_files + 1] = {
+            original_path = original_path,
+            path = path,
+            stats = additions and deletions and {
+              additions = additions,
+              deletions = deletions,
+            } or nil,
+            status = status:sub(1, 1),
+          }
+        end
+      end
+      details_by_hash[commit_hash] = detail_files
+    end
+  end
+  return details_by_hash
+end
+
+function M.parse_history_rows(output)
+  local rows = {}
+  for raw_record in (output or ''):gmatch(preview_record_separator .. '([^' .. preview_record_separator .. ']*)') do
+    local normalized_record = raw_record:gsub('\r?\n$', '')
+    local fields = vim.split(normalized_record, preview_field_separator, { plain = true })
+    local commit_time = tonumber(fields[4])
+    local time_offset = (fields[5] or ''):match('([+-]%d%d%d%d)$')
+    local commit_hash = fields[1]
+    if commit_hash
+        and commit_hash:match('^[0-9a-fA-F]+$')
+        and commit_time then
+      rows[#rows + 1] = {
+        author = fields[3] or '',
+        hash = commit_hash,
+        parent_hashes = vim.split(fields[2] or '', ' ', { plain = true, trimempty = true }),
+        ref_names = fields[7] or '',
+        reflog_selector = fields[8] or '',
+        rel_date = fields[6] or '',
+        subject = table.concat(fields, preview_field_separator, 9),
+        time = commit_time,
+        time_offset = time_offset or '+0000',
+      }
+    end
+  end
+  return rows
+end
+
+function M.parse_containing_refs(output)
+  local containing_refs = {}
+  for _, output_line in ipairs(M.output_lines(output)) do
+    local is_local_ref = vim.startswith(output_line, 'refs/heads/')
+    local is_remote_ref = vim.startswith(output_line, 'refs/remotes/')
+    local is_remote_head = is_remote_ref and output_line:match('/HEAD$') ~= nil
+    if (is_local_ref or is_remote_ref) and not is_remote_head then
+      containing_refs[output_line] = true
+    end
+  end
+  return containing_refs
+end
+
+function M.prioritize_detached_branches(
+    branches,
+    detached_commit,
+    containing_refs,
+    preferred_branch_name
+)
+  local ranked_branches = {}
+  for branch_index, branch in ipairs(branches) do
+    local ranked_branch = vim.deepcopy(branch)
+    local branch_ref = ranked_branch.refname or ''
+    local branch_name = ranked_branch.short_name or branch_ref
+    local contains_detached_head = containing_refs[branch_ref] == true
+      or ranked_branch.tip_commit == detached_commit
+    local relation_rank = ranked_branch.is_remote and 6 or 5
+    if contains_detached_head then
+      ranked_branch.detached_relation = ranked_branch.tip_commit == detached_commit
+          and 'tip'
+        or 'ancestor'
+      if ranked_branch.is_remote then
+        relation_rank = ranked_branch.detached_relation == 'tip' and 3 or 4
+      else
+        relation_rank = ranked_branch.detached_relation == 'tip' and 1 or 2
+      end
+    end
+    ranked_branches[#ranked_branches + 1] = {
+      branch = ranked_branch,
+      original_index = branch_index,
+      preferred = contains_detached_head
+        and preferred_branch_name ~= nil
+        and (branch_ref == preferred_branch_name or branch_name == preferred_branch_name),
+      relation_rank = relation_rank,
+    }
+  end
+  table.sort(ranked_branches, function(left, right)
+    if left.relation_rank ~= right.relation_rank then
+      return left.relation_rank < right.relation_rank
+    end
+    if left.preferred ~= right.preferred then
+      return left.preferred
+    end
+    return left.original_index < right.original_index
+  end)
+  local prioritized_branches = {}
+  for _, ranked_entry in ipairs(ranked_branches) do
+    prioritized_branches[#prioritized_branches + 1] = ranked_entry.branch
+  end
+  return prioritized_branches
 end
 
 function M.commands.search_commits(query, history_options)
@@ -295,28 +566,6 @@ function M.parse_commit_search(output, commit_number)
     end
   end
   return commits
-end
-
-function M.parse_commit_source(output)
-  return M.parse_commit_location(output).source
-end
-
-function M.parse_commit_location(output)
-  local remote_branch_name
-  for _, output_line in ipairs(M.output_lines(output)) do
-    local local_branch_name = output_line:match('^refs/heads/(.+)$')
-    if local_branch_name then
-      return { branch_name = local_branch_name, source = 'LOCAL' }
-    end
-    local remote_candidate = output_line:match('^refs/remotes/(.+)$')
-    if not remote_branch_name and remote_candidate and not remote_candidate:match('/HEAD$') then
-      remote_branch_name = remote_candidate
-    end
-  end
-  if remote_branch_name then
-    return { branch_name = remote_branch_name, source = 'REMOTE' }
-  end
-  return { branch_name = nil, source = 'LOCAL' }
 end
 
 function M.start(command, root, callback)

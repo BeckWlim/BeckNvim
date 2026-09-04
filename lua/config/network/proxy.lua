@@ -1,6 +1,8 @@
 local M = {}
+local persistence_path
 local session_override
 local recent_proxy_addresses = {}
+local persistence_version = 1
 
 local proxy_names = {
   ALL_PROXY = 'ALL_PROXY',
@@ -18,6 +20,13 @@ local environment_candidates = {
   { canonical_name = 'https_proxy', names = { 'https_proxy', 'HTTPS_PROXY' } },
   { canonical_name = 'ALL_PROXY', names = { 'all_proxy', 'ALL_PROXY' } },
   { canonical_name = 'NO_PROXY', names = { 'no_proxy', 'NO_PROXY' } },
+}
+
+local persisted_environment_names = {
+  'http_proxy',
+  'https_proxy',
+  'ALL_PROXY',
+  'NO_PROXY',
 }
 
 local function nonempty(value)
@@ -44,6 +53,100 @@ local function proxy_label(proxy_url)
   end
   local authority = proxy_url:gsub('^%a[%w+.-]*://', ''):match('^[^/]+') or proxy_url
   return authority:gsub('^.-@', '')
+end
+
+local function default_persistence_path()
+  return vim.fs.joinpath(vim.fn.stdpath('state'), 'proxy.json')
+end
+
+local function active_persistence_path()
+  return persistence_path or default_persistence_path()
+end
+
+local function normalized_persisted_environment(raw_environment)
+  if type(raw_environment) ~= 'table'
+      or (vim.islist(raw_environment) and next(raw_environment) ~= nil) then
+    return nil, 'saved proxy environment is not an object'
+  end
+  local proxy_environment = {}
+  for _, environment_name in ipairs(persisted_environment_names) do
+    local environment_value = raw_environment[environment_name]
+    if environment_value ~= nil then
+      if type(environment_value) ~= 'string' then
+        return nil, ('saved %s value is not text'):format(environment_name)
+      end
+      if environment_name == 'NO_PROXY' then
+        if nonempty(environment_value) then
+          proxy_environment.NO_PROXY = vim.trim(environment_value)
+        end
+      else
+        local normalized_address = normalized_proxy_url(environment_value)
+        if not normalized_address
+            or not normalized_address:match('^%a[%w+.-]*://[^%s]+$') then
+          return nil, ('saved %s proxy address is invalid'):format(environment_name)
+        end
+        proxy_environment[environment_name] = normalized_address
+      end
+    end
+  end
+  return proxy_environment, nil
+end
+
+local function load_persisted_environment(state_path)
+  if not vim.uv.fs_stat(state_path) then
+    return nil, nil
+  end
+  local read_succeeded, state_lines = pcall(vim.fn.readfile, state_path)
+  if not read_succeeded then
+    return nil, ('could not read %s'):format(state_path)
+  end
+  local decode_succeeded, state_document = pcall(
+    vim.json.decode,
+    table.concat(state_lines, '\n')
+  )
+  if not decode_succeeded or type(state_document) ~= 'table' then
+    return nil, ('could not parse %s'):format(state_path)
+  end
+  if state_document.version ~= persistence_version then
+    return nil, ('unsupported proxy state version in %s'):format(state_path)
+  end
+  return normalized_persisted_environment(state_document.environment)
+end
+
+local function persist_environment(proxy_environment)
+  local state_path = active_persistence_path()
+  local state_directory = vim.fs.dirname(state_path)
+  local directory_created = vim.fn.mkdir(state_directory, 'p')
+  if directory_created == 0 and not vim.uv.fs_stat(state_directory) then
+    return ('could not create %s'):format(state_directory)
+  end
+  local serialized_environment = next(proxy_environment) == nil
+      and vim.empty_dict()
+    or proxy_environment
+  local encode_succeeded, encoded_state = pcall(vim.json.encode, {
+    environment = serialized_environment,
+    version = persistence_version,
+  })
+  if not encode_succeeded then
+    return 'could not encode proxy state'
+  end
+  local temporary_path = ('%s.tmp.%d'):format(state_path, vim.fn.getpid())
+  local write_succeeded, write_result = pcall(
+    vim.fn.writefile,
+    { encoded_state },
+    temporary_path,
+    'b'
+  )
+  if not write_succeeded or write_result ~= 0 then
+    return ('could not write %s'):format(temporary_path)
+  end
+  vim.uv.fs_chmod(temporary_path, 384)
+  local renamed, rename_error = vim.uv.fs_rename(temporary_path, state_path)
+  if not renamed then
+    vim.uv.fs_unlink(temporary_path)
+    return ('could not replace %s: %s'):format(state_path, rename_error or 'unknown error')
+  end
+  return nil
 end
 
 local function remember_proxy_address(proxy_url)
@@ -244,12 +347,28 @@ local function apply_process_proxy(proxy_environment)
   end
 end
 
-local function activate_session(proxy_environment)
+local function activate_session(proxy_environment, should_persist)
   local selected_environment = vim.deepcopy(proxy_environment)
   session_override = selected_environment
   apply_process_proxy(selected_environment)
   remember_proxy_address(M.primary_address(selected_environment))
-  return vim.deepcopy(selected_environment), proxy_label(M.primary_address(selected_environment))
+  local persistence_error = should_persist and persist_environment(selected_environment) or nil
+  return vim.deepcopy(selected_environment),
+    proxy_label(M.primary_address(selected_environment)),
+    persistence_error
+end
+
+function M.initialize_direct()
+  return activate_session({}, true)
+end
+
+function M.initialize(options)
+  local initialize_options = options or {}
+  persistence_path = initialize_options.state_path or default_persistence_path()
+  local persisted_environment, persistence_error = load_persisted_environment(persistence_path)
+  local initial_environment = persisted_environment or {}
+  local active_environment, label = activate_session(initial_environment, false)
+  return active_environment, label, persistence_error
 end
 
 function M.set_session(proxy_address, no_proxy)
@@ -259,7 +378,7 @@ function M.set_session(proxy_address, no_proxy)
     selected_no_proxy = current_proxy.NO_PROXY
   end
   local selected_proxy = M.classify(proxy_address, selected_no_proxy) or {}
-  return activate_session(selected_proxy)
+  return activate_session(selected_proxy, true)
 end
 
 function M.set_no_proxy(no_proxy)
@@ -270,7 +389,7 @@ function M.set_no_proxy(no_proxy)
   else
     updated_proxy.NO_PROXY = nil
   end
-  return activate_session(updated_proxy)
+  return activate_session(updated_proxy, true)
 end
 
 function M.reset_session_override()

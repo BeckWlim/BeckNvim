@@ -80,7 +80,7 @@ local expected_mappings = {
   '<Space>ri', '<Space>rk', '<Space>rj', '<Space>rl', '<Space>r=',
   '<Tab>', '<S-Tab>', '<Space>o', '<Space>p',
   '<Space>zz', '<Space>zc', '<Space>zo', '<Space>cc',
-  '<Space>gf', '<Space>gv', '<Space>gx',
+  '<Space>gf', '<Space>gv', '<Space>gx', 'gx',
   '<F3>', '<Space>h', '<Space>mp', '<Space>t',
   '<Space>ff', '<Space>fv', '<Space>fg', '<Space>fb', '<Space>fr',
   '<Space>bv', '<Space>fh', '<Space>fk', '<Space>fs', '<Space>fw', '<Space>ft',
@@ -100,8 +100,16 @@ for _, lhs in ipairs(expected_mappings) do
   assert(mapping.desc and mapping.desc ~= '', 'Mapping has no description: ' .. lhs)
 end
 
+local visual_gx_mapping = vim.fn.maparg('gx', 'x', false, true)
+assert(
+  type(visual_gx_mapping) == 'table'
+    and visual_gx_mapping.lhs == 'gx'
+    and visual_gx_mapping.callback,
+  'Expected visual-mode gx mapping is missing'
+)
+
 vim.fn.maparg('<Space>de', 'n', false, true).callback()
-assert(git_search_calls == 1, 'Space-de did not enter repository Git search directly')
+assert(git_search_calls == 1, 'Space-de did not open standalone repository Git search')
 
 local jump_back_mapping = vim.fn.maparg('<Space>o', 'n', false, true)
 assert(jump_back_mapping.rhs == '<C-o>', 'Space-o is not a pure jump-back mapping')
@@ -114,6 +122,7 @@ assert(
 for _, lhs in ipairs(expected_mappings) do
   vim.keymap.del('n', lhs)
 end
+vim.keymap.del('x', 'gx')
 for _, module_name in ipairs(replaced_modules) do
   package.loaded[module_name] = original_modules[module_name]
 end

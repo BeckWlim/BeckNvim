@@ -123,7 +123,14 @@ function M.branch_preview(branch, commits)
     { 8, 14, 'Type' },
     { 17, #header, 'Identifier' },
   })
-  local branch_context = branch.current and 'current branch' or 'known branch'
+  local branch_context = 'known branch'
+  if branch.detached_relation == 'tip' then
+    branch_context = 'detached HEAD is this branch tip'
+  elseif branch.detached_relation == 'ancestor' then
+    branch_context = 'branch contains detached HEAD'
+  elseif branch.current then
+    branch_context = 'current branch'
+  end
   if branch.upstream and branch.upstream ~= '' then
     branch_context = branch_context .. '  →  ' .. branch.upstream
   end
@@ -240,8 +247,13 @@ end
 
 function M.branch_record(branch, matching_commit_count)
   local branch_kind = branch.is_remote and 'REMOTE' or 'LOCAL'
-  local current_marker = branch.current and '*' or ' '
+  local current_marker = branch.detached_relation and '◆'
+    or branch.current and '*'
+    or ' '
   local upstream_text = branch.upstream ~= '' and (' → ' .. branch.upstream) or ''
+  local detached_text = branch.detached_relation == 'tip' and ' · DETACHED HEAD TIP'
+    or branch.detached_relation == 'ancestor' and ' · CONTAINS DETACHED HEAD'
+    or ''
   local match_text = matching_commit_count
       and (' · %d matching commits'):format(matching_commit_count)
     or ''
@@ -251,7 +263,7 @@ function M.branch_record(branch, matching_commit_count)
     'BRANCH',
     branch.short_name,
     branch.date,
-    branch.subject .. upstream_text .. match_text
+    branch.subject .. upstream_text .. detached_text .. match_text
   )
   return {
     branch = branch,
@@ -262,6 +274,7 @@ function M.branch_record(branch, matching_commit_count)
       branch.short_name,
       branch.upstream,
       branch.subject,
+      detached_text,
     }, ' '),
     kind = 'branch',
     level = 0,

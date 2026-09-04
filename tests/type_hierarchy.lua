@@ -192,7 +192,33 @@ assert(base_depths.Repository == 2, 'Indirect base class was not recursively res
 
 standard_hierarchy_supported = false
 vim.bo[fixture_buffer].filetype = 'python'
+local original_index_for_buffer = python_hierarchy_index.for_buffer
+local eager_index_requests = 0
+python_hierarchy_index.for_buffer = function()
+  eager_index_requests = eager_index_requests + 1
+end
+python_hierarchy_index.setup()
+vim.api.nvim_exec_autocmds('FileType', { buffer = fixture_buffer })
+python_hierarchy_index.for_buffer = original_index_for_buffer
+assert(
+  eager_index_requests == 0,
+  'Python FileType eagerly launched a whole-project hierarchy index'
+)
+local generated_python_buffer = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_name(generated_python_buffer, 'diffview://history/example.py')
+vim.bo[generated_python_buffer].filetype = 'python'
+assert(
+  not python_hierarchy_index.is_indexable_buffer(generated_python_buffer)
+    and python_hierarchy_index.is_indexable_buffer(fixture_buffer),
+  'Python project indexing accepted a generated historical revision buffer'
+)
+vim.api.nvim_buf_delete(generated_python_buffer, { force = true })
 python_hierarchy_index.reset()
+assert(
+  not python_hierarchy_index.refresh_if_indexed(fixture_root)
+    and python_hierarchy_index.status(fixture_root).status == 'idle',
+  'Python hierarchy index started project-wide work before an explicit hierarchy request'
+)
 local python_index_ready = false
 local indexed_document
 python_hierarchy_index.ensure(fixture_root, function(index_document, error_message)
@@ -232,7 +258,7 @@ assert(
   referenced_imported_base and referenced_imported_base.name == 'ImportedBase',
   'Python hierarchy index did not resolve a base-class symbol under the cursor'
 )
-python_hierarchy_index.refresh(fixture_root)
+assert(python_hierarchy_index.refresh_if_indexed(fixture_root))
 assert(
   python_hierarchy_index.status(fixture_root).status == 'refreshing',
   'Python hierarchy refresh did not preserve the ready index'

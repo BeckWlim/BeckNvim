@@ -1,4 +1,5 @@
 local repository = require('config.git.repository')
+local footer_loader = require('config.git.footer_loader')
 local panel = require('config.git.panel')
 local lifecycle = require('config.git.lifecycle')
 local events = require('config.git.events')
@@ -10,11 +11,18 @@ local state = {
   closing = false,
   configured = false,
   pending_view_closes = 0,
+  pending_history_request_cancel = nil,
   repository_root = nil,
   root_view = nil,
   settled_actions = {},
 }
 local decorate_history_footer
+local highlight_history_entry
+local clear_history_render_winbars
+local history_entry_for_file
+local finalize_history_metadata_focus
+local schedule_footer_detail_render
+local request_footer_decoration
 
 local function escaped_winbar_text(value)
   return value:gsub('%%', '%%%%')
@@ -41,6 +49,14 @@ local function active_view()
   return diffview_lib and diffview_lib.get_current_view()
 end
 
+local function cancel_pending_history_request()
+  local cancel_request = state.pending_history_request_cancel
+  state.pending_history_request_cancel = nil
+  if type(cancel_request) == 'function' then
+    cancel_request()
+  end
+end
+
 local function close_mapping()
   return {
     'n',
@@ -51,6 +67,9 @@ local function close_mapping()
 end
 
 local function history_selection_is_rendering(view)
+  if not view then
+    return false
+  end
   local history_panel = view and view.panel
   local current_item = history_panel and history_panel.cur_item
   local selected_file = current_item and current_item[2]
@@ -69,63 +88,6 @@ local function scoped_entry_is_still_selected(view, entry)
   return history_panel:get_item_at_cursor() == entry
 end
 
-local function select_scoped_entry_target(view, entry)
-  local pending_target = view and view.git_pending_scoped_target
-  local request_generation = pending_target and pending_target.generation
-  local request_is_current = view
-    and active_view() == view
-    and entry
-    and pending_target
-    and pending_target.entry == entry
-    and not entry.folded
-    and scoped_entry_is_still_selected(view, entry)
-    and (not request_generation or lifecycle.is_current(view, request_generation))
-  if not request_is_current then
-    if view then
-      view.git_pending_scoped_target = nil
-    end
-    return false
-  end
-  if history_selection_is_rendering(view) then
-    lifecycle.log(
-      view,
-      'scoped commit expansion',
-      'waiting for current diff render',
-      entry.commit and entry.commit.hash or nil,
-      'info'
-    )
-    return false
-  end
-  local target_file = entry.git_target_file
-  if not target_file or type(view.set_file) ~= 'function' then
-    view.git_pending_scoped_target = nil
-    return false
-  end
-  view.git_pending_scoped_target = nil
-  lifecycle.log(
-    view,
-    'scoped commit expansion',
-    'selecting target file',
-    target_file.path or target_file.oldpath,
-    'info'
-  )
-  view:set_file(target_file, false)
-  return true
-end
-
-local function resume_pending_scoped_target(view)
-  local pending_target = view and view.git_pending_scoped_target
-  if not pending_target then
-    return
-  end
-  vim.schedule(function()
-    if view.git_pending_scoped_target ~= pending_target then
-      return
-    end
-    select_scoped_entry_target(view, pending_target.entry)
-  end)
-end
-
 local function select_history_entry()
   local view = active_view()
   local history_panel = view and view.panel
@@ -136,39 +98,34 @@ local function select_history_entry()
       and type(history_panel.get_item_at_cursor) == 'function' then
     cursor_item = history_panel:get_item_at_cursor()
   end
-  local expanded_entry = view
-      and view.git_footer_tree
-      and cursor_item
+  local cursor_entry = cursor_item
       and cursor_item.files
-      and cursor_item.folded
       and cursor_item
-    or nil
+    or history_entry_for_file(view, cursor_item)
+  if cursor_entry and cursor_entry.git_details_loaded == false then
+    footer_loader.ensure_entry(view, cursor_entry, function(details_loaded)
+      if details_loaded
+          and active_view() == view
+          and scoped_entry_is_still_selected(view, cursor_entry) then
+        select_history_entry()
+      end
+    end)
+    return
+  end
+  local selected_file = cursor_item and not cursor_item.files and cursor_item or nil
+  if view and selected_file then
+    view.git_diff_opened = true
+    -- Only rows opened through this explicit selection may render code panes.
+    view.git_explicit_file_open = selected_file
+  end
   require('diffview.actions').select_entry()
-  vim.schedule(function()
-    if not view
-        or active_view() ~= view
-        or not view.tabpage
-        or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
-      return
-    end
-    if expanded_entry and not expanded_entry.folded then
-      view.git_pending_scoped_target = {
-        entry = expanded_entry,
-        generation = lifecycle.generation(view),
-      }
-      select_scoped_entry_target(view, expanded_entry)
-    end
-    if decorate_history_footer then
-      decorate_history_footer(view)
-    end
-  end)
 end
 
 local function history_entry_mapping(key)
   return { 'n', key, select_history_entry, { desc = 'Open selected Git history entry' } }
 end
 
-local function history_entry_for_file(view, file)
+history_entry_for_file = function(view, file)
   local history_panel = view and view.panel
   if not history_panel or not file then
     return
@@ -198,6 +155,39 @@ local function history_render_identity(view, file)
     or file and file.commit and file.commit.hash
   local file_path = file and (file.path or file.oldpath)
   return commit_hash, file_path, entry
+end
+
+local function clear_history_diff(view, selected_entry)
+  if not view then
+    return false
+  end
+  local history_panel = view.panel
+  local current_layout = view.cur_layout
+  local layout_is_valid = current_layout
+      and (
+        type(current_layout.is_valid) ~= 'function'
+        or current_layout:is_valid()
+      )
+    or false
+  if layout_is_valid and type(current_layout.detach_files) == 'function' then
+    pcall(current_layout.detach_files, current_layout)
+  end
+  if layout_is_valid and type(current_layout.open_null) == 'function' then
+    pcall(current_layout.open_null, current_layout)
+  end
+  if history_panel and type(history_panel.set_cur_item) == 'function' then
+    history_panel:set_cur_item({ selected_entry, nil })
+  elseif history_panel then
+    history_panel.cur_item = { selected_entry, nil }
+  end
+  view.cur_entry = nil
+  view.nulled = true
+  view.git_diff_opened = false
+  if clear_history_render_winbars then
+    clear_history_render_winbars(view)
+  end
+  pcall(vim.cmd, 'redraw')
+  return true
 end
 
 local function move_anchor_from_review(view, commit_hash)
@@ -292,6 +282,15 @@ local function commit_details_mapping()
   }
 end
 
+local function load_children_mapping()
+  return {
+    'n',
+    '<Space>dl',
+    M.load_history_entry_children,
+    { desc = 'Load complete file list for selected Git history commit' },
+  }
+end
+
 local function focus_next_window()
   vim.cmd('wincmd w')
 end
@@ -324,8 +323,7 @@ end
 
 function M.search()
   local view = active_view()
-  local history_panel = view and view.panel
-  if not history_panel or not view.git_repository_root then
+  if not view or not view.git_repository_root then
     return false
   end
   return require('config.git.search').open(
@@ -459,6 +457,9 @@ local function protect_view_buffers(view)
 end
 
 local function history_view_is_rendering(view)
+  if view.git_force_close then
+    return false
+  end
   local history_panel = view.panel
   if not history_panel or not history_panel.log_options then
     return false
@@ -470,12 +471,38 @@ local function history_view_is_rendering(view)
 end
 
 local function cancel_history_footer_enrichment(view)
+  local review_hydration = view and view.git_review_hydration
+  if review_hydration then
+    review_hydration.cancelled = true
+    view.git_review_hydration = nil
+  end
   local cancel_enrichment = view and view.git_cancel_footer_enrichment
   if type(cancel_enrichment) == 'function' then
     cancel_enrichment()
   elseif view then
     view.git_footer_enrichment_token = nil
     view.git_footer_enriching = false
+  end
+end
+
+local function cancel_history_head_resolution(view)
+  local cancel_resolution = view and view.git_cancel_head_resolution
+  if view then
+    view.git_cancel_head_resolution = nil
+    lifecycle.clear_activity(view, 'head')
+  end
+  if type(cancel_resolution) == 'function' then
+    pcall(cancel_resolution)
+  end
+end
+
+local function stop_history_stream(view)
+  footer_loader.detach(view)
+  local history_panel = view and view.panel
+  lifecycle.clear_activity(view, 'history')
+  lifecycle.clear_activity(view, 'enrichment')
+  if history_panel and history_panel.shutdown and type(history_panel.shutdown.send) == 'function' then
+    pcall(history_panel.shutdown.send, history_panel.shutdown)
   end
 end
 
@@ -546,11 +573,7 @@ end
 local function close_rendering_view(view, completion_callback)
   dispose_rendered_view(view, function()
     if lifecycle.get(view) then
-      if view.git_editor_alignment_pending then
-        lifecycle.mark_aligning(view, 'Diffview disposed; editor target is stable')
-      else
-        lifecycle.mark_disposed(view, 'Diffview disposed')
-      end
+      lifecycle.mark_disposed(view, 'Diffview disposed')
     end
     state.pending_view_closes = math.max(0, state.pending_view_closes - 1)
     state.closing = state.pending_view_closes > 0
@@ -578,6 +601,7 @@ function M.defer_until_settled(action_name, action_callback)
 end
 
 function M.close(completion_callback, settled_callback)
+  cancel_pending_history_request()
   local current_git_view = active_view()
   local root_view = state.root_view
   local issue_module = package.loaded['config.git.issue']
@@ -604,7 +628,15 @@ function M.close(completion_callback, settled_callback)
   panel.reset()
   local focus_view = root_view or current_git_view
   for _, closing_view in ipairs(closing_views) do
+    footer_loader.detach(closing_view)
     cancel_history_footer_enrichment(closing_view)
+    cancel_history_head_resolution(closing_view)
+    for _, retired_entry in ipairs(closing_view.git_footer_retired_entries or {}) do
+      if type(retired_entry.destroy) == 'function' then
+        retired_entry:destroy()
+      end
+    end
+    closing_view.git_footer_retired_entries = nil
   end
   local return_completed = false
   local return_settled = false
@@ -665,7 +697,9 @@ function M.return_to_previous_git_panel()
     end
     state.closing = true
     state.pending_view_closes = 1
+    footer_loader.detach(view)
     cancel_history_footer_enrichment(view)
+    cancel_history_head_resolution(view)
     lifecycle.mark_closing(view, 'returning to parent Git view')
     vim.defer_fn(function()
       close_rendering_view(view)
@@ -683,6 +717,9 @@ function M.handle_ctrl_q()
 end
 
 local function history_editor_target(view)
+  if view and view.git_diff_opened == false then
+    return nil, 'no Git diff was explicitly opened'
+  end
   if view and view.nulled then
     return nil, 'rendered AFTER commit has no working-tree line'
   end
@@ -694,54 +731,20 @@ local function history_editor_target(view)
   if not view.cur_entry.absolute_path then
     return nil, 'rendered AFTER file has no working-tree path'
   end
-  local layout = view.cur_layout
-  local cursor_window = layout and layout.b
-  if not cursor_window
-      or not cursor_window.id
-      or not vim.api.nvim_win_is_valid(cursor_window.id) then
-    return nil, 'waiting for the rendered AFTER pane'
-  end
   local target_path = vim.fs.normalize(view.cur_entry.absolute_path)
   if vim.fn.filereadable(target_path) ~= 1 then
     return nil, 'rendered AFTER file is absent from the working tree'
   end
-  local cursor = vim.api.nvim_win_get_cursor(cursor_window.id)
-  local cursor_buffer = vim.api.nvim_win_get_buf(cursor_window.id)
-  local declaration
-  local structure
-  local structure_resolved = pcall(function()
-    structure = require('config.syntax.treesitter_context').enclosing_structure(
-      cursor_buffer,
-      cursor[1] - 1,
-      cursor[2]
-    )
-  end)
-  if structure_resolved and structure and structure.first_line then
-    local declaration_text = vim.api.nvim_buf_get_lines(
-      cursor_buffer,
-      structure.first_line - 1,
-      structure.first_line,
-      false
-    )[1]
-    if declaration_text and vim.trim(declaration_text) ~= '' then
-      local definition_parser = require('config.search.workspace_symbols')
-      local parsed_definition = type(definition_parser.definition) == 'function'
-          and definition_parser.definition(target_path, declaration_text)
-        or nil
-      declaration = {
-        label = structure.label,
-        node_type = structure.node_type,
-        relative_line = math.max(0, cursor[1] - structure.first_line),
-        symbol_kind = parsed_definition and parsed_definition.kind or nil,
-        symbol_name = parsed_definition and parsed_definition.name or nil,
-        text = declaration_text,
-      }
-    end
-  end
+  local layout = view.cur_layout
+  local after_window = layout and layout.b
+  local historical_cursor = after_window
+      and after_window.id
+      and vim.api.nvim_win_is_valid(after_window.id)
+      and vim.api.nvim_win_get_cursor(after_window.id)
+    or nil
   return {
-    column = cursor[2],
-    declaration = declaration,
-    line = cursor[1],
+    column = historical_cursor and historical_cursor[2] or nil,
+    line = historical_cursor and historical_cursor[1] or nil,
     path = target_path,
   }
 end
@@ -760,107 +763,6 @@ local function show_return_wait(view, detail)
     .. escaped_winbar_text(detail)
     .. ' %='
   vim.cmd('redraw')
-end
-
-local function normalized_declaration(source_line)
-  return vim.trim(source_line):gsub('%s+', ' ')
-end
-
-local function structure_at_declaration(buffer, candidate_line)
-  local candidate_source = vim.api.nvim_buf_get_lines(
-    buffer,
-    candidate_line - 1,
-    candidate_line,
-    false
-  )[1] or ''
-  local first_nonblank_byte = candidate_source:find('%S')
-  local candidate_column = first_nonblank_byte and first_nonblank_byte - 1 or 0
-  local candidate_structure
-  local structure_resolved = pcall(function()
-    candidate_structure = require('config.syntax.treesitter_context').enclosing_structure(
-      buffer,
-      candidate_line - 1,
-      candidate_column
-    )
-  end)
-  if structure_resolved
-      and candidate_structure
-      and candidate_structure.first_line == candidate_line then
-    return candidate_structure
-  end
-end
-
-local function declaration_identity_matches(buffer, candidate_line, declaration)
-  if not declaration.label or declaration.label == '' then
-    return false
-  end
-  local candidate_structure = structure_at_declaration(buffer, candidate_line)
-  return candidate_structure
-    and candidate_structure.label == declaration.label
-    and (
-      not declaration.node_type
-      or candidate_structure.node_type == declaration.node_type
-    )
-end
-
-local function unique_identity_line(buffer, candidate_lines, declaration)
-  local identified_line
-  for _, candidate_line in ipairs(candidate_lines) do
-    if declaration_identity_matches(buffer, candidate_line, declaration) then
-      if identified_line then
-        return
-      end
-      identified_line = candidate_line
-    end
-  end
-  return identified_line
-end
-
-local function matched_declaration_line(buffer, filename, declaration)
-  if not declaration or not declaration.text then
-    return
-  end
-  local expected_text = normalized_declaration(declaration.text)
-  if expected_text == '' then
-    return
-  end
-  local matching_lines = {}
-  for line_number, source_line in ipairs(vim.api.nvim_buf_get_lines(buffer, 0, -1, false)) do
-    if normalized_declaration(source_line) == expected_text then
-      matching_lines[#matching_lines + 1] = line_number
-    end
-  end
-  if #matching_lines == 1 then
-    return matching_lines[1]
-  end
-  local exact_identity_line = unique_identity_line(buffer, matching_lines, declaration)
-  if exact_identity_line then
-    return exact_identity_line
-  end
-  if not declaration.symbol_name or not declaration.symbol_kind then
-    return
-  end
-
-  local definition_parser = require('config.search.workspace_symbols')
-  if type(definition_parser.definition) ~= 'function' then
-    return
-  end
-  local symbol_lines = {}
-  for line_number, source_line in ipairs(vim.api.nvim_buf_get_lines(buffer, 0, -1, false)) do
-    local parsed_definition = definition_parser.definition(filename, source_line)
-    if parsed_definition
-        and parsed_definition.name == declaration.symbol_name
-        and parsed_definition.kind == declaration.symbol_kind then
-      symbol_lines[#symbol_lines + 1] = line_number
-      if #symbol_lines > 1 and not declaration.label then
-        return
-      end
-    end
-  end
-  if #symbol_lines == 1 then
-    return symbol_lines[1]
-  end
-  return unique_identity_line(buffer, symbol_lines, declaration)
 end
 
 local function refresh_editor_branch(editor_window)
@@ -894,156 +796,79 @@ local function prime_editor_branch(view)
     or false
 end
 
-local function rendered_editor_target_is_current(rendered_target)
-  return vim.api.nvim_tabpage_is_valid(rendered_target.tabpage)
-    and vim.api.nvim_win_is_valid(rendered_target.window)
-    and vim.api.nvim_buf_is_valid(rendered_target.buffer)
-    and vim.api.nvim_get_current_tabpage() == rendered_target.tabpage
-    and vim.api.nvim_get_current_win() == rendered_target.window
-    and vim.api.nvim_win_get_buf(rendered_target.window) == rendered_target.buffer
-end
-
-local function jump_to_rendered_editor_target(view, rendered_target)
-  if not rendered_editor_target_is_current(rendered_target) then
-    lifecycle.log(view, 'editor alignment', 'cancelled', 'editor target changed', 'warn')
-    return false
-  end
-  local target = rendered_target.target
-  local line_count = vim.api.nvim_buf_line_count(rendered_target.buffer)
-  local declaration_target_line = matched_declaration_line(
-    rendered_target.buffer,
-    target.path,
-    target.declaration
-  )
-  local declaration_relative_line = target.declaration
-      and target.declaration.relative_line
-    or 0
-  local aligned_declaration_line = declaration_target_line
-      and declaration_target_line + declaration_relative_line
-    or nil
-  local matched_structure = declaration_target_line
-      and structure_at_declaration(rendered_target.buffer, declaration_target_line)
-    or nil
-  local alignment_last_line = matched_structure
-      and matched_structure.last_line
-    or line_count
-  local target_line = aligned_declaration_line
-      and math.max(1, math.min(aligned_declaration_line, alignment_last_line, line_count))
-    or math.max(1, math.min(target.line, line_count))
-  local source_line = vim.api.nvim_buf_get_lines(
-    rendered_target.buffer,
-    target_line - 1,
-    target_line,
-    false
-  )[1] or ''
-  local target_column = math.max(0, math.min(target.column, #source_line))
-  local alignment_succeeded, alignment_error = pcall(
-    vim.api.nvim_win_call,
-    rendered_target.window,
-    function()
-      vim.api.nvim_win_set_cursor(rendered_target.window, { target_line, target_column })
-      vim.cmd('normal! zvzz')
+local function close_without_editor_target(view)
+  local branch_prepared = prime_editor_branch(view)
+  return M.close(function()
+    restore_editor_mappings(vim.api.nvim_get_current_buf())
+    if not branch_prepared then
+      refresh_editor_branch()
     end
-  )
-  if not alignment_succeeded then
-    lifecycle.log(view, 'editor alignment', 'failed', tostring(alignment_error), 'error')
-    vim.notify(('Editor cursor alignment failed: %s'):format(alignment_error), vim.log.levels.ERROR)
-    return false
-  end
-  local redraw_succeeded, redraw_error = pcall(vim.cmd, 'redraw')
-  if not redraw_succeeded then
-    lifecycle.log(view, 'editor alignment redraw', 'failed', tostring(redraw_error), 'error')
-    vim.notify(('Editor cursor redraw failed: %s'):format(redraw_error), vim.log.levels.ERROR)
-    return false
-  end
-  lifecycle.log(
-    view,
-    'editor alignment',
-    declaration_target_line and 'matched declaration' or 'used file line fallback',
-    ('line=%d column=%d'):format(target_line, target_column),
-    'info'
-  )
-  local completion_message = 'Git return: editor cursor aligned'
-  vim.notify(completion_message, vim.log.levels.INFO)
-  vim.defer_fn(function()
-    pcall(vim.api.nvim_echo, {}, false, {})
-  end, 1200)
-  return true
+    pcall(vim.cmd, 'redraw')
+  end)
 end
 
-local function prepare_history_editor_target(view, target)
+-- Git mode records only which existing working-tree file the editor should show.
+local function write_editor_return_message(target)
   if not target or vim.fn.filereadable(target.path) ~= 1 then
-    return
+    return nil
   end
-  local editing_tabpage = editing_tab_for_view(view)
-  if not editing_tabpage or not vim.api.nvim_tabpage_is_valid(editing_tabpage) then
-    return
+  local target_buffer = vim.fn.bufadd(target.path)
+  if target_buffer < 1 then
+    return nil
   end
-
-  local editor_window = vim.api.nvim_tabpage_get_win(editing_tabpage)
-  if not editor_window or not vim.api.nvim_win_is_valid(editor_window) then
-    return
-  end
-  local target_buffer
-  for _, editor_tab_window in ipairs(vim.api.nvim_tabpage_list_wins(editing_tabpage)) do
-    local editor_buffer = vim.api.nvim_win_get_buf(editor_tab_window)
-    local editor_buffer_path = vim.api.nvim_buf_get_name(editor_buffer)
-    if editor_buffer_path ~= '' and vim.fs.normalize(editor_buffer_path) == target.path then
-      editor_window = editor_tab_window
-      target_buffer = editor_buffer
-      break
-    end
-  end
-  if not target_buffer then
-    local existing_buffer = vim.fn.bufnr(target.path)
-    target_buffer = existing_buffer > 0 and existing_buffer or vim.fn.bufadd(target.path)
-  end
-  if not target_buffer or target_buffer < 1 or not vim.api.nvim_buf_is_valid(target_buffer) then
-    return
-  end
-  if not vim.api.nvim_buf_is_loaded(target_buffer) then
-    local load_succeeded = pcall(vim.fn.bufload, target_buffer)
-    if not load_succeeded or not vim.api.nvim_buf_is_loaded(target_buffer) then
-      return
-    end
-  end
-  local stage_succeeded = pcall(vim.api.nvim_win_set_buf, editor_window, target_buffer)
-  if not stage_succeeded or vim.api.nvim_win_get_buf(editor_window) ~= target_buffer then
-    return
-  end
-  local select_succeeded = pcall(
-    vim.api.nvim_tabpage_set_win,
-    editing_tabpage,
-    editor_window
-  )
-  if not select_succeeded then
-    return
-  end
-  restore_editor_mappings(target_buffer)
-  refresh_editor_branch(editor_window)
   return {
     buffer = target_buffer,
-    tabpage = editing_tabpage,
-    target = target,
-    window = editor_window,
+    path = target.path,
   }
 end
 
-local function render_history_editor_target(rendered_target)
-  if not rendered_target
-      or vim.api.nvim_get_current_tabpage() ~= rendered_target.tabpage
-      or vim.api.nvim_get_current_win() ~= rendered_target.window
-      or vim.api.nvim_win_get_buf(rendered_target.window) ~= rendered_target.buffer then
-    refresh_editor_branch()
-    return false
+local function editor_window_for_return(message)
+  local current_window = vim.api.nvim_get_current_win()
+  if vim.api.nvim_win_get_buf(current_window) == message.buffer then
+    return current_window
   end
-  restore_editor_mappings(rendered_target.buffer)
-  local render_succeeded, render_error = pcall(vim.cmd, 'redraw')
-  if not render_succeeded then
-    vim.notify(tostring(render_error), vim.log.levels.ERROR)
-    return false
+  for _, tab_window in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+    if vim.api.nvim_win_get_buf(tab_window) == message.buffer then
+      return tab_window
+    end
   end
-  return true
+  return current_window
+end
+
+local function apply_editor_return_message(view, message)
+  vim.schedule(function()
+    local applied = false
+    local apply_error
+    local apply_succeeded = xpcall(function()
+      local editor_window = editor_window_for_return(message)
+      if vim.api.nvim_win_get_buf(editor_window) ~= message.buffer then
+        vim.api.nvim_win_set_buf(editor_window, message.buffer)
+      end
+      if vim.api.nvim_get_current_win() ~= editor_window then
+        vim.api.nvim_set_current_win(editor_window)
+      end
+      restore_editor_mappings(message.buffer)
+      vim.cmd('redraw')
+      applied = true
+    end, function(execution_error)
+      apply_error = tostring(execution_error)
+    end)
+    if not apply_succeeded then
+      vim.notify(apply_error, vim.log.levels.ERROR)
+    end
+    lifecycle.log(
+      view,
+      'editor render',
+      applied and 'complete' or 'failed',
+      message.path,
+      applied and 'info' or 'error'
+    )
+    events.emit('editor_rendered', {
+      generation = lifecycle.generation(view),
+      path = message.path,
+      rendered = applied,
+    })
+  end)
 end
 
 function M.return_to_editor_line()
@@ -1051,103 +876,35 @@ function M.return_to_editor_line()
   if not M.is_active() then
     return false
   end
-  if view and lifecycle.get(view)
-      and not lifecycle.request_return(view, 'Ctrl-Q from ordinary Git history') then
-    view.git_return_requested = true
-    show_return_wait(view, 'waiting for the current Git render')
-    vim.notify('Git exit: waiting for the current Git render', vim.log.levels.INFO)
-    return false
-  end
+  local lifecycle_state = lifecycle.get(view)
+  local initial_render_pending = lifecycle_state and lifecycle_state.initializing
   cancel_history_footer_enrichment(view)
+  cancel_history_head_resolution(view)
   if view then
-    view.git_return_requested = false
-    lifecycle.log(view, 'exit target capture', 'started', 'editor restore has priority', 'info')
+    view.git_force_close = true
+    stop_history_stream(view)
   end
-  local editor_target, target_error = history_editor_target(view)
+  if initial_render_pending then
+    return close_without_editor_target(view)
+  end
+  local editor_target = history_editor_target(view)
   if not editor_target then
-    local target_pending = vim.startswith(target_error, 'waiting for')
-    if view and target_pending then
-      view.git_return_requested = true
-      show_return_wait(view, target_error)
-      lifecycle.log(view, 'exit target capture', 'waiting', target_error, 'info')
-      return false
-    end
-    local branch_prepared = prime_editor_branch(view)
-    return M.close(function()
-      restore_editor_mappings(vim.api.nvim_get_current_buf())
-      if not branch_prepared then
-        refresh_editor_branch()
-      end
-      pcall(vim.cmd, 'redraw')
-    end)
+    return close_without_editor_target(view)
   end
-  view.git_return_requested = false
-  local rendered_target = prepare_history_editor_target(view, editor_target)
-  if not rendered_target then
-    local branch_prepared = prime_editor_branch(view)
-    return M.close(function()
-      restore_editor_mappings(vim.api.nvim_get_current_buf())
-      if not branch_prepared then
-        refresh_editor_branch()
-      end
-      pcall(vim.cmd, 'redraw')
-    end)
+  local return_message = write_editor_return_message(editor_target)
+  if not return_message then
+    return close_without_editor_target(view)
   end
-  view.git_editor_alignment_pending = true
-  show_return_wait(view, 'restoring editor; cursor alignment follows render')
-  vim.notify('Git exit: restoring editor before cursor alignment', vim.log.levels.INFO)
-  local editor_render_succeeded = false
+  show_return_wait(view, 'restoring editor')
   return M.close(function()
-    editor_render_succeeded = render_history_editor_target(rendered_target)
-    lifecycle.log(
-      view,
-      'editor render',
-      editor_render_succeeded and 'complete' or 'failed',
-      rendered_target.target.path,
-      editor_render_succeeded and 'info' or 'error'
-    )
-    events.emit('editor_rendered', {
-      generation = lifecycle.generation(view),
-      path = rendered_target.target.path,
-      rendered = editor_render_succeeded,
-    })
+    restore_editor_mappings(vim.api.nvim_get_current_buf())
+    refresh_editor_branch()
+    apply_editor_return_message(view, return_message)
   end, function()
-    if rendered_editor_target_is_current(rendered_target) then
-      refresh_editor_branch(rendered_target.window)
+    if vim.api.nvim_buf_is_valid(return_message.buffer)
+        and vim.api.nvim_get_current_buf() == return_message.buffer then
+      refresh_editor_branch()
       pcall(vim.cmd, 'redrawstatus')
-      if editor_render_succeeded then
-        vim.schedule(function()
-          jump_to_rendered_editor_target(view, rendered_target)
-          view.git_editor_alignment_pending = false
-          lifecycle.mark_disposed(view, 'editor alignment callback completed')
-        end)
-      else
-        view.git_editor_alignment_pending = false
-        lifecycle.mark_disposed(view, 'editor render failed; alignment skipped')
-      end
-    else
-      view.git_editor_alignment_pending = false
-      lifecycle.mark_disposed(view, 'editor target changed before alignment')
-    end
-  end)
-end
-
-local function refresh_pending_editor_return(view)
-  if not view.git_return_requested then
-    return
-  end
-  vim.schedule(function()
-    if view.git_return_requested
-        and active_view() == view
-        and panel.level() == 'git' then
-      local editor_target, target_error = history_editor_target(view)
-      local return_status
-      if editor_target and lifecycle.is_ready(view) then
-        return_status = 'ready; press <C-q> to return'
-      else
-        return_status = target_error or 'waiting for the current Git render'
-      end
-      show_return_wait(view, return_status)
     end
   end)
 end
@@ -1205,6 +962,61 @@ local function update_history_winbars(view)
   set_history_winbar(layout.b, 'AFTER', view.git_result_source)
 end
 
+clear_history_render_winbars = function(view)
+  local current_layout = view and view.cur_layout
+  for _, side in ipairs({ 'a', 'b' }) do
+    local diff_window = current_layout and current_layout[side]
+    if diff_window
+        and diff_window.id
+        and vim.api.nvim_win_is_valid(diff_window.id) then
+      vim.wo[diff_window.id].winbar = ''
+    end
+  end
+end
+
+local function synchronize_history_syntax(view)
+  local syntax_module = require('config.syntax.treesitter')
+  local syntax_generation = lifecycle.generation(view)
+  local rendered_entry = view.cur_entry
+  vim.schedule(function()
+    if syntax_generation
+        and not lifecycle.callback_is_current(
+          view,
+          syntax_generation,
+          'syntax synchronization',
+          rendered_entry and (rendered_entry.path or rendered_entry.oldpath) or 'no file'
+        ) then
+      return
+    end
+    if not view.tabpage
+        or not vim.api.nvim_tabpage_is_valid(view.tabpage)
+        or view.cur_entry ~= rendered_entry then
+      return
+    end
+    local current_layout = view.cur_layout
+    local synchronized_buffers = {}
+    for _, side in ipairs({ 'a', 'b' }) do
+      local diff_window = current_layout and current_layout[side]
+      local file_buffer = diff_window and diff_window.file and diff_window.file.bufnr
+      local window_buffer = diff_window
+          and diff_window.id
+          and vim.api.nvim_win_is_valid(diff_window.id)
+          and vim.api.nvim_win_get_buf(diff_window.id)
+        or nil
+      local diff_buffer = file_buffer
+          and vim.api.nvim_buf_is_valid(file_buffer)
+          and file_buffer
+        or window_buffer
+      if diff_buffer
+          and vim.api.nvim_buf_is_loaded(diff_buffer)
+          and not synchronized_buffers[diff_buffer] then
+        synchronized_buffers[diff_buffer] = true
+        syntax_module.ensure_highlighting(diff_buffer)
+      end
+    end
+  end)
+end
+
 local function current_anchor_label(view)
   local checked_out_branch = view.git_checked_out_branch
   if checked_out_branch and checked_out_branch ~= '' then
@@ -1244,13 +1056,11 @@ end
 local function footer_metadata_chunks(view)
   local history_options = view.git_history_options or {}
   local source = view.git_result_source or 'LOCAL'
-  local source_highlight = source == 'REMOTE'
-      and 'GitHistoryRemoteTag'
-    or 'GitHistoryLocalTag'
+  local source_highlight = 'Normal'
   local chunks = {}
   local function add_divider()
     if #chunks > 0 then
-      chunks[#chunks + 1] = { ' │ ', 'GitHistorySectionDivider' }
+      chunks[#chunks + 1] = { ' │ ', 'Normal' }
     end
   end
   local branch_name = view.git_branch_name
@@ -1260,19 +1070,19 @@ local function footer_metadata_chunks(view)
       (' REVIEW · %s · %s '):format(source, branch_role),
       source_highlight,
     }
-    chunks[#chunks + 1] = { branch_name, 'DiffviewFilePanelTitle' }
+    chunks[#chunks + 1] = { branch_name, 'Normal' }
     local review_tip_commit = view.git_review_tip_commit
     if review_tip_commit and review_tip_commit ~= '' then
       add_divider()
-      chunks[#chunks + 1] = { ' TIP · ', 'GitHistoryReviewTag' }
-      chunks[#chunks + 1] = { review_tip_commit:sub(1, 12), 'DiffviewHash' }
+      chunks[#chunks + 1] = { ' TIP · ', 'Normal' }
+      chunks[#chunks + 1] = { review_tip_commit:sub(1, 12), 'Normal' }
     end
   else
     chunks[#chunks + 1] = { (' SOURCE · %s '):format(source), source_highlight }
   end
   add_divider()
-  chunks[#chunks + 1] = { ' SCOPE · ', 'GitHistoryScopeTag' }
-  chunks[#chunks + 1] = { scope_label(view) .. ' ', 'DiffviewFilePanelTitle' }
+  chunks[#chunks + 1] = { ' SCOPE · ', 'Normal' }
+  chunks[#chunks + 1] = { scope_label(view) .. ' ', 'Normal' }
   return chunks
 end
 
@@ -1356,6 +1166,28 @@ local function update_history_panel_winbar(view)
       or not vim.api.nvim_win_is_valid(panel_window) then
     return
   end
+  if lifecycle.phase(view) == 'failed' then
+    vim.wo[panel_window].winbar = highlighted_winbar_chunk(
+      'DiagnosticError',
+      ' GIT MODE · FAILED '
+    )
+      .. '%<'
+      .. escaped_winbar_text(lifecycle.failure_detail(view) or 'history loading stopped')
+      .. escaped_winbar_text(' · <C-q> close ')
+      .. '%='
+    return
+  end
+  local activity_labels = lifecycle.activity_labels(view)
+  if #activity_labels > 0 then
+    vim.wo[panel_window].winbar = highlighted_winbar_chunk(
+      'Normal',
+      ' GIT MODE · LOADING '
+    )
+      .. '%<'
+      .. escaped_winbar_text(table.concat(activity_labels, ' + '))
+      .. ' %='
+    return
+  end
   if view.git_return_waiting then
     local return_source = escaped_winbar_text(view.git_result_source or 'LOCAL')
     local anchor_label = anchor_and_pinned_label(view)
@@ -1382,7 +1214,7 @@ local function update_history_panel_winbar(view)
   local anchor_label = anchor_and_pinned_label(view)
   local priority_label = anchor_label or ('GIT HISTORY · %s'):format(source)
   vim.wo[panel_window].winbar = highlighted_winbar_chunk(
-    'GitHistoryCurrentTag',
+    'Normal',
     ' ' .. priority_label .. ' '
   ) .. '%='
 end
@@ -1418,6 +1250,34 @@ local function entry_component_for(history_panel, entry)
   end
 end
 
+local function restore_history_cursor(history_panel, entry)
+  local component_structure = entry_component_for(history_panel, entry)
+  local entry_component = component_structure and component_structure.comp
+  local panel_window = history_panel and history_panel.winid
+  if not entry_component
+      or not panel_window
+      or not vim.api.nvim_win_is_valid(panel_window) then
+    return false
+  end
+  return pcall(vim.api.nvim_win_set_cursor, panel_window, {
+    entry_component.lstart + 1,
+    0,
+  })
+end
+
+local function restore_history_selection(view, fallback_entry)
+  local history_panel = view and view.panel
+  local current_item = history_panel and history_panel.cur_item
+  local selected_file = current_item and current_item[2]
+  if view and view.git_diff_opened
+      and selected_file
+      and type(history_panel.highlight_item) == 'function' then
+    history_panel:highlight_item(selected_file)
+    return true
+  end
+  return restore_history_cursor(history_panel, fallback_entry)
+end
+
 local function target_file_index(entry)
   for file_index, file in ipairs(entry.files or {}) do
     if file == entry.git_target_file then
@@ -1437,17 +1297,36 @@ decorate_history_footer = function(view)
   vim.api.nvim_buf_clear_namespace(panel_buffer, footer_annotation_namespace, 0, -1)
   local segments = {}
   local active_branch_label
+  local fallback_branch_started = false
   for entry_index, entry in ipairs(history_panel.entries or {}) do
     local component_structure = entry_component_for(history_panel, entry)
     local commit_component = component_structure and component_structure.commit
       and component_structure.commit.comp
-    local reference_branches = branch_names_from_references(
-      entry.commit and entry.commit.ref_names
-    )
-    if #reference_branches > 0 then
+    if entry.git_independent_preview
+        and commit_component
+        and commit_component.lstart >= 0 then
+      vim.api.nvim_buf_set_extmark(
+        panel_buffer,
+        footer_annotation_namespace,
+        commit_component.lstart,
+        0,
+        {
+          virt_lines = {
+            { { '── PREVIEW · OUTSIDE CURRENT BRANCH ', 'Normal' } },
+          },
+          virt_lines_above = true,
+        }
+      )
+    end
+    local reference_branches = entry.git_independent_preview and {}
+      or branch_names_from_references(entry.commit and entry.commit.ref_names)
+    if entry.git_independent_preview then
+      -- This row is deliberately outside the mounted branch walk.
+    elseif #reference_branches > 0 then
       active_branch_label = table.concat(reference_branches, ' · ')
-    elseif entry_index == 1 and view.git_branch_name then
+    elseif not active_branch_label and view.git_branch_name then
       active_branch_label = view.git_branch_name
+      fallback_branch_started = true
     end
     entry.git_branch_segment = active_branch_label
     if commit_component and commit_component.lstart >= 0 and #reference_branches > 0 then
@@ -1455,15 +1334,16 @@ decorate_history_footer = function(view)
       segments[#segments + 1] = { label = active_branch_label, row = commit_row }
       vim.api.nvim_buf_set_extmark(panel_buffer, footer_annotation_namespace, commit_row, 0, {
         virt_lines = {
-          { { ('── BRANCH · %s '):format(active_branch_label), 'DiffviewReference' } },
+          { { ('── BRANCH · %s '):format(active_branch_label), 'Normal' } },
         },
         virt_lines_above = true,
       })
     elseif commit_component
         and commit_component.lstart >= 0
-        and entry_index == 1
+        and (entry_index == 1 or fallback_branch_started)
         and active_branch_label then
       segments[#segments + 1] = { label = active_branch_label, row = commit_component.lstart }
+      fallback_branch_started = false
     end
 
     local scoped_file_index = target_file_index(entry)
@@ -1491,14 +1371,13 @@ decorate_history_footer = function(view)
       local target_mark_options = {
         priority = 120,
         virt_text = {
-          { (' MATCH · %s '):format((view.git_history_kind or 'file'):upper()), 'DiffviewReference' },
+          { (' MATCH · %s '):format((view.git_history_kind or 'file'):upper()), 'Normal' },
         },
         virt_text_pos = 'right_align',
       }
       if basename_start then
         target_mark_options.end_col = basename_column + #target_basename
         target_mark_options.end_row = target_row
-        target_mark_options.hl_group = 'DiffviewReference'
       end
       vim.api.nvim_buf_set_extmark(
         panel_buffer,
@@ -1518,6 +1397,29 @@ end
 
 function M.decorate_history_footer(view)
   return decorate_history_footer(view)
+end
+
+request_footer_decoration = function(view)
+  if not view or view.git_footer_render_pending then
+    return false
+  end
+  local render_token = { generation = lifecycle.generation(view) }
+  view.git_footer_render_pending = render_token
+  vim.schedule(function()
+    if view.git_footer_render_pending ~= render_token then
+      return
+    end
+    view.git_footer_render_pending = nil
+    if render_token.generation
+        and not lifecycle.is_current(view, render_token.generation) then
+      return
+    end
+    if view.tabpage and not vim.api.nvim_tabpage_is_valid(view.tabpage) then
+      return
+    end
+    decorate_history_footer(view)
+  end)
+  return true
 end
 
 local function mark_detached_head_entry(view)
@@ -1550,6 +1452,18 @@ local function mark_detached_head_entry(view)
   return false
 end
 
+local function prepare_scoped_footer_entries(view, entries)
+  if not view.git_footer_tree then
+    return
+  end
+  for _, entry in ipairs(entries) do
+    entry.single_file = false
+    entry.git_target_file = entry.files and entry.files[1]
+    entry.git_files_enriched = false
+    entry.git_files_enriching = false
+  end
+end
+
 function M.adapt_history_footer(view)
   local history_panel = view and view.panel
   if not view
@@ -1573,7 +1487,7 @@ function M.adapt_history_footer(view)
     end
   end
   update_history_panel_winbar(view)
-  decorate_history_footer(view)
+  request_footer_decoration(view)
   return footer_changed
 end
 
@@ -1665,89 +1579,242 @@ local complete_history_readiness
 local finalize_history_file_render
 local finish_history_render
 
+local function install_footer_enrichment_cancellation(view)
+  if view.git_cancel_footer_enrichment then
+    return
+  end
+  view.git_cancel_footer_enrichment = function()
+    local entry_tokens = view.git_footer_entry_tokens or {}
+    view.git_footer_entry_tokens = {}
+    view.git_cancel_footer_enrichment = nil
+    view.git_footer_enriching = false
+    for _, entry_token in pairs(entry_tokens) do
+      entry_token.cancelled = true
+      entry_token.entry.git_files_enriching = false
+    end
+  end
+end
+
+function M.enrich_history_footer_entry(view, entry, completion_callback)
+  if not view or not entry or entry.git_files_enriched or entry.git_files_enriching then
+    return false
+  end
+  local seed_file = entry.files and entry.files[1]
+  local revisions = seed_file and seed_file.revs
+  if not seed_file or not revisions or not revisions.a or not revisions.b then
+    entry.git_files_enriched = true
+    entry.git_target_file = seed_file
+    return false
+  end
+  local utilities_loaded, vcs_utils = pcall(require, 'diffview.vcs.utils')
+  if not utilities_loaded or type(vcs_utils.diff_file_list) ~= 'function' then
+    entry.git_files_enriched = true
+    entry.git_target_file = seed_file
+    return false
+  end
+
+  local entry_token = {
+    cancelled = false,
+    entry = entry,
+    generation = lifecycle.generation(view),
+  }
+  view.git_footer_entry_tokens = view.git_footer_entry_tokens or {}
+  view.git_footer_entry_tokens[entry] = entry_token
+  entry.git_files_enriching = true
+  install_footer_enrichment_cancellation(view)
+
+  local fallback_path = view.git_history_options
+    and view.git_history_options.location
+    and view.git_history_options.location.relative_path
+  local scoped_paths = target_paths(seed_file, fallback_path)
+  local layout_options = history_layout_options(view)
+  vcs_utils.diff_file_list(
+    view.adapter,
+    revisions.a,
+    revisions.b,
+    {},
+    { show_untracked = false },
+    layout_options,
+    function(errors, file_dictionary)
+      vim.schedule(function()
+        local entry_tokens = view.git_footer_entry_tokens or {}
+        local callback_is_current = not entry_token.cancelled
+          and entry_tokens[entry] == entry_token
+          and view.tabpage
+          and vim.api.nvim_tabpage_is_valid(view.tabpage)
+          and (
+            entry_token.generation == nil
+            or lifecycle.is_current(view, entry_token.generation)
+          )
+        local loaded_files = file_dictionary and file_dictionary.working or {}
+        if not callback_is_current then
+          destroy_history_files(loaded_files)
+          if completion_callback then
+            completion_callback(view, entry)
+          end
+          return
+        end
+
+        entry_tokens[entry] = nil
+        entry.git_files_enriching = false
+        entry.git_files_enriched = true
+        if not next(entry_tokens) then
+          view.git_cancel_footer_enrichment = nil
+        end
+        local obsolete_files = {}
+        if not errors and #loaded_files > 0 then
+          local _, replaced_files = replace_entry_files(entry, loaded_files, scoped_paths)
+          obsolete_files = replaced_files
+        else
+          entry.git_target_file = seed_file
+          vim.notify('Could not expand the selected Git history commit', vim.log.levels.WARN)
+        end
+        local history_panel = view.panel
+        if history_panel and type(history_panel.update_components) == 'function' then
+          history_panel:update_components()
+        end
+        if history_panel and type(history_panel.render) == 'function' then
+          history_panel:render()
+        end
+        if history_panel and type(history_panel.redraw) == 'function' then
+          history_panel:redraw()
+        end
+        request_footer_decoration(view)
+        lifecycle.log(
+          view,
+          'footer entry enrichment',
+          errors and 'failed' or 'complete',
+          ('commit=%s files=%d'):format(
+            entry.commit and entry.commit.hash or 'none',
+            #loaded_files
+          ),
+          errors and 'warn' or 'info'
+        )
+        vim.defer_fn(function()
+          destroy_history_files(obsolete_files)
+        end, 1000)
+        if completion_callback then
+          completion_callback(view, entry)
+        end
+      end)
+    end
+  )
+  return true
+end
+
+-- <Space>dl: match-filtered histories ship only the traced file per commit row.
+-- This explicit action loads the cursored commit's complete file list through
+-- Diffview's parent-to-commit loader; repository history already carries it.
+function M.load_history_entry_children()
+  local view = active_view()
+  local history_panel = view and view.panel
+  if not view or not history_panel then
+    return false
+  end
+  if not view.git_footer_tree then
+    vim.notify('Repository history already lists every changed file', vim.log.levels.INFO)
+    return false
+  end
+  local cursor_item
+  if type(history_panel.is_focused) == 'function'
+      and history_panel:is_focused()
+      and type(history_panel.get_item_at_cursor) == 'function' then
+    cursor_item = history_panel:get_item_at_cursor()
+  end
+  local entry
+  if cursor_item then
+    if cursor_item.files then
+      entry = cursor_item
+    else
+      entry = history_entry_for_file(view, cursor_item)
+    end
+  end
+  entry = entry or history_panel.cur_item and history_panel.cur_item[1]
+  if not entry then
+    return false
+  end
+  if entry.git_details_loaded == false then
+    footer_loader.ensure_entry(view, entry, function(details_loaded)
+      if details_loaded and active_view() == view then
+        M.load_history_entry_children()
+      end
+    end)
+    return true
+  end
+  if entry.git_files_enriched then
+    vim.notify('Selected commit already lists every changed file', vim.log.levels.INFO)
+    return true
+  end
+  if entry.git_files_enriching then
+    return true
+  end
+  if entry.folded and type(history_panel.set_entry_fold) == 'function' then
+    pcall(history_panel.set_entry_fold, history_panel, entry, true)
+  end
+  if not M.enrich_history_footer_entry(view, entry) then
+    vim.notify("Could not load the selected commit's file list", vim.log.levels.WARN)
+    return false
+  end
+  return true
+end
+
 function M.enrich_history_footer(view)
   local history_panel = view and view.panel
   local entries = history_panel and history_panel.entries or {}
-  if not view
-      or not view.git_footer_tree
-      or not history_panel
-      or not view.adapter then
+  if not view or not view.git_footer_tree or not history_panel then
     if view then
       view.git_footer_enriching = false
     end
     return false
   end
-  mark_detached_head_entry(view)
-
-  local utilities_loaded, vcs_utils = pcall(require, 'diffview.vcs.utils')
-  if not utilities_loaded or type(vcs_utils.diff_file_list) ~= 'function' then
-    view.git_footer_enriching = false
-    return false
-  end
-
   cancel_history_footer_enrichment(view)
-  local enrichment_token = {}
-  local enrichment_generation = lifecycle.generation(view)
-  view.git_footer_enrichment_token = enrichment_token
+  mark_detached_head_entry(view)
   view.git_footer_enriching = true
   local selected_entry = history_panel.cur_item and history_panel.cur_item[1] or entries[1]
-  local fallback_path = view.git_history_options
-    and view.git_history_options.location
-    and view.git_history_options.location.relative_path
-  local layout_options = history_layout_options(view)
-  local obsolete_files = {}
-  local failed_entries = 0
-  local entry_index = 1
-  local enrichment_cancelled = false
+  prepare_scoped_footer_entries(view, entries)
 
-  local function cancel_enrichment()
-    if enrichment_cancelled then
+  local settlement_attempts = 500
+  local enrichment_generation = lifecycle.generation(view)
+  local initial_detail_finished = selected_entry == nil
+    or selected_entry.git_details_loaded ~= false
+  local initial_detail_requested = false
+  local finish_initial_footer
+  finish_initial_footer = function()
+    if enrichment_generation and not lifecycle.is_current(view, enrichment_generation) then
       return
     end
-    enrichment_cancelled = true
-    if view.git_footer_enrichment_token == enrichment_token then
-      view.git_footer_enrichment_token = nil
-      view.git_footer_enriching = false
-      view.git_cancel_footer_enrichment = nil
+    if not initial_detail_finished and selected_entry then
+      if not initial_detail_requested then
+        initial_detail_requested = true
+        footer_loader.ensure_entry(view, selected_entry, function(details_loaded)
+          initial_detail_finished = true
+          if not details_loaded then
+            lifecycle.log(
+              view,
+              'initial scoped detail',
+              'preload failed; retaining seed entry',
+              selected_entry.commit and selected_entry.commit.hash or 'unknown',
+              'warn'
+            )
+          end
+          finish_initial_footer()
+        end)
+      end
+      return
     end
-    local cancelled_files = obsolete_files
-    obsolete_files = {}
-    destroy_history_files(cancelled_files)
-  end
-
-  view.git_cancel_footer_enrichment = cancel_enrichment
-
-  local function enrichment_is_current()
-    local token_is_current = not enrichment_cancelled
-      and view.git_footer_enrichment_token == enrichment_token
-      and view.tabpage
-      and vim.api.nvim_tabpage_is_valid(view.tabpage)
-    if not token_is_current then
-      return false
-    end
-    if enrichment_generation == nil or lifecycle.is_current(view, enrichment_generation) then
-      return true
-    end
-    lifecycle.log(
-      view,
-      'callback footer enrichment',
-      'discarded stale',
-      ('entry=%d/%d'):format(math.min(entry_index, #entries), #entries),
-      'warn'
-    )
-    return false
-  end
-
-  local function finish_enrichment()
-    if not enrichment_is_current() then
+    if history_selection_is_rendering(view) then
+      settlement_attempts = settlement_attempts - 1
+      if settlement_attempts > 0 then
+        vim.defer_fn(finish_initial_footer, 20)
+      else
+        lifecycle.mark_failed(view, 'initial Diffview file warm-up did not settle')
+        finish_history_render(view, false, 'initial Diffview file warm-up did not settle')
+      end
       return
     end
     view.git_footer_enriching = false
-    view.git_cancel_footer_enrichment = nil
+    lifecycle.clear_activity(view, 'enrichment')
     history_panel.single_file = false
-    for _, entry in ipairs(entries) do
-      entry.single_file = false
-    end
     if type(history_panel.update_components) == 'function' then
       history_panel:update_components()
     end
@@ -1757,136 +1824,29 @@ function M.enrich_history_footer(view)
     if type(history_panel.redraw) == 'function' then
       history_panel:redraw()
     end
-    decorate_history_footer(view)
+    restore_history_selection(view, selected_entry)
+    request_footer_decoration(view)
     local newest_entry = entries[1]
-    local newest_file = newest_entry
-      and (newest_entry.git_target_file or (newest_entry.files and newest_entry.files[1]))
-    local newest_commit = newest_entry and newest_entry.commit and newest_entry.commit.hash
-    local newest_path = newest_file and (newest_file.path or newest_file.oldpath)
-    if newest_entry and type(history_panel.highlight_item) == 'function' then
-      history_panel:highlight_item(newest_entry)
-    elseif selected_entry and type(history_panel.highlight_item) == 'function' then
-      history_panel:highlight_item(selected_entry)
-    end
     if lifecycle.get(view) then
-      lifecycle.mark_enrichment_ready(view, newest_commit, newest_path)
+      lifecycle.mark_enrichment_ready(view)
       lifecycle.log(
         view,
         'footer redraw',
         'complete',
-        ('entries=%d failed=%d'):format(#entries, failed_entries),
-        failed_entries > 0 and 'warn' or 'info'
+        ('entries=%d lazy=true'):format(#entries),
+        'info'
       )
-      if newest_file then
-        local rendered_file = view.cur_entry
-        local rendered_commit, rendered_path = history_render_identity(view, rendered_file)
-        if rendered_commit == newest_commit and rendered_path == newest_path then
-          vim.schedule(function()
-            if lifecycle.callback_is_current(
-                view,
-                enrichment_generation,
-                'post-enrichment alignment',
-                newest_commit .. ':' .. newest_path
-              ) then
-              finalize_history_file_render(view, rendered_file, 'footer enrichment complete')
-            end
-          end)
-        elseif type(view.set_file) == 'function' then
-          lifecycle.log(
-            view,
-            'newest match render',
-            'requested',
-            ('rendered=%s:%s expected=%s:%s'):format(
-              rendered_commit or 'none',
-              rendered_path or 'none',
-              newest_commit or 'none',
-              newest_path or 'none'
-            ),
-            'info'
-          )
-          lifecycle.expect_target(view, newest_commit, newest_path, 'newest scoped match')
-          view:set_file(newest_file, false)
-        end
+      if newest_entry then
+        clear_history_diff(view, selected_entry or newest_entry)
+        lifecycle.mark_idle_ready(view, 'scoped history waiting for an explicit commit open')
+        finish_history_render(view, true, 'scoped history ready with lazy commit expansion')
       else
         lifecycle.mark_empty_ready(view, 'scoped history has no matches')
         finish_history_render(view, true, 'empty scoped history rendered')
       end
     end
-    resume_pending_scoped_target(view)
-    local retired_files = obsolete_files
-    obsolete_files = {}
-    vim.defer_fn(function()
-      destroy_history_files(retired_files)
-    end, 1000)
-    if failed_entries > 0 then
-      vim.notify(
-        ('Could not expand complete file lists for %d Git history entries'):format(
-          failed_entries
-        ),
-        vim.log.levels.WARN
-      )
-    end
   end
-
-  local enrich_next_entry
-  enrich_next_entry = function()
-    if not enrichment_is_current() then
-      return
-    end
-    local entry = entries[entry_index]
-    entry_index = entry_index + 1
-    if not entry then
-      finish_enrichment()
-      return
-    end
-    local seed_file = entry.files and entry.files[1]
-    local revisions = seed_file and seed_file.revs
-    if not revisions or not revisions.a or not revisions.b then
-      failed_entries = failed_entries + 1
-      enrich_next_entry()
-      return
-    end
-    local scoped_paths = target_paths(seed_file, fallback_path)
-    vcs_utils.diff_file_list(
-      view.adapter,
-      revisions.a,
-      revisions.b,
-      {},
-      { show_untracked = false },
-      layout_options,
-      function(errors, file_dictionary)
-        vim.schedule(function()
-          if not enrichment_is_current() then
-            local stale_files = file_dictionary and file_dictionary.working or {}
-            destroy_history_files(stale_files)
-            return
-          end
-          local full_files = file_dictionary and file_dictionary.working or {}
-          if errors or #full_files == 0 then
-            failed_entries = failed_entries + 1
-          else
-            local _, replaced_files = replace_entry_files(entry, full_files, scoped_paths)
-            vim.list_extend(obsolete_files, replaced_files)
-            lifecycle.log(
-              view,
-              'footer entry enrichment',
-              'complete',
-              ('entry=%d/%d commit=%s files=%d'):format(
-                entry_index - 1,
-                #entries,
-                entry.commit and entry.commit.hash or 'none',
-                #full_files
-              ),
-              'info'
-            )
-          end
-          enrich_next_entry()
-        end)
-      end
-    )
-  end
-
-  enrich_next_entry()
+  finish_initial_footer()
   return true
 end
 
@@ -1920,45 +1880,56 @@ local function synchronize_history_footer(view)
       return
     end
     local history_panel = view.panel
-    if history_panel and history_panel.updating then
+    if history_panel
+        and (
+          history_panel.updating
+          or history_selection_is_rendering(view)
+          or (view.git_history_options and view.git_history_options.head_resolution_pending)
+          or not footer_loader.list_is_ready(view)
+        ) then
       remaining_attempts = remaining_attempts - 1
       if remaining_attempts > 0 then
         vim.defer_fn(synchronize, 20)
       else
         lifecycle.log(view, 'history list settle', 'timed out', nil, 'error')
+        stop_history_stream(view)
+        lifecycle.mark_failed(view, 'history list did not settle')
+        update_history_panel_winbar(view)
         finish_history_render(view, false, 'history list did not settle')
       end
     else
       local entries = history_panel and history_panel.entries or {}
+      lifecycle.clear_activity(view, 'history')
+      update_history_panel_winbar(view)
       local selected_commit = view.git_history_options.selected_commit
-      if selected_commit then
-        for _, entry in ipairs(entries) do
-          if entry.commit and entry.commit.hash == selected_commit then
-            local selected_file = entry.git_target_file or (entry.files and entry.files[1])
-            local selected_path = selected_file and (selected_file.path or selected_file.oldpath)
-            lifecycle.expect_target(
-              view,
-              selected_commit,
-              selected_path,
-              'requested commit review'
-            )
-            break
-          end
-        end
-      end
       lifecycle.mark_list_ready(view, #entries)
       if #entries == 0 then
         lifecycle.mark_empty_ready(view, 'empty history rendered')
-        finish_history_render(view, true, 'empty history rendered')
+        if not selected_commit then
+          finish_history_render(view, true, 'empty history rendered')
+        end
       elseif view.git_footer_tree then
+        lifecycle.set_activity(view, 'enrichment', 'preparing matched commits')
         vim.notify(
-          ('Git history: preparing %d matching commits'):format(#entries),
+          ('Git history: found %d matching commits'):format(#entries),
           vim.log.levels.INFO
         )
         M.enrich_history_footer(view)
       else
         M.adapt_history_footer(view)
-        complete_history_readiness(view, 'history list settled')
+        local idle_entry = type(history_panel.get_log_entry_at_cursor) == 'function'
+            and history_panel:get_log_entry_at_cursor()
+          or history_panel.cur_item and history_panel.cur_item[1]
+          or entries[1]
+        if view.git_diff_opened then
+          complete_history_readiness(view, 'explicit history file rendered')
+        else
+          clear_history_diff(view, idle_entry)
+          lifecycle.mark_idle_ready(view, 'history waiting for an explicit file open')
+          if not selected_commit then
+            finish_history_render(view, true, 'history ready with empty diff panes')
+          end
+        end
       end
     end
   end
@@ -1980,72 +1951,7 @@ local function expand_scoped_footer_entry(view, file)
   if not entry.folded and type(history_panel.highlight_item) == 'function' then
     history_panel:highlight_item(file)
   end
-  decorate_history_footer(view)
-end
-
-local function is_scoped_target_file(view, file)
-  local history_options = view.git_history_options or {}
-  local location = history_options.location or {}
-  local target_path = location.relative_path
-  if not target_path or not file then
-    return false
-  end
-  return file.path == target_path or file.oldpath == target_path
-end
-
-local function changed_line(hunk, side)
-  local content_key = side == 'old' and 'old_content' or 'new_content'
-  local row_key = side == 'old' and 'old_row' or 'new_row'
-  local changed_content = hunk[content_key]
-  local first_change = changed_content and changed_content[1]
-  if first_change then
-    return hunk[row_key] + first_change[1] - 1
-  end
-  return hunk[row_key]
-end
-
-local function declaration_line(buffer, candidate_line)
-  if not buffer or not vim.api.nvim_buf_is_valid(buffer) then
-    return candidate_line
-  end
-  local line_count = vim.api.nvim_buf_line_count(buffer)
-  local bounded_line = math.max(1, math.min(candidate_line, line_count))
-  local source_line = vim.api.nvim_buf_get_lines(buffer, bounded_line - 1, bounded_line, false)[1]
-    or ''
-  local first_nonblank_byte = source_line:find('%S')
-  local source_column = first_nonblank_byte and first_nonblank_byte - 1 or 0
-  local structure
-  local structure_resolved = pcall(function()
-    structure = require('config.syntax.treesitter_context').enclosing_structure(
-      buffer,
-      bounded_line - 1,
-      source_column
-    )
-  end)
-  if structure_resolved and structure then
-    return structure.first_line
-  end
-  return bounded_line
-end
-
-local function reveal_modified_scope(window, candidate_line, focus_definition)
-  if not window
-      or not window.id
-      or not vim.api.nvim_win_is_valid(window.id)
-      or not window.file
-      or not window.file.bufnr then
-    return
-  end
-  local definition_line = declaration_line(window.file.bufnr, candidate_line)
-  local line_count = vim.api.nvim_buf_line_count(window.file.bufnr)
-  local changed_line_number = math.max(1, math.min(candidate_line, line_count))
-  vim.api.nvim_win_call(window.id, function()
-    vim.api.nvim_win_set_cursor(window.id, { definition_line, 0 })
-    vim.cmd('normal! zv')
-    local focus_line = focus_definition and definition_line or changed_line_number
-    vim.api.nvim_win_set_cursor(window.id, { focus_line, 0 })
-    vim.cmd('normal! zvzz')
-  end)
+  request_footer_decoration(view)
 end
 
 local function restore_ordinary_history_folds(layout)
@@ -2078,25 +1984,56 @@ local function restore_ordinary_history_folds(layout)
   end
 end
 
-local function reveal_changed_structure(view, file, focus_definition)
-  local panel_item = view.panel and view.panel.cur_item
-  local log_entry = panel_item and panel_item[1]
-  local traced_diff = log_entry and log_entry:get_diff(file.path)
-  local first_hunk = traced_diff and traced_diff.hunks and traced_diff.hunks[1]
-  local layout = view.cur_layout
-  if not first_hunk or not layout then
+-- Generic post-render landing for every history kind: when the opener supplied a
+-- cursor target, an explicit open of the traced file places the AFTER-pane cursor
+-- on it. The target decides its own scope; the pipeline stays kind-agnostic.
+local function apply_history_cursor_target(view, file)
+  local history_options = view.git_history_options or {}
+  local cursor_target = history_options.cursor_target
+  if not cursor_target then
     return
   end
-
-  local left_line = changed_line(first_hunk, 'old')
-  local right_line = changed_line(first_hunk, 'new')
-  if first_hunk.new_size == 0 then
-    reveal_modified_scope(layout.b, right_line, focus_definition)
-    reveal_modified_scope(layout.a, left_line, focus_definition)
-  else
-    reveal_modified_scope(layout.a, left_line, focus_definition)
-    reveal_modified_scope(layout.b, right_line, focus_definition)
+  local structure = cursor_target.structure
+  local hint_line = cursor_target.line or (structure and structure.first_line)
+  if not hint_line then
+    return
   end
+  -- Only the traced file carries the jump; other files in the same commit
+  -- render at their native position.
+  local opened_path = file and (file.path or file.oldpath)
+  if cursor_target.path and opened_path and opened_path ~= cursor_target.path then
+    return
+  end
+  local current_layout = view.cur_layout
+  local after_window = current_layout and current_layout.b
+  local window_id = after_window and after_window.id
+  if not window_id or not vim.api.nvim_win_is_valid(window_id) then
+    return
+  end
+  -- Stale-render guard: the AFTER pane must show the file being finalized.
+  -- (layout.b.file is a revision File, not the panel's FileEntry — compare paths.)
+  local after_file = after_window.file
+  local after_path = after_file and (after_file.path or after_file.oldpath)
+  if after_path and opened_path and after_path ~= opened_path then
+    return
+  end
+  local target_buffer = vim.api.nvim_win_get_buf(window_id)
+  local line_count = vim.api.nvim_buf_line_count(target_buffer)
+  if line_count == 0 then
+    return
+  end
+  local declaration_line
+  if structure then
+    local treesitter_context = require('config.syntax.treesitter_context')
+    if type(treesitter_context.match_declaration_line) == 'function' then
+      declaration_line = treesitter_context.match_declaration_line(target_buffer, structure)
+    end
+  end
+  local target_line = math.max(1, math.min(declaration_line or hint_line, line_count))
+  pcall(vim.api.nvim_win_set_cursor, window_id, { target_line, 0 })
+  pcall(vim.api.nvim_win_call, window_id, function()
+    vim.cmd('normal! zvzz')
+  end)
 end
 
 complete_history_readiness = function(view, detail)
@@ -2138,12 +2075,11 @@ finalize_history_file_render = function(view, file, reason)
     render_sequence = lifecycle.begin_render(view, commit_hash, file_path, reason)
     file.git_lifecycle_render_sequence = render_sequence
   end
-  if view.git_history_kind == 'symbol' then
+  -- Line-range (-L) history ships Diffview's patch-hunk folds; swap them for
+  -- ordinary full-file folds so the code pane behaves like a normal buffer.
+  if (view.git_history_options or {}).range then
     restore_ordinary_history_folds(view.cur_layout)
   end
-  local focus_target_symbol = view.git_history_kind == 'symbol'
-    and is_scoped_target_file(view, file)
-  reveal_changed_structure(view, file, focus_target_symbol)
   pcall(vim.cmd, 'redraw')
   if not lifecycle_state then
     finish_history_render(view, true, reason)
@@ -2159,7 +2095,42 @@ finalize_history_file_render = function(view, file, reason)
     ) then
     return false
   end
-  return complete_history_readiness(view, reason)
+  local readiness_completed = complete_history_readiness(view, reason)
+  -- Cursor landing is independent of the readiness transition: the view usually
+  -- reaches 'ready' with an empty layout, long before any explicit file open.
+  apply_history_cursor_target(view, file)
+  return readiness_completed
+end
+
+local function suppress_implicit_history_buffers(view, file)
+  local file_layout = file and file.layout
+  local revision_files = file_layout
+      and type(file_layout.files) == 'function'
+      and file_layout:files()
+    or {}
+  local suppressed_buffers = {}
+  for _, revision_file in ipairs(revision_files) do
+    suppressed_buffers[#suppressed_buffers + 1] = {
+      file = revision_file,
+      was_nulled = revision_file.nulled,
+    }
+    revision_file.nulled = true
+  end
+  view.git_implicit_suppressed_buffers = suppressed_buffers
+end
+
+local function restore_implicit_history_buffers(view)
+  local suppressed_buffers = view.git_implicit_suppressed_buffers or {}
+  view.git_implicit_suppressed_buffers = nil
+  for _, suppressed_buffer in ipairs(suppressed_buffers) do
+    local revision_file = suppressed_buffer.file
+    revision_file.nulled = suppressed_buffer.was_nulled
+    if type(revision_file.dispose_buffer) == 'function' then
+      revision_file:dispose_buffer()
+    else
+      revision_file.bufnr = nil
+    end
+  end
 end
 
 local function attach_history_behavior(view, history_kind)
@@ -2174,7 +2145,45 @@ local function attach_history_behavior(view, history_kind)
         ) then
       return
     end
+    local granted_file = view.git_explicit_file_open
+    view.git_explicit_file_open = nil
+    local explicit_file_open = granted_file ~= nil
+      and (granted_file == true or granted_file == file)
     local commit_hash, file_path = history_render_identity(view, file)
+    local lifecycle_state = lifecycle.get(view)
+    -- Diffview auto-selects a file while streaming its list (and once more from a
+    -- trailing throttled render after the list settles). History panes stay empty
+    -- until an explicit open grants a one-shot render token.
+    local implicit_file = file
+      and not explicit_file_open
+      and not view.git_diff_opened
+    if implicit_file then
+      view.git_implicit_history_file = file
+      if type(file.set_active) == 'function' then
+        file:set_active(false)
+      else
+        file.active = false
+      end
+      suppress_implicit_history_buffers(view, file)
+      if lifecycle_state and lifecycle_state.initializing then
+        local warm_up_sequence = lifecycle.begin_render(
+          view,
+          commit_hash,
+          file_path,
+          'Diffview file_open_pre'
+        )
+        if file then
+          file.git_lifecycle_render_sequence = warm_up_sequence
+        end
+      end
+      return
+    end
+    if lifecycle_state and not lifecycle_state.initializing then
+      view.git_diff_opened = true
+    end
+    if view.git_diff_opened then
+      lifecycle.expect_target(view, commit_hash, file_path, 'explicit history file open')
+    end
     local render_sequence = lifecycle.begin_render(
       view,
       commit_hash,
@@ -2195,7 +2204,58 @@ local function attach_history_behavior(view, history_kind)
         ) then
       return
     end
+    local implicit_initial_file = view.git_implicit_history_file == file
+    if implicit_initial_file then
+      view.git_implicit_history_file = nil
+      restore_implicit_history_buffers(view)
+      clear_history_render_winbars(view)
+      local implicit_state = lifecycle.get(view)
+      if implicit_state and implicit_state.initializing then
+        local implicit_commit_hash, implicit_file_path = history_render_identity(view, file)
+        local implicit_render_sequence = file and file.git_lifecycle_render_sequence
+        if implicit_render_sequence then
+          lifecycle.complete_render(
+            view,
+            implicit_render_sequence,
+            implicit_commit_hash,
+            implicit_file_path,
+            false
+          )
+        end
+        lifecycle.try_ready(view, 'waiting for the initial history list')
+      else
+        -- A spurious auto-open that arrived after initialization (Diffview's trailing
+        -- throttled stream render). Diffview's own open flow still holds a reference
+        -- to the selection, so retire it only after that flow settles.
+        local implicit_entry = history_entry_for_file(view, file)
+        local retire_generation = lifecycle.generation(view)
+        vim.schedule(function()
+          if retire_generation
+              and not lifecycle.is_current(view, retire_generation) then
+            return
+          end
+          if not view.tabpage or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
+            return
+          end
+          if view.git_diff_opened then
+            return
+          end
+          if implicit_entry then
+            clear_history_diff(view, implicit_entry)
+          end
+          lifecycle.log(
+            view,
+            'implicit file open',
+            'retired to the empty history layout',
+            file and (file.path or file.oldpath) or 'no file',
+            'info'
+          )
+        end)
+      end
+      return
+    end
     protect_view_buffers(view)
+    synchronize_history_syntax(view)
     expand_scoped_footer_entry(view, file)
     update_history_winbars(view)
     local lifecycle_state = lifecycle.get(view)
@@ -2234,13 +2294,10 @@ local function attach_history_behavior(view, history_kind)
           return
         end
         finalize_history_file_render(view, file, 'scheduled file_open_post alignment')
-        refresh_pending_editor_return(view)
       end)
     else
       finalize_history_file_render(view, file, 'file_open_post aligned')
     end
-    resume_pending_scoped_target(view)
-    refresh_pending_editor_return(view)
   end)
   view.emitter:on('post_layout', function()
     if behavior_generation
@@ -2252,25 +2309,90 @@ local function attach_history_behavior(view, history_kind)
         ) then
       return
     end
-    decorate_history_footer(view)
-    refresh_pending_editor_return(view)
+    request_footer_decoration(view)
   end)
 end
 
 local function attach_history_footer_tracking(view)
   local tracking_generation = lifecycle.generation(view)
   vim.schedule(function()
+    if tracking_generation and not lifecycle.is_current(view, tracking_generation) then
+      return
+    end
     local history_panel = view.panel
     local panel_buffer = history_panel and history_panel.bufid
     if not panel_buffer or not vim.api.nvim_buf_is_valid(panel_buffer) then
       return
     end
+    local function entry_at_cursor()
+      return type(history_panel.get_log_entry_at_cursor) == 'function'
+          and history_panel:get_log_entry_at_cursor()
+        or history_panel.cur_item and history_panel.cur_item[1]
+        or nil
+    end
+    local function remember_cursor_entry()
+      local cursor_entry = entry_at_cursor()
+      local cursor_commit = cursor_entry and cursor_entry.commit
+      if cursor_commit and cursor_commit.hash then
+        view.git_footer_cursor_hash = cursor_commit.hash
+      end
+      return cursor_entry
+    end
+    local function restore_remembered_cursor()
+      local remembered_hash = view.git_footer_cursor_hash
+      if remembered_hash then
+        for _, entry in ipairs(history_panel.entries or {}) do
+          local commit = entry.commit
+          if commit and commit.hash == remembered_hash then
+            restore_history_selection(view, entry)
+            break
+          end
+        end
+      end
+      request_footer_decoration(view)
+    end
+    local settled_token
+    local function schedule_settled_footer()
+      local pending_token = {}
+      settled_token = pending_token
+      vim.defer_fn(function()
+        if settled_token ~= pending_token
+            or (tracking_generation and not lifecycle.is_current(view, tracking_generation))
+            or not view.tabpage
+            or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
+          return
+        end
+        if history_panel.updating
+            or history_selection_is_rendering(view)
+            or not footer_loader.window_is_settled(view) then
+          schedule_settled_footer()
+          return
+        end
+        local pending_commit = view.git_pending_review_focus
+        if pending_commit then
+          for _, entry in ipairs(history_panel.entries or {}) do
+            local commit = entry.commit
+            if commit and commit.hash == pending_commit then
+              finalize_history_metadata_focus(view, entry, pending_commit)
+              return
+            end
+          end
+        end
+        restore_remembered_cursor()
+      end, 30)
+    end
+    view.git_schedule_footer_settle = schedule_settled_footer
+    remember_cursor_entry()
     vim.api.nvim_create_autocmd('CursorMoved', {
       buffer = panel_buffer,
       callback = function()
         if tracking_generation and lifecycle.is_current(view, tracking_generation) then
+          local cursor_entry = remember_cursor_entry()
           update_history_panel_winbar(view)
           update_history_footer_header(view)
+          if cursor_entry then
+            footer_loader.on_cursor(view, cursor_entry)
+          end
         end
       end,
       desc = 'Pin the active Git history branch segment',
@@ -2289,7 +2411,7 @@ local function attach_history_footer_tracking(view)
       desc = 'Refresh the pinned Git history branch line while scrolling',
       group = vim.api.nvim_create_augroup('ConfigGitHistoryFooter', { clear = false }),
     })
-    decorate_history_footer(view)
+    request_footer_decoration(view)
   end)
 end
 
@@ -2338,6 +2460,7 @@ function M.setup()
         history_entry_mapping('<2-LeftMouse>'),
         checkout_commit_mapping(),
         commit_details_mapping(),
+        load_children_mapping(),
         close_mapping(),
         next_window_mapping(),
         previous_window_mapping(),
@@ -2376,6 +2499,654 @@ function M.setup()
   })
 end
 
+local function prepare_history_search_options(history_options)
+  local search_options = vim.deepcopy(history_options)
+  search_options.head_resolution_pending = nil
+  search_options.history_ref = nil
+  search_options.open_selected_file = nil
+  search_options.parent_view = nil
+  search_options.revision = nil
+  search_options.render_ready_callback = nil
+  search_options.anchor_plan = nil
+  search_options.fallback_unbounded = nil
+  search_options.selected_commit = nil
+  search_options.source = nil
+  search_options.unbounded = nil
+  search_options.preview_commit = nil
+  search_options.independent_preview_commit = nil
+  search_options.preloaded_history_count = nil
+  search_options.preloaded_history_output = nil
+  search_options.window_ref = nil
+  search_options.window_start_offset = nil
+  return search_options
+end
+
+local function footer_entry_hash(entry)
+  return entry and entry.commit and entry.commit.hash or nil
+end
+
+local function update_footer_entry_commit(entry, row)
+  local commit = entry.commit
+  commit.author = row.author
+  commit.hash = row.hash
+  commit.ref_names = row.ref_names ~= '' and row.ref_names or nil
+  commit.reflog_selector = row.reflog_selector ~= '' and row.reflog_selector or nil
+  commit.rel_date = row.rel_date
+  commit.subject = row.subject
+  entry.git_parent_hashes = vim.deepcopy(row.parent_hashes or {})
+end
+
+local function new_footer_placeholder(view, row, path_args)
+  local GitCommit = require('diffview.vcs.adapters.git.commit').GitCommit
+  local LogEntry = require('diffview.vcs.log_entry').LogEntry
+  local commit = GitCommit({
+    author = row.author,
+    hash = row.hash,
+    ref_names = row.ref_names,
+    reflog_selector = row.reflog_selector,
+    rel_date = row.rel_date,
+    subject = row.subject,
+    time = row.time,
+    time_offset = row.time_offset,
+  })
+  local entry = LogEntry.new_null_entry(view.adapter, {
+    commit = commit,
+    path_args = vim.deepcopy(path_args),
+    single_file = false,
+  })
+  -- The null file is a navigation sentinel. Enter is intercepted until the
+  -- real entry has loaded, so the sentinel is never rendered as a child.
+  entry.nulled = false
+  entry.git_details_loaded = false
+  entry.git_details_loading = false
+  entry.git_target_buffers_warmed = false
+  entry.git_target_buffers_warming = false
+  entry.git_files_enriched = false
+  entry.git_files_enriching = false
+  entry.git_parent_hashes = vim.deepcopy(row.parent_hashes or {})
+  return entry
+end
+
+local function install_footer_rows(view, rows, direction, completion_callback)
+  local history_panel = view.panel
+  local attempts_remaining = 500
+  local function install_when_settled()
+    if not view.tabpage or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
+      completion_callback(false)
+      return
+    end
+    if history_panel.updating or history_selection_is_rendering(view) then
+      attempts_remaining = attempts_remaining - 1
+      if attempts_remaining > 0 then
+        vim.defer_fn(install_when_settled, 20)
+      else
+        completion_callback(false)
+      end
+      return
+    end
+
+    local cursor_entry = type(history_panel.get_log_entry_at_cursor) == 'function'
+        and history_panel:get_log_entry_at_cursor()
+      or nil
+    local cursor_hash = footer_entry_hash(cursor_entry)
+    local active_entry = history_panel.cur_item and history_panel.cur_item[1]
+    local existing_entries = {}
+    for _, entry in ipairs(history_panel.entries or {}) do
+      local commit_hash = footer_entry_hash(entry)
+      if commit_hash then
+        existing_entries[commit_hash] = entry
+      end
+    end
+
+    local path_args = history_panel.log_options
+        and history_panel.log_options.single_file
+        and history_panel.log_options.single_file.path_args
+      or {}
+    local installed_entries = {}
+    local retained_entries = {}
+    for _, row in ipairs(rows) do
+      local entry = existing_entries[row.hash]
+      if entry then
+        retained_entries[entry] = true
+        update_footer_entry_commit(entry, row)
+        if entry.git_details_loaded == nil then
+          -- Diffview can expose its native seed as soon as the first changed
+          -- file arrives. Reusing the object preserves selection identity, but
+          -- does not prove that the commit's complete file list has settled.
+          entry.git_details_loaded = false
+          entry.git_details_loading = false
+        end
+      else
+        entry = new_footer_placeholder(view, row, path_args)
+      end
+      entry.git_independent_preview = view.git_history_options
+          and view.git_history_options.independent_preview_commit == row.hash
+        or false
+      if direction == 'initial' and not view.git_diff_opened then
+        entry.folded = true
+      end
+      installed_entries[#installed_entries + 1] = entry
+    end
+
+    local retired_entries = view.git_footer_retired_entries or {}
+    view.git_footer_retired_entries = retired_entries
+    for _, entry in ipairs(history_panel.entries or {}) do
+      if not retained_entries[entry] then
+        if view.git_diff_opened and entry == active_entry then
+          retired_entries[#retired_entries + 1] = entry
+        elseif type(entry.destroy) == 'function' then
+          entry:destroy()
+        end
+      end
+    end
+
+    history_panel.entries = installed_entries
+    history_panel.single_file = false
+    local retained_cursor_entry = installed_entries[1]
+    for _, entry in ipairs(installed_entries) do
+      local commit_hash = footer_entry_hash(entry)
+      if commit_hash == cursor_hash then
+        retained_cursor_entry = entry
+        break
+      end
+    end
+    if not (view.git_diff_opened and retained_entries[active_entry]) then
+      history_panel.cur_item = retained_cursor_entry and { retained_cursor_entry, nil } or {}
+    end
+    prepare_scoped_footer_entries(view, installed_entries)
+    mark_detached_head_entry(view)
+    if type(history_panel.update_components) == 'function' then
+      history_panel:update_components()
+    end
+    if type(history_panel.render) == 'function' then
+      history_panel:render()
+    end
+    if type(history_panel.redraw) == 'function' then
+      history_panel:redraw()
+    end
+    restore_history_selection(view, retained_cursor_entry)
+    completion_callback(true, retained_cursor_entry)
+  end
+  install_when_settled()
+end
+
+local function footer_detail_revisions(entry)
+  local GitRev = require('diffview.vcs.adapters.git.rev').GitRev
+  local RevType = require('diffview.vcs.rev').RevType
+  local parent_hashes = entry.git_parent_hashes or {}
+  local parent_hash = parent_hashes[1] or GitRev.NULL_TREE_SHA
+  return GitRev(RevType.COMMIT, parent_hash), GitRev(RevType.COMMIT, footer_entry_hash(entry))
+end
+
+local function warm_scoped_target_buffers(view, entry, completion_callback)
+  if not view.git_footer_tree then
+    completion_callback(true)
+    return
+  end
+  local target_file = entry.git_target_file
+  local target_layout = target_file and target_file.layout
+  if not target_layout or type(target_layout.files) ~= 'function' then
+    completion_callback(true)
+    return
+  end
+  local revision_files = target_layout:files() or {}
+  local revision_index = 1
+  entry.git_target_buffers_warming = true
+  local function finish_warming()
+    entry.git_target_buffers_warming = false
+    entry.git_target_buffers_warmed = true
+    completion_callback(true)
+  end
+  local function warm_next_revision()
+    if entry.git_details_loading == false then
+      entry.git_target_buffers_warming = false
+      completion_callback(false)
+      return
+    end
+    local revision_file = revision_files[revision_index]
+    revision_index = revision_index + 1
+    if not revision_file then
+      finish_warming()
+      return
+    end
+    local validity_checked, buffer_is_valid = pcall(
+      revision_file.is_valid,
+      revision_file
+    )
+    if revision_file.nulled or (validity_checked and buffer_is_valid) then
+      warm_next_revision()
+      return
+    end
+    if type(revision_file.create_buffer) ~= 'function' then
+      warm_next_revision()
+      return
+    end
+    local creation_started = pcall(
+      revision_file.create_buffer,
+      revision_file,
+      warm_next_revision
+    )
+    if not creation_started then
+      warm_next_revision()
+    end
+  end
+  warm_next_revision()
+end
+
+local function finish_footer_detail(view, entry, loaded_files, completion_callback)
+  local fallback_path = view.git_history_options
+    and view.git_history_options.location
+    and view.git_history_options.location.relative_path
+  local scoped_paths = target_paths(nil, fallback_path)
+  local _, obsolete_files = replace_entry_files(entry, loaded_files, scoped_paths)
+  entry.nulled = false
+  entry.single_file = false
+  entry.git_files_enriched = true
+  destroy_history_files(obsolete_files)
+
+  mark_detached_head_entry(view)
+  warm_scoped_target_buffers(view, entry, function(buffers_ready)
+    entry.git_details_loaded = buffers_ready
+    completion_callback(buffers_ready)
+  end)
+end
+
+local function finish_empty_footer_detail(entry, completion_callback)
+  entry.git_details_loaded = true
+  entry.git_files_enriched = true
+  entry.nulled = true
+  completion_callback(true)
+end
+
+schedule_footer_detail_render = function(view, fallback_entry)
+  if view.git_footer_detail_render_token then
+    return false
+  end
+  local render_token = {
+    fallback_entry = fallback_entry,
+    generation = lifecycle.generation(view),
+  }
+  view.git_footer_detail_render_token = render_token
+  vim.defer_fn(function()
+    if view.git_footer_detail_render_token ~= render_token then
+      return
+    end
+    view.git_footer_detail_render_token = nil
+    if active_view() ~= view
+        or not view.tabpage
+        or not vim.api.nvim_tabpage_is_valid(view.tabpage)
+        or (render_token.generation
+          and not lifecycle.is_current(view, render_token.generation)) then
+      return
+    end
+    local history_panel = view.panel
+    if not history_panel or history_panel.updating or history_selection_is_rendering(view) then
+      schedule_footer_detail_render(view, render_token.fallback_entry)
+      return
+    end
+    if type(history_panel.update_components) == 'function' then
+      history_panel:update_components()
+    end
+    if type(history_panel.render) == 'function' then
+      history_panel:render()
+    end
+    if type(history_panel.redraw) == 'function' then
+      history_panel:redraw()
+    end
+    local retained_entry = render_token.fallback_entry
+    local remembered_hash = view.git_footer_cursor_hash
+    if remembered_hash then
+      for _, entry in ipairs(history_panel.entries or {}) do
+        local commit = entry.commit
+        if commit and commit.hash == remembered_hash then
+          retained_entry = entry
+          break
+        end
+      end
+    end
+    restore_history_selection(view, retained_entry)
+    request_footer_decoration(view)
+  end, 80)
+  return true
+end
+
+local function hydrate_footer_entry(view, entry, completion_callback)
+  local vcs_utils = require('diffview.vcs.utils')
+  local detail_token = { cancelled = false }
+  local left_revision, right_revision = footer_detail_revisions(entry)
+  local request_started = pcall(
+    vcs_utils.diff_file_list,
+    view.adapter,
+    left_revision,
+    right_revision,
+    {},
+    { show_untracked = false },
+    history_layout_options(view),
+    function(errors, file_dictionary)
+      local loaded_files = file_dictionary and file_dictionary.working or {}
+      vim.schedule(function()
+        if detail_token.cancelled
+          or active_view() ~= view
+          or not view.tabpage
+          or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
+          destroy_history_files(loaded_files)
+          return
+        end
+        if errors then
+          destroy_history_files(loaded_files)
+          completion_callback(false)
+          return
+        end
+        if #loaded_files == 0 then
+          finish_empty_footer_detail(entry, completion_callback)
+          return
+        end
+        finish_footer_detail(view, entry, loaded_files, completion_callback)
+      end)
+    end
+  )
+  if not request_started then
+    vim.schedule(function()
+      if not detail_token.cancelled then
+        completion_callback(false)
+      end
+    end)
+  end
+  return function()
+    detail_token.cancelled = true
+  end
+end
+
+local function batch_footer_files(view, entry, detail_rows)
+  local FileEntry = require('diffview.scene.file_entry').FileEntry
+  local left_revision, right_revision = footer_detail_revisions(entry)
+  local default_layout = history_layout_options(view).default_layout
+  local loaded_files = {}
+  for _, detail_row in ipairs(detail_rows) do
+    loaded_files[#loaded_files + 1] = FileEntry.with_layout(default_layout, {
+      adapter = view.adapter,
+      commit = entry.commit,
+      kind = 'working',
+      oldpath = detail_row.original_path,
+      path = detail_row.path,
+      revs = {
+        a = left_revision,
+        b = right_revision,
+      },
+      stats = detail_row.stats,
+      status = detail_row.status,
+    })
+  end
+  return loaded_files
+end
+
+local function hydrate_footer_entries(view, entries, completion_callback)
+  local commit_hashes = {}
+  for _, entry in ipairs(entries) do
+    commit_hashes[#commit_hashes + 1] = footer_entry_hash(entry)
+  end
+  local batch_token = {
+    cancelled = false,
+    process_cancellations = {},
+    fallback_cancel = nil,
+  }
+  local completed_processes = {}
+  local function finish_with_fallback()
+    local fallback_results = {}
+    local fallback_index = 1
+    local function hydrate_next_entry()
+      if batch_token.cancelled then
+        return
+      end
+      local fallback_entry = entries[fallback_index]
+      fallback_index = fallback_index + 1
+      if not fallback_entry then
+        completion_callback(fallback_results)
+        return
+      end
+      batch_token.fallback_cancel = hydrate_footer_entry(
+        view,
+        fallback_entry,
+        function(succeeded)
+          batch_token.fallback_cancel = nil
+          fallback_results[fallback_entry] = succeeded == true
+          hydrate_next_entry()
+        end
+      )
+    end
+    hydrate_next_entry()
+  end
+  local function finish_batch()
+    if batch_token.cancelled
+        or not completed_processes.name_status
+        or not completed_processes.numstat then
+      return
+    end
+    local name_status_process = completed_processes.name_status
+    local numstat_process = completed_processes.numstat
+    if name_status_process.code ~= 0 or numstat_process.code ~= 0 then
+      finish_with_fallback()
+      return
+    end
+    local details_by_hash = repository.parse_history_details(
+      name_status_process.stdout,
+      numstat_process.stdout
+    )
+    local batch_results = {}
+    local entry_index = 1
+    local function install_next_entry()
+      if batch_token.cancelled then
+        return
+      end
+      local entry = entries[entry_index]
+      entry_index = entry_index + 1
+      if not entry then
+        completion_callback(batch_results)
+        return
+      end
+      local commit_hash = footer_entry_hash(entry)
+      local detail_rows = details_by_hash[commit_hash]
+      if not detail_rows then
+        batch_token.fallback_cancel = hydrate_footer_entry(view, entry, function(succeeded)
+          batch_token.fallback_cancel = nil
+          batch_results[entry] = succeeded == true
+          install_next_entry()
+        end)
+        return
+      end
+      local loaded_files = batch_footer_files(view, entry, detail_rows)
+      if #loaded_files == 0 then
+        finish_empty_footer_detail(entry, function(succeeded)
+          batch_results[entry] = succeeded == true
+          install_next_entry()
+        end)
+        return
+      end
+      finish_footer_detail(view, entry, loaded_files, function(succeeded)
+        batch_results[entry] = succeeded == true
+        install_next_entry()
+      end)
+    end
+    install_next_entry()
+  end
+  for _, output_kind in ipairs({ 'name_status', 'numstat' }) do
+    local command_kind = output_kind == 'name_status' and 'name-status' or 'numstat'
+    local cancel_process = repository.start(
+      repository.commands.history_detail_rows(commit_hashes, command_kind),
+      view.git_repository_root,
+      function(completed_process)
+        if batch_token.cancelled then
+          return
+        end
+        completed_processes[output_kind] = completed_process
+        finish_batch()
+      end
+    )
+    batch_token.process_cancellations[#batch_token.process_cancellations + 1] = cancel_process
+  end
+  return function()
+    if batch_token.cancelled then
+      return
+    end
+    batch_token.cancelled = true
+    for _, cancel_process in ipairs(batch_token.process_cancellations) do
+      cancel_process()
+    end
+    if batch_token.fallback_cancel then
+      batch_token.fallback_cancel()
+      batch_token.fallback_cancel = nil
+    end
+  end
+end
+
+local function release_footer_entries(view, released_entries)
+  local FileEntry = require('diffview.scene.file_entry').FileEntry
+  local history_panel = view.panel
+  local cursor_entry = type(history_panel.get_log_entry_at_cursor) == 'function'
+      and history_panel:get_log_entry_at_cursor()
+    or nil
+  for _, entry in ipairs(released_entries) do
+    destroy_history_files(entry.files)
+    entry.files = { FileEntry.new_null_entry(view.adapter) }
+    entry.folded = true
+    entry.nulled = false
+    entry.single_file = false
+    entry.git_details_loaded = false
+    entry.git_details_loading = false
+    entry.git_target_buffers_warmed = false
+    entry.git_target_buffers_warming = false
+    entry.git_files_enriched = false
+    entry.git_files_enriching = false
+    entry.git_target_file = nil
+    if type(entry.update_status) == 'function' then
+      entry:update_status()
+    end
+    if type(entry.update_stats) == 'function' then
+      entry:update_stats()
+    end
+  end
+  if #released_entries > 0 then
+    history_panel:update_components()
+    history_panel:render()
+    history_panel:redraw()
+    restore_history_selection(view, cursor_entry)
+    request_footer_decoration(view)
+  end
+end
+
+local function attach_footer_loader(view, history_options)
+  local attached = footer_loader.attach(view, history_options, {
+    activity = function(active_history_view, activity_name, activity_label)
+      if activity_label then
+        lifecycle.set_activity(active_history_view, activity_name, activity_label)
+      else
+        lifecycle.clear_activity(active_history_view, activity_name)
+      end
+      update_history_panel_winbar(active_history_view)
+    end,
+    failed = function(active_history_view, request_kind, request_error)
+      lifecycle.log(
+        active_history_view,
+        request_kind,
+        'failed',
+        request_error,
+        'warn'
+      )
+      vim.notify('Could not load Git ' .. request_kind .. ': ' .. request_error, vim.log.levels.WARN)
+    end,
+    details_settled = function(active_history_view)
+      local history_panel = active_history_view.panel
+      local cursor_entry = type(history_panel.get_log_entry_at_cursor) == 'function'
+          and history_panel:get_log_entry_at_cursor()
+        or history_panel.cur_item and history_panel.cur_item[1]
+        or nil
+      schedule_footer_detail_render(active_history_view, cursor_entry)
+    end,
+    hydrate_entry = hydrate_footer_entry,
+    hydrate_entries = hydrate_footer_entries,
+    install_rows = install_footer_rows,
+    list_ready = function(active_history_view, center_entry, entry_count)
+      M.adapt_history_footer(active_history_view)
+      lifecycle.log(
+        active_history_view,
+        'commit list window',
+        'complete',
+        ('entries=%d'):format(entry_count),
+        'info'
+      )
+    end,
+    list_updated = function(active_history_view, direction, added_count, entry_count)
+      M.adapt_history_footer(active_history_view)
+      lifecycle.log(
+        active_history_view,
+        'commit list window ' .. direction,
+        'complete',
+        ('added=%d entries=%d'):format(added_count, entry_count),
+        'info'
+      )
+    end,
+    release_entries = release_footer_entries,
+  })
+  if view.git_history_options then
+    view.git_history_options.preloaded_history_output = nil
+  end
+  return attached
+end
+
+function M.set_history_activity(view, activity_name, label)
+  if not lifecycle.is_current(view, lifecycle.generation(view)) then
+    return false
+  end
+  local activity_changed = lifecycle.set_activity(view, activity_name, label)
+  if activity_changed then
+    update_history_panel_winbar(view)
+    pcall(vim.cmd, 'redraw')
+  end
+  return activity_changed
+end
+
+function M.attach_history_head_request(view, cancel_resolution)
+  if not lifecycle.is_current(view, lifecycle.generation(view)) then
+    if type(cancel_resolution) == 'function' then
+      pcall(cancel_resolution)
+    end
+    return false
+  end
+  view.git_cancel_head_resolution = cancel_resolution
+  return true
+end
+
+function M.finish_history_head_request(view)
+  if not lifecycle.is_current(view, lifecycle.generation(view)) then
+    return false
+  end
+  view.git_cancel_head_resolution = nil
+  lifecycle.clear_activity(view, 'head')
+  update_history_panel_winbar(view)
+  return true
+end
+
+function M.apply_history_context(view, options)
+  local history_options = vim.deepcopy(options or {})
+  if not M.finish_history_head_request(view) then
+    return false
+  end
+  history_options.head_resolution_pending = nil
+  history_options.render_ready_callback = nil
+  view.git_anchor_plan = vim.deepcopy(history_options.anchor_plan)
+  view.git_result_source = history_options.source
+  view.git_branch_name = history_options.branch_name
+  view.git_checked_out_branch = history_options.checked_out_branch
+  view.git_detached_head_commit = history_options.detached_head_commit
+  view.git_history_ref = history_options.history_ref
+  view.git_review_tip_commit = history_options.branch_tip_commit
+  view.git_history_options = history_options
+  view.git_search_options = prepare_history_search_options(history_options)
+  attach_footer_loader(view, history_options)
+  M.adapt_history_footer(view)
+  return true
+end
+
 function M.open_file_history(options)
   ensure_loaded()
   local history_options = options or {}
@@ -2394,11 +3165,10 @@ function M.open_file_history(options)
   local history_args = {
     '-C' .. location.root,
   }
-  if not history_options.unbounded then
-    history_args[#history_args + 1] = '--max-count=' .. repository.max_history_entries
-  end
-  if history_options.history_ref then
-    history_args[#history_args + 1] = '--range=' .. history_options.history_ref
+  history_args[#history_args + 1] = '--max-count=' .. footer_loader.initial_limit(history_options)
+  local initial_history_ref = footer_loader.initial_ref(history_options)
+  if initial_history_ref then
+    history_args[#history_args + 1] = '--range=' .. initial_history_ref
   elseif history_options.revision then
     history_args[#history_args + 1] = '--range=' .. history_options.revision .. '^!'
   end
@@ -2419,6 +3189,7 @@ function M.open_file_history(options)
   view.git_history_kind = history_options.kind
   view.git_footer_tree = history_options.kind == 'file' or history_options.kind == 'symbol'
   view.git_footer_enriching = view.git_footer_tree
+  view.git_diff_opened = false
   view.git_history_options = vim.deepcopy(history_options)
   view.git_history_options.render_ready_callback = nil
   view.git_branch_name = history_options.branch_name
@@ -2427,17 +3198,7 @@ function M.open_file_history(options)
   view.git_history_ref = history_options.history_ref
   view.git_review_tip_commit = history_options.branch_tip_commit
   view.git_render_ready_callback = history_options.render_ready_callback
-  local search_options = vim.deepcopy(history_options)
-  search_options.detached_head_commit = nil
-  search_options.history_ref = nil
-  search_options.parent_view = nil
-  search_options.revision = nil
-  search_options.render_ready_callback = nil
-  search_options.anchor_plan = nil
-  search_options.selected_commit = nil
-  search_options.source = nil
-  search_options.unbounded = nil
-  view.git_search_options = search_options
+  view.git_search_options = prepare_history_search_options(history_options)
   view.git_parent_view = history_options.parent_view
   if not history_options.parent_view then
     state.root_view = view
@@ -2447,9 +3208,16 @@ function M.open_file_history(options)
   local history_scope = history_options.kind == 'symbol' and 'symbol matches'
     or history_options.kind == 'file' and 'file commits'
     or 'repository commits'
+  lifecycle.set_activity(view, 'history', history_scope)
+  if history_options.head_resolution_pending then
+    lifecycle.set_activity(view, 'head', 'current branch')
+  end
   vim.notify(('Git history: loading %s'):format(history_scope), vim.log.levels.INFO)
   attach_history_behavior(view, history_options.kind)
   view:open()
+  attach_footer_loader(view, history_options)
+  update_history_panel_winbar(view)
+  pcall(vim.cmd, 'redraw')
   attach_history_footer_tracking(view)
   synchronize_history_footer(view)
   if history_options.parent_view then
@@ -2463,15 +3231,33 @@ function M.open_file_history(options)
   end
   if history_options.selected_commit then
     local remaining_attempts = 1500
+    local selection_generation = lifecycle.generation(view)
     local function select_when_ready()
+      if selection_generation
+          and not lifecycle.is_current(view, selection_generation) then
+        return
+      end
       if not view.tabpage or not vim.api.nvim_tabpage_is_valid(view.tabpage) then
         finish_history_render(view, false, 'replacement view closed before selection')
         return
       end
-      if M.focus_history_commit(view, history_options.selected_commit) then
+      if M.focus_history_commit(view, history_options.selected_commit, {
+          open_file = history_options.open_selected_file == true,
+        }) then
         return
       end
+      local history_panel = view.panel
       remaining_attempts = remaining_attempts - 1
+      local settled_list_lacks_commit = lifecycle.is_ready(view)
+        and footer_loader.window_is_settled(view)
+        and history_panel
+        and not history_panel.updating
+        and not history_selection_is_rendering(view)
+      if settled_list_lacks_commit then
+        -- The complete list already settled without the commit; polling a
+        -- settled list cannot produce it.
+        remaining_attempts = 0
+      end
       if remaining_attempts > 0 then
         vim.defer_fn(select_when_ready, 20)
       else
@@ -2511,34 +3297,92 @@ function M.replace_file_history(previous_view, history_options)
   if not replacement_view then
     return false
   end
+  footer_loader.detach(previous_view)
   cancel_history_footer_enrichment(previous_view)
+  cancel_history_head_resolution(previous_view)
   return true
 end
 
-local function highlight_history_entry(history_panel, entry)
+function M.open_selected_history(previous_view, history_options)
+  local selected_options = vim.deepcopy(history_options or {})
+  local history_location = selected_options.location
+  local repository_root = history_location and history_location.root
+  if not repository_root or not selected_options.selected_commit then
+    return false
+  end
+
+  selected_options.unbounded = nil
+  cancel_pending_history_request()
+  local request_finished = false
+  local cancel_request = footer_loader.prepare_selected(
+    repository_root,
+    selected_options,
+    function(prepared_options)
+      request_finished = true
+      state.pending_history_request_cancel = nil
+      local mount_succeeded
+      if previous_view then
+        mount_succeeded = M.replace_file_history(previous_view, prepared_options)
+      else
+        mount_succeeded = M.open_file_history(prepared_options) ~= nil
+      end
+      if not mount_succeeded and prepared_options.render_ready_callback then
+        prepared_options.render_ready_callback(
+          previous_view,
+          false,
+          'failed to mount prepared history'
+        )
+      end
+    end
+  )
+  if not request_finished then
+    state.pending_history_request_cancel = cancel_request
+  end
+  return true
+end
+
+highlight_history_entry = function(history_panel, entry)
   if type(history_panel.highlight_item) == 'function' then
     history_panel:highlight_item(entry)
   end
-  local entry_components = history_panel.components
-    and history_panel.components.log
-    and history_panel.components.log.entries
-  if not entry_components
-      or not history_panel.winid
-      or not vim.api.nvim_win_is_valid(history_panel.winid) then
-    return
-  end
-  for _, component_structure in ipairs(entry_components) do
-    if component_structure.comp.context == entry then
-      pcall(vim.api.nvim_win_set_cursor, history_panel.winid, {
-        component_structure.comp.lstart + 1,
-        0,
-      })
-      return
-    end
-  end
+  restore_history_cursor(history_panel, entry)
 end
 
-function M.focus_history_commit(view, commit_hash)
+finalize_history_metadata_focus = function(view, entry, commit_hash)
+  local history_panel = view and view.panel
+  if not history_panel or view.git_pending_review_focus ~= commit_hash then
+    return false
+  end
+  if entry.folded == false then
+    entry.folded = true
+    if type(history_panel.update_components) == 'function' then
+      history_panel:update_components()
+    end
+    if type(history_panel.render) == 'function' then
+      history_panel:render()
+    end
+    if type(history_panel.redraw) == 'function' then
+      history_panel:redraw()
+    end
+  end
+  clear_history_diff(view, entry)
+  history_panel.cur_item = { entry, nil }
+  highlight_history_entry(history_panel, entry)
+  local panel_window = history_panel.winid
+  if panel_window and vim.api.nvim_win_is_valid(panel_window) then
+    vim.api.nvim_set_current_win(panel_window)
+  end
+  view.git_footer_cursor_hash = commit_hash
+  view.git_pending_review_focus = nil
+  view.git_review_ready = true
+  request_footer_decoration(view)
+  lifecycle.mark_idle_ready(view, 'selected commit metadata focused')
+  finish_history_render(view, true, 'selected commit metadata focused')
+  return true
+end
+
+function M.focus_history_commit(view, commit_hash, options)
+  local focus_options = options or {}
   local history_panel = view and view.panel
   if not history_panel
       or history_panel.updating
@@ -2547,6 +3391,57 @@ function M.focus_history_commit(view, commit_hash)
   end
   for _, entry in ipairs(history_panel.entries or {}) do
     if entry.commit and entry.commit.hash == commit_hash then
+      if focus_options.open_file == false then
+        view.git_review_target = commit_hash
+        view.git_review_ready = false
+        view.git_pending_review_focus = commit_hash
+        if type(view.git_schedule_footer_settle) == 'function' then
+          view.git_schedule_footer_settle()
+        else
+          finalize_history_metadata_focus(view, entry, commit_hash)
+        end
+        return true
+      end
+      if entry.git_details_loaded == false then
+        local active_hydration = view.git_review_hydration
+        if active_hydration
+            and not active_hydration.cancelled
+            and active_hydration.commit_hash == commit_hash then
+          return true
+        end
+        if active_hydration then
+          active_hydration.cancelled = true
+        end
+        local hydration_token = {
+          cancelled = false,
+          commit_hash = commit_hash,
+          generation = lifecycle.generation(view),
+        }
+        view.git_review_hydration = hydration_token
+        view.git_review_target = commit_hash
+        view.git_review_ready = false
+        footer_loader.ensure_entry(view, entry, function(details_loaded)
+          if hydration_token.cancelled or view.git_review_hydration ~= hydration_token then
+            return
+          end
+          view.git_review_hydration = nil
+          if hydration_token.generation
+              and not lifecycle.is_current(view, hydration_token.generation) then
+            return
+          end
+          if not details_loaded then
+            if view.git_render_ready_callback and lifecycle.get(view) then
+              lifecycle.mark_failed(view, 'selected commit details did not load')
+            end
+            finish_history_render(view, false, 'selected commit details did not load')
+            return
+          end
+          if not M.focus_history_commit(view, commit_hash, focus_options) then
+            finish_history_render(view, false, 'selected commit disappeared after detail load')
+          end
+        end)
+        return true
+      end
       local target_file = entry.git_target_file or (entry.files and entry.files[1])
       local current_item = history_panel.cur_item
       local current_entry = current_item and current_item[1]
@@ -2585,6 +3480,7 @@ function M.focus_history_commit(view, commit_hash)
         end
         view.cur_layout:open_null()
         view.nulled = true
+        view.git_diff_opened = false
         history_panel:set_cur_item({ entry, target_file })
         if type(history_panel.render) == 'function' then
           history_panel:render()
@@ -2613,6 +3509,8 @@ function M.focus_history_commit(view, commit_hash)
       if (current_entry ~= entry or current_file ~= target_file)
           and target_file
           and type(view.set_file) == 'function' then
+        view.git_diff_opened = true
+        view.git_explicit_file_open = target_file
         view:set_file(target_file, false)
       elseif type(history_panel.set_cur_item) == 'function' then
         history_panel:set_cur_item({ entry, target_file })
@@ -2656,6 +3554,7 @@ function M.focus_history_commit(view, commit_hash)
           commit_hash,
           'error'
         )
+        lifecycle.mark_failed(view, 'selected commit diff did not settle')
         finish_review(false, 'selected commit diff did not settle')
       end, 10000)
       return true
@@ -2671,23 +3570,35 @@ function M.open_search_commit(parent_view, history_options, commit)
   if not repository_root then
     return false
   end
-  if M.focus_history_commit(parent_view, commit.hash) then
+  if parent_view then
+    request_footer_decoration(parent_view)
+  end
+  if M.focus_history_commit(parent_view, commit.hash, { open_file = false }) then
+    M.adapt_history_footer(parent_view)
     return true
   end
-  return M.replace_file_history(parent_view, {
+  local checked_out_branch = parent_options.checked_out_branch
+  local detached_head_commit = parent_options.detached_head_commit
+  if parent_view then
+    checked_out_branch = parent_view.git_checked_out_branch
+    detached_head_commit = parent_view.git_detached_head_commit
+  end
+  local review_options = {
     anchor_plan = commit.anchor_plan,
     branch_name = commit.branch_name,
     branch_tip_commit = commit.anchor_plan and commit.anchor_plan.branch_tip_commit,
-    checked_out_branch = parent_view and parent_view.git_checked_out_branch,
-    detached_head_commit = parent_view and parent_view.git_detached_head_commit,
-    history_ref = commit.history_ref or commit.branch_name or commit.hash,
+    checked_out_branch = checked_out_branch,
+    detached_head_commit = detached_head_commit,
+    history_ref = commit.history_ref or commit.branch_name,
     kind = 'repository',
     location = { root = repository_root },
+    preview_commit = commit.hash,
+    require_checked_out_containment = true,
     review_only = true,
     selected_commit = commit.hash,
     source = commit.source,
-    unbounded = true,
-  })
+  }
+  return M.open_selected_history(parent_view, review_options)
 end
 
 function M.jump_to_search_commit(parent_view, history_options, commit)
