@@ -547,10 +547,27 @@ local function parse_issue(response_body, expected_kind)
       and 'merged'
     or response_document.state
     or 'unknown'
+  local commit_sha = record_kind == 'Pull request'
+      and response_document.head
+      and response_document.head.sha
+    or nil
+  local commit_shas = {}
+  if type(response_document.commits) == 'table' then
+    for _, commit in ipairs(response_document.commits) do
+      if type(commit) == 'table' and type(commit.sha) == 'string' then
+        commit_shas[#commit_shas + 1] = commit.sha
+      end
+    end
+  end
+  if #commit_shas == 0 and type(commit_sha) == 'string' then
+    commit_shas[1] = commit_sha
+  end
   return {
     author = response_document.user and response_document.user.login or 'unknown',
     body = normalize_newlines(response_document.body),
     comments = response_document.comments or 0,
+    commit_sha = type(commit_sha) == 'string' and commit_sha or nil,
+    commit_shas = commit_shas,
     created_at = response_document.created_at or '',
     html_url = response_document.html_url or '',
     kind = record_kind,

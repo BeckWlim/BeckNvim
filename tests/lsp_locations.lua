@@ -258,6 +258,80 @@ assert(
   'the primary LSP error was not exposed in the picker title'
 )
 
+-- clangd currently returns no definition for this captured local from inside
+-- the nested worker lambda.  The C++ local-scope adapter must keep its
+-- provisional declaration visible instead of letting the empty LSP batch
+-- replace it.
+for method in pairs(request_callbacks) do
+  request_callbacks[method] = nil
+end
+latest_results = {}
+vim.api.nvim_buf_set_name(source_buffer, vim.fs.joinpath(vim.fn.getcwd(), 'lambda_test.cpp'))
+vim.bo[source_buffer].filetype = 'cpp'
+vim.api.nvim_buf_set_lines(source_buffer, 0, -1, false, {
+  'void BatchEvict() {',
+  '  auto can_evict_replicas = [](int value) { return value > 0; };',
+  '  std::thread worker([&] {',
+  '    bool has_evictable = can_evict_replicas(1);',
+  '  });',
+  '}',
+})
+local lambda_call_line = vim.api.nvim_buf_get_lines(source_buffer, 3, 4, false)[1]
+local lambda_call_column = assert(lambda_call_line:find('can_evict_replicas')) - 1
+vim.api.nvim_win_set_cursor(0, { 4, lambda_call_column })
+rawset(vim.lsp, 'get_clients', function(options)
+  if options and options.method == 'textDocument/definition' then
+    return { { id = 1, offset_encoding = 'utf-16' } }
+  end
+  return {}
+end)
+lsp_locations.definitions()
+assert(#latest_results == 1, 'C++ lambda definition did not seed a local result')
+assert(latest_results[1].lnum == 2, 'C++ lambda local result points to the wrong declaration')
+assert(vim.wait(1000, function()
+  return request_callbacks['textDocument/definition'] ~= nil
+end), 'C++ lambda definition request was not started')
+request_callbacks['textDocument/definition'][1]({ [1] = { result = {} } })
+assert(#latest_results == 1, 'an empty LSP batch replaced the C++ lambda local result')
+assert(latest_results[1].lnum == 2, 'C++ lambda local result was lost after LSP completion')
+
+for method in pairs(request_callbacks) do
+  request_callbacks[method] = nil
+end
+latest_results = {}
+rawset(vim.lsp, 'get_clients', function(options)
+  if options and options.method == 'textDocument/definition' then
+    return {
+      { id = 1, offset_encoding = 'utf-16' },
+      { id = 2, offset_encoding = 'utf-16' },
+    }
+  end
+  return {}
+end)
+lsp_locations.definitions()
+assert(vim.wait(1000, function()
+  return request_callbacks['textDocument/definition'] ~= nil
+end), 'C++ lambda batch definition request was not started')
+request_callbacks['textDocument/definition'][1]({
+  [1] = {
+    result = {
+      {
+        uri = vim.uri_from_bufnr(source_buffer),
+        range = { start = { line = 0, character = 5 }, ['end'] = { line = 0, character = 15 } },
+      },
+    },
+  },
+  [2] = {
+    result = {
+      {
+        uri = vim.uri_from_bufnr(source_buffer),
+        range = { start = { line = 5, character = 1 }, ['end'] = { line = 5, character = 4 } },
+      },
+    },
+  },
+})
+assert(#latest_results == 2, 'C++ lambda definition batches were not combined')
+
 package.loaded['telescope.actions'] = original_actions
 package.loaded['telescope.config'] = original_config
 package.loaded['telescope.finders'] = original_finders

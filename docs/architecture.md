@@ -186,6 +186,10 @@ LSP navigation has a separate ownership path through `config.search.lsp_location
 opens its Telescope session before dispatching requests, streams available results, and cancels
 outstanding requests when the picker closes. Cancelled primary requests are retried once; auxiliary
 document-highlight failures do not turn a successful project reference request into a failed query.
+Definition queries in C++ also seed from the enclosing function's Tree-sitter lexical declaration,
+which covers captured locals inside nested lambdas when clangd cannot resolve the reference. These
+provisional rows are removed only after a non-empty LSP batch is merged, so an empty response from one
+client or batch cannot erase a valid local candidate.
 For Python function-local identifiers, `gr` seeds the picker from the enclosing Treesitter scope,
 then replaces those provisional candidates with the first successful document-highlight or complete
 project reference response.
@@ -220,6 +224,9 @@ same boundary. Background workers claim configured eight-commit batches and use 
 whose record separators preserve commit ownership; unsupported or malformed records fall back to the
 single-commit Diffview path. The four-worker pool reserves one slot for an explicit action and uses
 the others for background preload.
+For repository scope, a dirty porcelain-v2 worktree adds one synthetic `WORKTREE` row ahead of the
+branch rows. Its children use Diffview's native `HEAD → LOCAL` revisions and include untracked files;
+it is not emitted for file or symbol scopes and does not alter cursor-target restoration.
 Cursor movement within the window does not replace or reprioritize that queue. `config.user` reads an optional user-level `~/.nvim` Lua table and `config.git.settings`
 validates bounded overrides before the repository/loader modules consume them. Its history panel starts at ten lines at the bottom;
 the first native frame focuses that panel and reports HEAD metadata and history-list work as separate
@@ -401,8 +408,9 @@ Footer structural annotations use a generation-checked coalesced post-render pas
 remain entirely owned by Diffview's renderer.
 The configuration does not override `DiffviewFilePanelSelected` or `DiffviewCursorLine`; Diffview
 and the active colorscheme own selected-row weight, foreground, and background.
-Native fold renders do not trigger a configuration-owned `TextChanged` redraw or cursor restoration;
-expand and collapse therefore remain a single Diffview render.
+Native fold renders schedule only the shared footer-annotation pass from the panel buffer boundary;
+they do not trigger configuration-owned cursor restoration, so expand and collapse remain a single
+Diffview render while branch separators are reattached.
 The native one-row Diffview seed is not a selection-ready boundary: target focus waits for the
 footer loader's metadata window to settle before deciding that the requested hash is absent.
 Render options and dispatcher options are stored separately, so reopening `<Space>de` searches repository

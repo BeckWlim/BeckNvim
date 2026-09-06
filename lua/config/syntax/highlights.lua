@@ -166,6 +166,7 @@ local function apply()
     fg = '#66D9EF',
     underline = true,
   })
+  vim.api.nvim_set_hl(0, 'DashboardFile', { fg = '#66D9EF' })
   vim.api.nvim_set_hl(0, 'TypeInformationHint', {
     fg = '#75715E',
     italic = true,

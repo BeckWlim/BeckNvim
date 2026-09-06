@@ -186,9 +186,9 @@ function M.entries(proxy_environment, shell_environment, recent_addresses)
   add_address_entry(entries, seen_addresses, active_proxy.http_proxy, 'HTTP')
   add_address_entry(entries, seen_addresses, active_proxy.https_proxy, 'HTTPS')
   add_address_entry(entries, seen_addresses, active_proxy.ALL_PROXY, 'ALL')
-  add_address_entry(entries, seen_addresses, shell_proxy.http_proxy, 'bashrc')
-  add_address_entry(entries, seen_addresses, shell_proxy.https_proxy, 'bashrc')
-  add_address_entry(entries, seen_addresses, shell_proxy.ALL_PROXY, 'bashrc')
+  add_address_entry(entries, seen_addresses, shell_proxy.http_proxy, 'config')
+  add_address_entry(entries, seen_addresses, shell_proxy.https_proxy, 'config')
+  add_address_entry(entries, seen_addresses, shell_proxy.ALL_PROXY, 'config')
   for _, recent_address in ipairs(known_recent_addresses) do
     add_address_entry(entries, seen_addresses, recent_address, 'recent')
   end
@@ -327,12 +327,8 @@ local function apply_choice(choice)
 end
 
 local function shell_proxy()
-  local home_directory = vim.uv.os_homedir()
-  if not home_directory or home_directory == '' then
-    return {}
-  end
-  local bashrc_path = vim.fs.joinpath(home_directory, '.bashrc')
-  return proxy.from_bashrc(bashrc_path) or {}
+  local local_config = require('config.user').get()
+  return proxy.from_environment(local_config.proxy_environment or {}) or {}
 end
 
 function M.open()

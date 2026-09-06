@@ -53,6 +53,13 @@ function M.lines(github_record)
         github_record.number
       )
     or ('GitHub #%d'):format(github_record.number)
+  local commit_shas = github_record.commit_shas or {}
+  local commit_lines = {}
+  if github_record.kind == 'Pull request' then
+    for index, commit_sha in ipairs(commit_shas) do
+      commit_lines[index] = ('Commit %d: `%s`'):format(index, commit_sha)
+    end
+  end
   local rendered_lines = {
     ('# #%d · %s'):format(github_record.number, github_record.title),
     '',
@@ -70,6 +77,11 @@ function M.lines(github_record)
     ),
     '',
   }
+  if #commit_lines > 0 then
+    for index = #commit_lines, 1, -1 do
+      table.insert(rendered_lines, 5, commit_lines[index])
+    end
+  end
   vim.list_extend(rendered_lines, description_lines)
   vim.list_extend(rendered_lines, { '', '## Discussion', '' })
   local discussion = github_record.discussion or {}
@@ -279,6 +291,12 @@ function M.open_file(root, github_record, options)
   vim.bo[detail_buffer].swapfile = false
   vim.api.nvim_buf_set_name(detail_buffer, buffer_name(root, github_record))
   M.render_buffer(detail_buffer, github_record)
+  local commit_shas = github_record.commit_shas or {}
+  local commit_title = github_record.kind == 'Pull request'
+      and #commit_shas > 0
+      and (' · %s'):format(commit_shas[1]:sub(1, 12)
+        .. (#commit_shas > 1 and (' +%d'):format(#commit_shas - 1) or ''))
+    or ''
   local available_width = math.max(1, vim.o.columns - 4)
   local available_height = math.max(1, vim.o.lines - 4)
   local detail_width = math.min(available_width, math.max(60, math.floor(vim.o.columns * 0.72)))
@@ -290,9 +308,10 @@ function M.open_file(root, github_record, options)
     relative = 'editor',
     row = math.max(0, math.floor((vim.o.lines - detail_height) / 2) - 1),
     style = 'minimal',
-    title = (' GitHub #%d · %s · REMOTE '):format(
+    title = (' GitHub #%d · %s%s · REMOTE '):format(
       github_record.number,
-      github_record.kind:upper()
+      github_record.kind:upper(),
+      commit_title
     ),
     title_pos = 'center',
     width = detail_width,

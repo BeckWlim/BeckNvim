@@ -51,7 +51,8 @@ local function history_output_contains(output, selected_commit)
     if type(commit_hash) == 'string'
         and (
           commit_hash == selected_commit
-          or (#selected_commit < #commit_hash and vim.startswith(commit_hash, selected_commit))
+          or vim.startswith(commit_hash, selected_commit)
+          or vim.startswith(selected_commit, commit_hash)
         ) then
       return true
     end
@@ -144,6 +145,15 @@ function M.prepare_selected(repository_root, history_options, callback)
       active_cancel = preview_cancel
     end
   end
+  local function fall_back_to_preview_or_commit()
+    -- Keep the current branch walk even when a filtered history cannot place
+    -- the selected commit in that walk.
+    if matched_current_branch then
+      prepare_independent_preview()
+      return
+    end
+    fall_back_to_commit()
+  end
 
   local ancestor_cancel = repository.start(
     repository.commands.commit_is_ancestor(selected_commit, history_ref),
@@ -201,7 +211,7 @@ function M.prepare_selected(repository_root, history_options, callback)
               local list_output = list_process.stdout or ''
               if list_process.code ~= 0
                   or not history_output_contains(list_output, selected_commit) then
-                fall_back_to_commit()
+                fall_back_to_preview_or_commit()
                 return
               end
               resolved_options.preloaded_history_output = list_output
@@ -259,6 +269,34 @@ end
 
 local function row_hash(row)
   return row and row.hash or nil
+end
+
+local function hashes_match(left, right)
+  return type(left) == 'string'
+      and type(right) == 'string'
+      and (left == right or vim.startswith(left, right) or vim.startswith(right, left))
+end
+
+local function make_worktree_row(history_options)
+  if not history_options
+      or history_options.kind ~= 'repository'
+      or not history_options.worktree_dirty then
+    return nil
+  end
+  return {
+    author = 'WORKTREE',
+    hash = repository.worktree_hash,
+    parent_hashes = history_options.branch_tip_commit
+        and { history_options.branch_tip_commit }
+      or {},
+    ref_names = 'WORKTREE',
+    reflog_selector = '',
+    rel_date = 'now',
+    subject = 'Working tree changes',
+    time = os.time(),
+    time_offset = os.date('%z'),
+    worktree = true,
+  }
 end
 
 function M.merge_rows(existing_rows, incoming_rows, direction, maximum_rows)
@@ -408,7 +446,7 @@ local function finish_list_request(
   if pinned_hash then
     local branch_rows = {}
     for _, row in ipairs(incoming_rows) do
-      if row.hash == pinned_hash then
+      if hashes_match(row.hash, pinned_hash) then
         loader_state.independent_preview_row = row
       else
         branch_rows[#branch_rows + 1] = row
@@ -416,15 +454,26 @@ local function finish_list_request(
     end
     incoming_rows = branch_rows
   end
+  local synthetic_worktree = loader_state.worktree_row
+  -- Keep the configured branch window intact; the live row is an additional
+  -- newest preview, not a replacement for a branch commit.
+  local branch_row_limit = repository.footer_list_max_entries
   local merged_rows, added_count, trimmed_count = M.merge_rows(
     loader_state.branch_rows,
     incoming_rows,
     direction,
-    repository.footer_list_max_entries
+    branch_row_limit
   )
   loader_state.branch_rows = merged_rows
-  if loader_state.independent_preview_row then
-    merged_rows = vim.list_extend({ loader_state.independent_preview_row }, merged_rows)
+  if synthetic_worktree or loader_state.independent_preview_row then
+    local newest_rows = {}
+    if synthetic_worktree then
+      newest_rows[#newest_rows + 1] = synthetic_worktree
+    end
+    if loader_state.independent_preview_row then
+      newest_rows[#newest_rows + 1] = loader_state.independent_preview_row
+    end
+    merged_rows = vim.list_extend(newest_rows, merged_rows)
   end
   if direction == 'initial' then
     loader_state.start_offset = list_token.offset
@@ -825,7 +874,6 @@ function M.on_cursor(view, cursor_entry)
   if not cursor_index then
     return false
   end
-
   -- Cursor movement only changes the metadata window at a boundary. Detail
   -- priority is stable branch order across the whole retained list window.
   local direction = M.cursor_direction(loader_state, cursor_index, #entries)
@@ -948,6 +996,7 @@ function M.attach(view, history_options, handlers)
     history_options = loader_history_options,
     independent_preview_commit = history_options.independent_preview_commit,
     independent_preview_row = nil,
+    worktree_row = make_worktree_row(history_options),
     branch_rows = {},
     list_installing = false,
     list_loading = nil,

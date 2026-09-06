@@ -923,26 +923,9 @@ end
 expanded_view.panel.get_item_at_cursor = function()
   return lazy_entry
 end
-local calls_before_load = #full_file_list_calls
-find_mapping('file_history_panel', '<Space>dl')[3]()
-assert(vim.wait(200, function()
-  return lazy_entry.git_files_enriched == true
-end, 10), '<Space>dl did not load the cursored commit file list')
 assert(
-  #full_file_list_calls == calls_before_load + 1
-    and lazy_entry.folded == false
-    and #lazy_entry.files == 2
-    and lazy_entry.files[1] == unrelated_file
-    and lazy_entry.files[2] == lazy_seed_file
-    and lazy_entry.git_target_file == lazy_seed_file
-    and lazy_status_updates == 1
-    and lazy_stats_updates == 1,
-  '<Space>dl did not unfold and install the older commit complete file list'
-)
-find_mapping('file_history_panel', '<Space>dl')[3]()
-assert(
-  #full_file_list_calls == calls_before_load + 1,
-  '<Space>dl reloaded a commit whose file list was already loaded'
+  not find_mapping('file_history_panel', '<Space>dl'),
+  'Redundant Git child-list keybinding was not removed'
 )
 expanded_view.panel.get_item_at_cursor = function()
   return seed_file

@@ -12,7 +12,6 @@ end
 
 local function search_previewer(root)
   local previewers = require('telescope.previewers')
-  local preview_utils = require('telescope.previewers.utils')
   return previewers.new_buffer_previewer({
     title = 'Git Result Preview',
     get_buffer_by_name = function(_, entry)
@@ -29,33 +28,22 @@ local function search_previewer(root)
         return
       end
       if entry.kind == 'branch' then
-        vim.bo[preview_buffer].modifiable = true
         local branch_command = repository.commands.branch_preview(entry.branch, entry.commits)
-        preview_utils.job_maker(branch_command, preview_buffer, {
-          bufname = previewer.state.bufname,
-          cwd = root,
-          value = entry.value,
-          callback = function(completed_buffer, content)
-            if vim.api.nvim_buf_is_valid(completed_buffer) and content then
-              local commits = repository.parse_commit_preview(table.concat(content or {}, '\n'))
+        repository.start(branch_command, root, function(process)
+            if vim.api.nvim_buf_is_valid(preview_buffer) and process.code == 0 then
+              local commits = repository.parse_commit_preview(process.stdout or '')
               ui.render_preview_buffer(
-                completed_buffer,
+                preview_buffer,
                 ui.branch_preview(entry.branch, commits)
               )
             end
-          end,
-        })
+        end)
         return
       end
-      vim.bo[preview_buffer].modifiable = true
       local command = repository.commands.commit_preview(entry.commit.hash)
-      preview_utils.job_maker(command, preview_buffer, {
-        bufname = previewer.state.bufname,
-        cwd = root,
-        value = entry.value,
-        callback = function(completed_buffer, content)
-          if vim.api.nvim_buf_is_valid(completed_buffer) and content then
-            local commits = repository.parse_commit_preview(table.concat(content or {}, '\n'))
+      repository.start(command, root, function(process)
+          if vim.api.nvim_buf_is_valid(preview_buffer) and process.code == 0 then
+            local commits = repository.parse_commit_preview(process.stdout or '')
             local commit = commits[1] or {
               abbreviated_hash = entry.commit.hash,
               author = '',
@@ -64,10 +52,9 @@ local function search_previewer(root)
               hash = entry.commit.hash,
               subject = 'Commit details unavailable',
             }
-            ui.render_preview_buffer(completed_buffer, ui.commit_preview(entry, commit))
+            ui.render_preview_buffer(preview_buffer, ui.commit_preview(entry, commit))
           end
-        end,
-      })
+      end)
     end,
   })
 end
@@ -110,12 +97,31 @@ local function review_commit(context, commit, branch)
 end
 
 local function review_commit_id(context, commit_id)
-  repository.start(
-    repository.commands.resolve_commit(commit_id),
-    context.root,
-    function(resolve_process)
+  local function resolve(fetch_attempted)
+    repository.start(repository.commands.resolve_commit(commit_id), context.root, function(resolve_process)
       if resolve_process.code ~= 0 then
-        vim.notify(repository.concise_error(resolve_process), vim.log.levels.ERROR)
+        if not fetch_attempted then
+          vim.notify(('Fetching remotes to find commit %s…'):format(commit_id:sub(1, 12)), vim.log.levels.INFO)
+          repository.start(repository.commands.remotes(), context.root, function(remote_process)
+            local remote = (remote_process.stdout or ''):match('([^\n]+)')
+            if not remote then
+              vim.notify(('No Git remote is configured for commit %s'):format(commit_id), vim.log.levels.ERROR)
+              return
+            end
+            repository.start({ 'git', 'fetch', remote, commit_id }, context.root, function(fetch_process)
+            if fetch_process.code == 0 then
+              resolve(true)
+            else
+              vim.notify(repository.concise_error(fetch_process), vim.log.levels.ERROR)
+            end
+            end)
+          end)
+          return
+        end
+        vim.notify(
+          ('Commit %s is not present in the current repository'):format(commit_id),
+          vim.log.levels.ERROR
+        )
         return
       end
       local resolved_commit = repository.parse_resolved_commit(resolve_process.stdout)
@@ -127,8 +133,9 @@ local function review_commit_id(context, commit_id)
         hash = resolved_commit,
         source = 'LOCAL',
       })
-    end
-  )
+    end)
+  end
+  resolve(false)
 end
 
 local function search_finder(context, close_callback)

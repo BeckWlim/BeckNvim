@@ -2,6 +2,9 @@ local M = {}
 local footer_settings = require('config.git.settings').footer()
 
 M.max_history_entries = 50
+-- Synthetic footer identity for the live worktree preview. It is deliberately
+-- not a hexadecimal object name, so it cannot collide with a real commit.
+M.worktree_hash = 'WORKTREE'
 M.footer_list_batch_entries = footer_settings.list_batch_entries
 M.footer_list_max_entries = footer_settings.list_max_entries
 M.footer_list_margin_entries = footer_settings.list_margin_entries
@@ -155,6 +158,18 @@ end
 
 function M.commands.resolve_commit(commit_id)
   return { 'git', 'rev-parse', '--verify', '--end-of-options', commit_id .. '^{commit}' }
+end
+
+function M.commands.fetch_all()
+  return { 'git', 'fetch', '--all', '--prune' }
+end
+
+function M.commands.fetch_commit(commit_hash)
+  return { 'git', 'fetch', commit_hash }
+end
+
+function M.commands.remotes()
+  return { 'git', 'remote' }
 end
 
 function M.parse_resolved_commit(output)
@@ -571,7 +586,12 @@ end
 function M.start(command, root, callback)
   local process
   local process_started, start_error = pcall(function()
-    process = vim.system(command, { cwd = root, text = true }, function(completed_process)
+    local proxy_environment = require('config.network.proxy').resolve()
+    process = vim.system(command, {
+      cwd = root,
+      env = next(proxy_environment) and proxy_environment or nil,
+      text = true,
+    }, function(completed_process)
       vim.schedule(function()
         callback(completed_process)
       end)

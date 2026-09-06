@@ -237,6 +237,9 @@ resolve_history_head_options = function(history_options, callback, progress_call
       end
       local head_state = repository.parse_head_state(head_process.stdout)
       resolved_options.checked_out_branch = head_state.branch_name
+      -- Repository history can expose the live worktree as a synthetic newest
+      -- row. File and symbol histories remain commit-only.
+      resolved_options.worktree_dirty = head_state.dirty and history_options.kind == 'repository'
       if not head_state.detached or not head_state.commit then
         if head_state.branch_name and head_state.branch_name ~= '' then
           local branch_ref = 'refs/heads/' .. head_state.branch_name

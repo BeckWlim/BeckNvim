@@ -13,6 +13,7 @@ local position_result = { code = 0, stderr = '', stdout = '142\n' }
 local list_pages = {}
 
 local repository = {
+  worktree_hash = 'WORKTREE',
   footer_detail_batch_entries = 2,
   footer_detail_worker_count = 4,
   footer_list_batch_entries = 200,
@@ -107,6 +108,30 @@ assert(
     and missing_window_options.revision == selected_commit
     and missing_window_options.preloaded_history_output == nil,
   'A branch metadata window missing its jump target did not fall back to the exact object'
+)
+
+ancestor_result = { code = 0, stderr = '', stdout = '' }
+position_result = { code = 0, stderr = '', stdout = '3\n' }
+list_pages['page:3:200'] = { { hash = string.rep('b', 40) } }
+list_pages['page:0:1'] = { { hash = selected_commit } }
+list_pages['page:0:200'] = { { hash = string.rep('c', 40) } }
+local filtered_preview_options
+loader.prepare_selected('/work/repository', {
+  branch_name = 'main',
+  checked_out_branch = 'main',
+  history_ref = 'refs/heads/main',
+  preview_commit = selected_commit,
+  selected_commit = selected_commit,
+}, function(history_options)
+  filtered_preview_options = history_options
+end)
+assert(
+  filtered_preview_options
+    and filtered_preview_options.history_ref == 'refs/heads/main'
+    and filtered_preview_options.revision == nil
+    and filtered_preview_options.independent_preview_commit == selected_commit
+    and filtered_preview_options.preloaded_history_output == 'page:0:1page:0:200',
+  'A preview commit missing from the filtered branch history did not become independent'
 )
 
 ancestor_result = { code = 1, stderr = '', stdout = '' }
@@ -496,6 +521,54 @@ assert(
   'An explicit waiter attached to an active detail batch did not complete'
 )
 loader.detach(batch_view)
+
+local dirty_panel = { entries = {}, cur_item = {} }
+local dirty_view = {
+  git_repository_root = '/work/repository',
+  panel = dirty_panel,
+}
+local dirty_rows
+loader.attach(dirty_view, {
+  kind = 'repository',
+  history_ref = 'refs/heads/main',
+  branch_tip_commit = make_row(1).hash,
+  worktree_dirty = true,
+  preloaded_history_count = 200,
+  preloaded_history_output = 'worker-page',
+  window_start_offset = 0,
+}, {
+  hydrate_entry = function(_, entry, completion_callback)
+    entry.git_details_loaded = true
+    completion_callback(true)
+    return function() end
+  end,
+  install_rows = function(_, rows, _, completion_callback)
+    dirty_rows = rows
+    local installed_entries = {}
+    for _, row in ipairs(rows) do
+      installed_entries[#installed_entries + 1] = {
+        commit = { hash = row.hash },
+        git_worktree = row.worktree == true,
+        git_details_loaded = false,
+        git_details_loading = false,
+      }
+    end
+    dirty_panel.entries = installed_entries
+    dirty_panel.cur_item = { installed_entries[1] }
+    completion_callback(true, installed_entries[1])
+  end,
+})
+assert(vim.wait(200, function()
+  return dirty_rows ~= nil and loader.list_is_ready(dirty_view)
+end, 10), 'Dirty repository history did not install its metadata window')
+assert(
+  dirty_rows[1].hash == 'WORKTREE'
+    and dirty_rows[1].worktree
+    and dirty_rows[2].hash == make_row(1).hash
+    and #dirty_rows == #worker_rows + 1,
+  'Dirty repository history did not prepend a live worktree preview row'
+)
+loader.detach(dirty_view)
 
 for module_name, original_module in pairs(original_modules) do
   package.loaded[module_name] = original_module

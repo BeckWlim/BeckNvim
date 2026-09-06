@@ -282,15 +282,6 @@ local function commit_details_mapping()
   }
 end
 
-local function load_children_mapping()
-  return {
-    'n',
-    '<Space>dl',
-    M.load_history_entry_children,
-    { desc = 'Load complete file list for selected Git history commit' },
-  }
-end
-
 local function focus_next_window()
   vim.cmd('wincmd w')
 end
@@ -1286,6 +1277,12 @@ local function target_file_index(entry)
   end
 end
 
+local function hashes_match(left, right)
+  return type(left) == 'string'
+      and type(right) == 'string'
+      and (left == right or vim.startswith(left, right) or vim.startswith(right, left))
+end
+
 decorate_history_footer = function(view)
   local history_panel = view and view.panel
   local panel_buffer = history_panel and history_panel.bufid
@@ -1318,7 +1315,7 @@ decorate_history_footer = function(view)
         }
       )
     end
-    local reference_branches = entry.git_independent_preview and {}
+    local reference_branches = (entry.git_independent_preview or entry.git_worktree) and {}
       or branch_names_from_references(entry.commit and entry.commit.ref_names)
     if entry.git_independent_preview then
       -- This row is deliberately outside the mounted branch walk.
@@ -1702,8 +1699,8 @@ function M.enrich_history_footer_entry(view, entry, completion_callback)
   return true
 end
 
--- <Space>dl: match-filtered histories ship only the traced file per commit row.
--- This explicit action loads the cursored commit's complete file list through
+-- Match-filtered histories ship only the traced file per commit row. This
+-- internal action loads the cursored commit's complete file list through
 -- Diffview's parent-to-commit loader; repository history already carries it.
 function M.load_history_entry_children()
   local view = active_view()
@@ -2324,6 +2321,20 @@ local function attach_history_footer_tracking(view)
     if not panel_buffer or not vim.api.nvim_buf_is_valid(panel_buffer) then
       return
     end
+    -- Diffview's native fold actions redraw the history panel by replacing its
+    -- buffer lines. That invalidates our virtual branch separators, but does
+    -- not emit a Git view event. Observe those redraws at the buffer boundary
+    -- and schedule the shared decoration pass after Diffview settles.
+    pcall(vim.api.nvim_buf_attach, panel_buffer, false, {
+      on_lines = function()
+        if tracking_generation
+            and lifecycle.is_current(view, tracking_generation)
+            and view.tabpage
+            and vim.api.nvim_tabpage_is_valid(view.tabpage) then
+          request_footer_decoration(view)
+        end
+      end,
+    })
     local function entry_at_cursor()
       return type(history_panel.get_log_entry_at_cursor) == 'function'
           and history_panel:get_log_entry_at_cursor()
@@ -2460,7 +2471,6 @@ function M.setup()
         history_entry_mapping('<2-LeftMouse>'),
         checkout_commit_mapping(),
         commit_details_mapping(),
-        load_children_mapping(),
         close_mapping(),
         next_window_mapping(),
         previous_window_mapping(),
@@ -2564,6 +2574,7 @@ local function new_footer_placeholder(view, row, path_args)
   entry.git_files_enriched = false
   entry.git_files_enriching = false
   entry.git_parent_hashes = vim.deepcopy(row.parent_hashes or {})
+  entry.git_worktree = row.worktree == true
   return entry
 end
 
@@ -2619,8 +2630,9 @@ local function install_footer_rows(view, rows, direction, completion_callback)
       else
         entry = new_footer_placeholder(view, row, path_args)
       end
+      entry.git_worktree = row.worktree == true
       entry.git_independent_preview = view.git_history_options
-          and view.git_history_options.independent_preview_commit == row.hash
+          and hashes_match(view.git_history_options.independent_preview_commit, row.hash)
         or false
       if direction == 'initial' and not view.git_diff_opened then
         entry.folded = true
@@ -2675,6 +2687,9 @@ local function footer_detail_revisions(entry)
   local RevType = require('diffview.vcs.rev').RevType
   local parent_hashes = entry.git_parent_hashes or {}
   local parent_hash = parent_hashes[1] or GitRev.NULL_TREE_SHA
+  if entry.git_worktree then
+    return GitRev(RevType.COMMIT, parent_hash), GitRev(RevType.LOCAL)
+  end
   return GitRev(RevType.COMMIT, parent_hash), GitRev(RevType.COMMIT, footer_entry_hash(entry))
 end
 
@@ -2820,7 +2835,7 @@ local function hydrate_footer_entry(view, entry, completion_callback)
     left_revision,
     right_revision,
     {},
-    { show_untracked = false },
+    { show_untracked = entry.git_worktree == true },
     history_layout_options(view),
     function(errors, file_dictionary)
       local loaded_files = file_dictionary and file_dictionary.working or {}
@@ -2968,6 +2983,21 @@ local function hydrate_footer_entries(view, entries, completion_callback)
       end)
     end
     install_next_entry()
+  end
+  -- A live worktree has no commit hash that can be sent through the batched
+  -- `git show` detail request. Let the normal Diffview revision path hydrate
+  -- it as HEAD -> LOCAL (and include untracked files).
+  for _, entry in ipairs(entries) do
+    if entry.git_worktree then
+      finish_with_fallback()
+      return function()
+        batch_token.cancelled = true
+        if batch_token.fallback_cancel then
+          batch_token.fallback_cancel()
+          batch_token.fallback_cancel = nil
+        end
+      end
+    end
   end
   for _, output_kind in ipairs({ 'name_status', 'numstat' }) do
     local command_kind = output_kind == 'name_status' and 'name-status' or 'numstat'

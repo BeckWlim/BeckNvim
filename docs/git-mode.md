@@ -8,6 +8,10 @@ and `<Space>de` for branch/commit/issue search. Diffview owns footer rendering, 
 file selection. BeckNvim adds bounded asynchronous data loading and lifecycle safety, not competing
 highlight, cursor, or fold behavior.
 
+Repository history also adds a newest `WORKTREE` row whenever the checkout is dirty. Opening that
+row previews the complete live worktree against `HEAD`, including untracked files; it does not move
+the editor cursor or create an additional jump action.
+
 Search and preview do not change HEAD. `<Space>dm` is the explicit mutation action and refuses to
 move HEAD when buffers or the worktree are dirty. Selecting a branch reviews it without switching.
 

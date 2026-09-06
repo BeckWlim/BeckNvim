@@ -311,11 +311,14 @@ function M.resolve(options)
   end
   local resolve_options = options or {}
   local process_environment = resolve_options.environment or vim.env
-  local selected_bashrc_path = resolve_bashrc_path(resolve_options.bashrc_path)
-
-  local shell_proxy = M.from_bashrc(selected_bashrc_path) or {}
+  local local_config = require('config.user').get()
+  local configured_proxy = M.from_environment(local_config.proxy_environment or {}) or {}
   local environment_proxy = M.from_environment(process_environment) or {}
-  local resolved_proxy = vim.tbl_extend('keep', environment_proxy, shell_proxy)
+  local legacy_proxy = {}
+  if resolve_options.bashrc_path then
+    legacy_proxy = M.from_bashrc(resolve_options.bashrc_path) or {}
+  end
+  local resolved_proxy = vim.tbl_extend('keep', environment_proxy, legacy_proxy, configured_proxy)
   if next(resolved_proxy) == nil then
     return {}, nil
   end

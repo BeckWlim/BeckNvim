@@ -157,6 +157,163 @@ local function python_local_reference_items(
   return local_items
 end
 
+local cpp_scope_types = {
+  compound_statement = true,
+  for_range_loop = true,
+  for_statement = true,
+  function_definition = true,
+  if_statement = true,
+  lambda_expression = true,
+  switch_statement = true,
+  while_statement = true,
+}
+
+local function node_contains(ancestor_node, descendant_node)
+  local current_node = descendant_node
+  while current_node do
+    if current_node:id() == ancestor_node:id() then
+      return true
+    end
+    current_node = current_node:parent()
+  end
+  return false
+end
+
+local function is_cpp_declarator_identifier(identifier_node)
+  local current_node = identifier_node:parent()
+  while current_node and not cpp_scope_types[current_node:type()] do
+    if current_node:type() == 'init_declarator'
+      or current_node:type() == 'parameter_declaration'
+    then
+      for _, declarator_node in ipairs(current_node:field('declarator')) do
+        return node_contains(declarator_node, identifier_node)
+      end
+      return false
+    end
+    current_node = current_node:parent()
+  end
+  return false
+end
+
+local function node_contains_position(node, row, column)
+  local start_row, start_column, end_row, end_column = node:range()
+  local starts_before = start_row < row
+    or (start_row == row and start_column <= column)
+  local ends_after = end_row > row or (end_row == row and end_column >= column)
+  return starts_before and ends_after
+end
+
+local function cpp_local_definition_items(
+  source_buffer,
+  source_filename,
+  cursor_row,
+  cursor_column
+)
+  if vim.bo[source_buffer].filetype ~= 'cpp' then
+    return {}
+  end
+
+  local syntax_tree
+  local parse_succeeded = pcall(function()
+    local parser = vim.treesitter.get_parser(source_buffer, 'cpp')
+    syntax_tree = parser:parse()[1]
+  end)
+  if not parse_succeeded or not syntax_tree then
+    return {}
+  end
+
+  local root_node = syntax_tree:root()
+  local cursor_node = root_node:named_descendant_for_range(
+    cursor_row,
+    cursor_column,
+    cursor_row,
+    cursor_column
+  )
+  while cursor_node and cursor_node:type() ~= 'identifier' do
+    cursor_node = cursor_node:parent()
+  end
+  if not cursor_node then
+    return {}
+  end
+
+  local function_node = cursor_node:parent()
+  while function_node and function_node:type() ~= 'function_definition' do
+    function_node = function_node:parent()
+  end
+  if not function_node then
+    return {}
+  end
+
+  local symbol_name = vim.treesitter.get_node_text(cursor_node, source_buffer)
+  local best_identifier
+  local best_scope_row = -1
+  local best_scope_column = -1
+  local best_row = -1
+  local best_column = -1
+
+  local function visit(node)
+    local start_row, start_column = node:range()
+    if start_row > cursor_row
+      or (start_row == cursor_row and start_column > cursor_column)
+    then
+      return
+    end
+
+    if node:type() == 'identifier'
+      and vim.treesitter.get_node_text(node, source_buffer) == symbol_name
+      and is_cpp_declarator_identifier(node)
+    then
+      local scope_node = node:parent()
+      while scope_node and not cpp_scope_types[scope_node:type()] do
+        scope_node = scope_node:parent()
+      end
+      if scope_node and node_contains_position(scope_node, cursor_row, cursor_column) then
+        local scope_row, scope_column = scope_node:range()
+        local nearer_scope = scope_row > best_scope_row
+          or (scope_row == best_scope_row and scope_column > best_scope_column)
+        local later_declaration = scope_row == best_scope_row
+          and scope_column == best_scope_column
+          and (start_row > best_row
+            or (start_row == best_row and start_column > best_column))
+        if nearer_scope or later_declaration then
+          best_identifier = node
+          best_scope_row = scope_row
+          best_scope_column = scope_column
+          best_row = start_row
+          best_column = start_column
+        end
+      end
+    end
+
+    for child_node in node:iter_children() do
+      if child_node:named() then
+        visit(child_node)
+      end
+    end
+  end
+
+  visit(function_node)
+  if not best_identifier then
+    return {}
+  end
+
+  local definition_row, definition_column = best_identifier:range()
+  local source_line = vim.api.nvim_buf_get_lines(
+    source_buffer,
+    definition_row,
+    definition_row + 1,
+    false
+  )[1]
+  return {
+    {
+      filename = source_filename,
+      lnum = definition_row + 1,
+      col = definition_column + 1,
+      text = source_line or symbol_name,
+    },
+  }
+end
+
 local function open_location_query(query)
   local telescope_config = require('telescope.config').values
   local make_entry = require('telescope.make_entry')
@@ -194,14 +351,21 @@ local function open_location_query(query)
     provisional_keys = {}
   end
 
-  if query.fast_document_highlights then
-    local local_items = python_local_reference_items(
-      source_buffer,
-      source_filename,
-      source_row,
-      source_column,
-      query.skip_source_line
-    )
+  if query.fast_document_highlights or query.fast_cpp_definition then
+    local local_items = query.fast_cpp_definition
+        and cpp_local_definition_items(
+          source_buffer,
+          source_filename,
+          source_row,
+          source_column
+        )
+      or python_local_reference_items(
+        source_buffer,
+        source_filename,
+        source_row,
+        source_column,
+        query.skip_source_line
+      )
     for _, local_item in ipairs(local_items) do
       local local_key = location_key(local_item)
       items_by_key[local_key] = local_item
@@ -217,13 +381,21 @@ local function open_location_query(query)
 
   local function merge_locations(locations, offset_encoding)
     local location_items = vim.lsp.util.locations_to_items(locations, offset_encoding)
+    local accepted_items = {}
     for _, location_item in ipairs(location_items) do
       local is_source_line = location_item.filename == source_filename
         and location_item.lnum == source_line
       if not query.skip_source_line or not is_source_line then
+        table.insert(accepted_items, location_item)
+      end
+    end
+    if #accepted_items > 0 then
+      clear_provisional_items()
+      for _, location_item in ipairs(accepted_items) do
         items_by_key[location_key(location_item)] = location_item
       end
     end
+    return #accepted_items
   end
 
   local function position_params(client)
@@ -288,7 +460,6 @@ local function open_location_query(query)
         table.insert(primary_error_messages, lsp_error_message(response_document.err))
       else
         primary_response_succeeded = true
-        clear_provisional_items()
         if client and response_document.result then
           local response_locations = vim.islist(response_document.result)
               and response_document.result
@@ -311,7 +482,6 @@ local function open_location_query(query)
         table.insert(highlight_error_messages, lsp_error_message(response_document.err))
       else
         highlight_response_succeeded = true
-        clear_provisional_items()
         if client and response_document.result then
           local highlight_locations = vim.tbl_map(function(document_highlight)
             return {
@@ -387,6 +557,7 @@ function M.definitions()
   open_location_query({
     method = 'textDocument/definition',
     title = 'Definitions',
+    fast_cpp_definition = true,
   })
 end
 

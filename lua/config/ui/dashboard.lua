@@ -419,7 +419,7 @@ local function render_files(rendered, state, layout_width, maximum_file_rows)
     local icon_start = rendered.left_column + #(('  %2d  '):format(file_index))
     add_highlight(rendered, row, icon_start, icon_start + #icon, icon_highlight)
     local path_start = rendered.left_column + #prefix
-    add_highlight(rendered, row, path_start, -1, 'TypeInformationLocation')
+    add_highlight(rendered, row, path_start, -1, 'DashboardFile')
   end
 end
 

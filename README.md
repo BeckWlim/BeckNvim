@@ -14,10 +14,23 @@ one restrained visual system while preserving native plugin behavior wherever po
 - Width-aware Markdown, diagnostics, completion, terminals, translation, and proxy tools.
 - Asynchronous Git and network work with cancellation, bounded queues, and clean return paths.
 
-## Quick Start
+## Installation
 
-Requirements: Neovim 0.11+, Git, ripgrep, Python 3.10+, curl, a C build toolchain, Node/npm,
-the tree-sitter CLI, and a Nerd Font. See [Installation](docs/installation.md) for details.
+### Requirements
+
+- Neovim 0.11 or newer
+- Git, ripgrep, Python 3.10+, curl, wget, and unzip
+- make and a C compiler
+- Node.js, npm, and the tree-sitter CLI
+- CMake and Ninja for C/C++ build workflows
+- A Nerd Font
+
+For local system clipboard integration, install the provider that matches your display server:
+
+- X11: `xclip`
+- Wayland: `wl-clipboard`, which provides the `wl-copy` and `wl-paste` commands
+
+### Install
 
 ```bash
 mv ~/.config/nvim ~/.config/nvim.bak
@@ -26,7 +39,10 @@ nvim
 ```
 
 On first launch, lazy.nvim restores pinned plugins and Mason installs configured language servers.
-Run `:checkhealth`, `:Lazy check`, and `:Mason` if a capability is unavailable.
+Mason manages language servers for Bash, C/C++, Lua, Markdown, Python, and Vim script. Required
+Python and C++ Tree-sitter parsers install when the CLI and compiler are available. Normal
+installation honors `lazy-lock.json`; plugin updates are a separate maintenance action. Run
+`:checkhealth`, `:Lazy check`, and `:Mason` if a capability is unavailable.
 
 Open the project dashboard with `<Space>h`. The leader policy and complete defaults live in
 [Default keybindings](docs/keybindings.md).
@@ -48,7 +64,6 @@ lua/config/
 
 ## Documentation
 
-- [Installation and requirements](docs/installation.md)
 - [Default keybindings](docs/keybindings.md)
 - [Git mode](docs/git-mode.md)
 - [Architecture](docs/architecture.md)
@@ -56,4 +71,4 @@ lua/config/
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+Licensed under the [MIT License](LICENSE).

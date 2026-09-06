@@ -23,7 +23,6 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 | `<Space>ds` | Current-symbol line history |
 | `<Space>dr` | Bounded repository history |
 | `<Enter>` | Native Diffview expand/collapse or child-file open |
-| `<Space>dl` | Load a commit's complete child list |
 | `<Space>dn` | Open native commit details |
 | `<Space>dm` | Guarded checkout of the selected commit |
 | `<Space>dp` | Collapse or restore the footer |

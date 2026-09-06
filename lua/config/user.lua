@@ -29,15 +29,19 @@ local function read_config()
     return {}
   end
   local config_source = table.concat(config_lines, '\n')
-  local config_chunk, syntax_error = loadstring(config_source, '@' .. config_path)
-  if not config_chunk then
-    warn_once('Invalid user Neovim settings syntax: ' .. tostring(syntax_error))
-    return {}
+  local decoded, loaded_config = pcall(vim.json.decode, config_source)
+  if not decoded then
+    loaded_config = { proxy_environment = {} }
+    for _, line in ipairs(config_lines) do
+      local name, value = line:match('^%s*([%w_]+)%s*=%s*(.-)%s*$')
+      if name and value and value ~= '' then
+        loaded_config.proxy_environment[name] = value:gsub('^(["\'])(.*)%1$', '%2')
+      end
+    end
+    decoded = next(loaded_config.proxy_environment) ~= nil
   end
-  setfenv(config_chunk, {})
-  local executed, loaded_config = pcall(config_chunk)
-  if not executed or type(loaded_config) ~= 'table' then
-    warn_once(config_path .. ' must return a Lua table')
+  if not decoded or type(loaded_config) ~= 'table' then
+    warn_once('Invalid user Neovim settings JSON: ' .. config_path)
     return {}
   end
   return loaded_config
