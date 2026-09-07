@@ -45,7 +45,8 @@ installation honors `lazy-lock.json`; plugin updates are a separate maintenance 
 `:checkhealth`, `:Lazy check`, and `:Mason` if a capability is unavailable.
 
 Open the project dashboard with `<Space>h`. The leader policy and complete defaults live in
-[Default keybindings](docs/keybindings.md).
+[Default keybindings](docs/keybindings.md). Normal-mode `a` is intentionally disabled; use `i` or
+`A` when entering Insert mode.
 
 ## Main Modules
 

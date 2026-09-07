@@ -56,8 +56,22 @@ function M.lines(github_record)
   local commit_shas = github_record.commit_shas or {}
   local commit_lines = {}
   if github_record.kind == 'Pull request' then
-    for index, commit_sha in ipairs(commit_shas) do
-      commit_lines[index] = ('Commit %d: `%s`'):format(index, commit_sha)
+    local commit_count = github_record.commit_count or #commit_shas
+    local commit_shas_complete = github_record.commit_shas_complete ~= false
+    if commit_shas_complete then
+      for index, commit_sha in ipairs(commit_shas) do
+        commit_lines[index] = ('Commit %d: `%s`'):format(index, commit_sha)
+      end
+    elseif #commit_shas == 1 then
+      commit_lines[1] = ('Commits: %d · list unavailable'):format(commit_count)
+      commit_lines[2] = ('Head commit: `%s`'):format(commit_shas[1])
+    elseif #commit_shas > 0 then
+      commit_lines[1] = ('Commits: showing %d of %d'):format(#commit_shas, commit_count)
+      for index, commit_sha in ipairs(commit_shas) do
+        commit_lines[index + 1] = ('Commit %d: `%s`'):format(index, commit_sha)
+      end
+    elseif commit_count > 0 then
+      commit_lines[1] = ('Commits: %d · list unavailable'):format(commit_count)
     end
   end
   local rendered_lines = {

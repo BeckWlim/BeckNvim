@@ -98,6 +98,47 @@ assert(
 local invalid_issue, invalid_error = github.parse_issue('{broken')
 assert(not invalid_issue and invalid_error, 'Invalid GitHub JSON did not return a concise error')
 
+local pull_commit_shas = {
+  string.rep('1', 40),
+  string.rep('2', 40),
+  string.rep('3', 40),
+  string.rep('4', 40),
+  string.rep('5', 40),
+  string.rep('6', 40),
+}
+local pull_summary, pull_summary_error = github.parse_issue(vim.json.encode({
+  body = 'PR body',
+  comments = 13,
+  commits = #pull_commit_shas,
+  created_at = '2026-07-25T07:46:40Z',
+  head = { sha = pull_commit_shas[#pull_commit_shas] },
+  html_url = 'https://github.com/moon-hotel/Mooncake/pull/77',
+  labels = { { name = 'Store' } },
+  merged_at = '2026-08-03T11:51:26Z',
+  number = 77,
+  state = 'closed',
+  title = 'Improve eviction',
+  updated_at = '2026-08-03T11:51:26Z',
+  user = { login = 'contributor' },
+}), 'Pull request')
+assert(not pull_summary_error and pull_summary, 'Valid GitHub PR response was rejected')
+assert(
+  pull_summary.commit_count == 6
+    and #pull_summary.commit_shas == 1
+    and pull_summary.commit_shas[1] == pull_commit_shas[6]
+    and not pull_summary.commit_shas_complete,
+  'GitHub PR summary confused its numeric commit count with a commit list'
+)
+local parsed_pull_commit_shas, pull_commits_error = github.parse_pull_request_commits(
+  vim.json.encode(vim.tbl_map(function(commit_sha)
+    return { sha = commit_sha }
+  end, pull_commit_shas))
+)
+assert(
+  not pull_commits_error and vim.deep_equal(parsed_pull_commit_shas, pull_commit_shas),
+  'GitHub PR commit-list response lost ordered commit hashes'
+)
+
 local discussion_response = vim.json.encode({
   {
     body = 'First complete reply.\r\n\r\nWith a second paragraph.',
@@ -506,7 +547,7 @@ local direct_system = vim.system
 local direct_executable = vim.fn.executable
 local direct_gh_token = vim.env.GH_TOKEN
 local direct_github_token = vim.env.GITHUB_TOKEN
-local direct_requested_url
+local direct_requested_urls = {}
 local direct_result = {}
 vim.env.GH_TOKEN = nil
 vim.env.GITHUB_TOKEN = nil
@@ -517,14 +558,18 @@ vim.fn.executable = function(executable_name)
   return direct_executable(executable_name)
 end
 vim.system = function(command, _, callback)
-  direct_requested_url = command[#command]
-  callback({
-    code = 0,
-    stderr = '',
-    stdout = vim.json.encode({
+  local request_url = command[#command]
+  direct_requested_urls[#direct_requested_urls + 1] = request_url
+  local response_body = request_url:match('/commits%?per_page=100$')
+      and vim.json.encode(vim.tbl_map(function(commit_sha)
+        return { sha = commit_sha }
+      end, pull_commit_shas))
+    or vim.json.encode({
       body = complete_body,
       comments = 0,
+      commits = #pull_commit_shas,
       created_at = '2026-08-13T01:00:00Z',
+      head = { sha = pull_commit_shas[#pull_commit_shas] },
       html_url = 'https://github.com/moon-hotel/Mooncake/pull/77',
       labels = { { name = 'Store' } },
       merged_at = '2026-08-27T07:23:00Z',
@@ -533,7 +578,11 @@ vim.system = function(command, _, callback)
       title = 'Improve eviction',
       updated_at = '2026-08-27T07:23:00Z',
       user = { login = 'contributor' },
-    }),
+    })
+  callback({
+    code = 0,
+    stderr = '',
+    stdout = response_body,
   })
   return { kill = function() end }
 end
@@ -553,8 +602,13 @@ assert(
     and direct_result.record.author == 'contributor'
     and direct_result.record.body == complete_body
     and direct_result.record.html_url == 'https://github.com/moon-hotel/Mooncake/pull/77'
-    and direct_requested_url == 'https://api.github.com/repos/moon-hotel/Mooncake/pulls/77',
-  'Direct pull-request lookup did not use the complete PR endpoint and shared issue parser'
+    and direct_result.record.commit_shas_complete
+    and vim.deep_equal(direct_result.record.commit_shas, pull_commit_shas)
+    and vim.deep_equal(direct_requested_urls, {
+      'https://api.github.com/repos/moon-hotel/Mooncake/pulls/77',
+      'https://api.github.com/repos/moon-hotel/Mooncake/pulls/77/commits?per_page=100',
+    }),
+  'Direct pull-request lookup did not enrich the PR summary with its ordered commit list'
 )
 
 local incomplete_result = {}

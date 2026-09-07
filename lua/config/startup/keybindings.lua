@@ -58,6 +58,7 @@ local function map_editing_aids()
   local navigation = require('config.search.navigation')
   local treesitter_context = require('config.syntax.treesitter_context')
 
+  map('a', '<Nop>', 'Disable append mode')
   map('<Space>zz', folds.toggle, 'Toggle code fold')
   map('<Space>zc', 'zM', 'Close all code folds')
   map('<Space>zo', 'zR', 'Open all code folds')

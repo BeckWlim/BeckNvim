@@ -79,7 +79,7 @@ local expected_mappings = {
   '<Space>wv', '<Space>ws', '<Space>wq', '<Space>wo',
   '<Space>ri', '<Space>rk', '<Space>rj', '<Space>rl', '<Space>r=',
   '<Tab>', '<S-Tab>', '<Space>o', '<Space>p',
-  '<Space>zz', '<Space>zc', '<Space>zo', '<Space>cc',
+  'a', '<Space>zz', '<Space>zc', '<Space>zo', '<Space>cc',
   '<Space>gf', '<Space>gv', '<Space>gx', 'gx',
   '<F3>', '<Space>h', '<Space>mp', '<Space>t',
   '<Space>ff', '<Space>fv', '<Space>fg', '<Space>fb', '<Space>fr',
@@ -113,6 +113,9 @@ assert(git_search_calls == 1, 'Space-de did not open standalone repository Git s
 
 local jump_back_mapping = vim.fn.maparg('<Space>o', 'n', false, true)
 assert(jump_back_mapping.rhs == '<C-o>', 'Space-o is not a pure jump-back mapping')
+
+local append_mapping = vim.fn.maparg('a', 'n', false, true)
+assert(append_mapping.rhs == '<Nop>', 'Normal-mode a still enters append mode')
 
 assert(
   vim.fn.maparg('gr', 'n', false, true).nowait == 1,

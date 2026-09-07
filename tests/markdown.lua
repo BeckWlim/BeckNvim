@@ -54,6 +54,68 @@ assert(
   'Markdown table tag, header, and delimiter do not share one stable row layout'
 )
 
+local table_buffer = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(table_buffer, 0, -1, false, {
+  '',
+  '| heading |',
+  '|---|',
+  '| first |',
+  '| second |',
+  '',
+})
+local function rendered_line(gutter, text)
+  return {
+    { gutter, 'LineNr' },
+    { text, 'RenderMarkdownTableCell' },
+  }
+end
+local table_groups = {
+  { lines = { rendered_line('   ', 'table') } },
+  {
+    lines = {
+      rendered_line(' 2 ', 'heading'),
+      rendered_line('   ', 'continued heading'),
+    },
+    source_row = 1,
+  },
+  { lines = { rendered_line(' 3 ', 'rule') }, source_row = 2 },
+  { lines = { rendered_line(' 4 ', 'first') }, source_row = 3 },
+  { lines = { rendered_line('   ', 'spacing') } },
+  { lines = { rendered_line(' 5 ', 'second') }, source_row = 4 },
+  { lines = { rendered_line('   ', 'closing rule') } },
+}
+local staged_table_extmarks = {}
+markdown.stage_table_rows(
+  table_buffer,
+  staged_table_extmarks,
+  { start_row = 1 },
+  table_groups,
+  nil
+)
+local overlay_rows = {}
+local virtual_line_rows = {}
+for _, staged_extmark in ipairs(staged_table_extmarks) do
+  assert(
+    staged_extmark.options.conceal_lines == nil,
+    'Completed Markdown table concealed source rows into one unscrollable virtual block'
+  )
+  if staged_extmark.key:find(':overlay$') then
+    overlay_rows[staged_extmark.row] = staged_extmark.options.conceal == ''
+  end
+  if staged_extmark.options.virt_lines then
+    virtual_line_rows[staged_extmark.row] = true
+  end
+end
+assert(
+  overlay_rows[1] and overlay_rows[2] and overlay_rows[3] and overlay_rows[4],
+  'Completed Markdown table is not anchored to each corresponding source row'
+)
+assert(
+  virtual_line_rows[1] and virtual_line_rows[3] and virtual_line_rows[4],
+  'Markdown table continuation rows lost their distributed scroll anchors'
+)
+vim.api.nvim_buf_delete(table_buffer, { force = true })
+
 local allocated_widths, gap_width = markdown.allocate_widths(80, 3)
 assert(gap_width == 2, 'Markdown table columns lost their restrained whitespace gap')
 assert(

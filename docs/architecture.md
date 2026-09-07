@@ -123,6 +123,8 @@ before measuring their visible labels. A centered header, one separator, one clo
 dashed spacing between body records, and whitespace column gaps avoid vertical-grid reconstruction.
 The block is anchored at the Markdown source indentation. It may use the complete remaining width
 through an 80-column threshold, so narrow views such as 27-column splits sacrifice no cell capacity.
+Rendered rows and their virtual continuations remain anchored to their corresponding source rows;
+the table never collapses into one multi-screen virtual block that traps smooth viewport scrolling.
 Above that threshold, its responsive cap grows toward 80% of the split and reserves approximately
 20% as external whitespace on the right in wide views. Allocation then excludes one left and two
 right inner-margin cells, keeping the final column away from the rule edge without forcing a compact
@@ -461,6 +463,10 @@ same authenticated GitHub CLI when available, otherwise a bounded REST request r
 comments; failure to enrich discussion does not discard an already resolved issue or pull request.
 SSH Git authorization remains owned by Git and is never extracted as an HTTP
 credential. GitHub issue and pull-request metadata receives the shared proxy environment explicitly.
+Pull-request acquisition treats the detail endpoint's numeric commit count and head SHA as summary
+metadata, then loads up to 100 ordered commit hashes from the bounded PR-commits endpoint. If that
+optional enrichment fails or the PR exceeds the cap, the detail card labels the known hashes as
+partial instead of presenting the head SHA as the PR's first and only commit.
 The Markdown detail preserves the complete available body and ordinary `j`/`k` and page scrolling.
 An HTTP 404 is a structured absent result rather than a provider error. If every configured remote
 confirms absence, no remote row is emitted for that exact-number query. Connectivity, parsing, and

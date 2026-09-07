@@ -39,4 +39,10 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 | `<Space>t` | Open Chinese/English translation |
 | `:Proxy` | Inspect or change the session HTTP proxy |
 
+## Editing
+
+| Key | Action |
+| --- | --- |
+| `a` | Disabled in Normal mode; use `i` or `A` to enter Insert mode |
+
 Use `:map` and plugin help to inspect context-specific mappings without duplicating upstream docs.

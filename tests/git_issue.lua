@@ -155,13 +155,33 @@ assert(
 local pull_request = vim.deepcopy(issue)
 pull_request.kind = 'Pull request'
 pull_request.html_url = 'https://github.com/moon-hotel/Mooncake/pull/3452'
+pull_request.commit_count = 3
+pull_request.commit_shas = {
+  string.rep('a', 40),
+  string.rep('b', 40),
+  string.rep('c', 40),
+}
+pull_request.commit_shas_complete = true
 local rendered_pull_request_text = table.concat(issue_view.lines(pull_request), '\n')
 assert(
   rendered_pull_request_text:match('%*%*Pull request · OPEN · REMOTE%*%*')
     and rendered_pull_request_text:match('Mooncake/pull/3452')
+    and rendered_pull_request_text:match('Commit 1: `' .. string.rep('a', 40) .. '`')
+    and rendered_pull_request_text:match('Commit 3: `' .. string.rep('c', 40) .. '`')
     and rendered_pull_request_text:match('## Discussion')
     and rendered_pull_request_text:match('Second complete discussion reply'),
   'Pull request detail did not reuse the issue body and discussion render pipeline'
+)
+local partial_pull_request = vim.deepcopy(pull_request)
+partial_pull_request.commit_count = 6
+partial_pull_request.commit_shas = { string.rep('f', 40) }
+partial_pull_request.commit_shas_complete = false
+local partial_pull_request_text = table.concat(issue_view.lines(partial_pull_request), '\n')
+assert(
+  partial_pull_request_text:match('Commits: 6 · list unavailable')
+    and partial_pull_request_text:match('Head commit: `' .. string.rep('f', 40) .. '`')
+    and not partial_pull_request_text:match('Commit 1:'),
+  'Incomplete PR commit metadata mislabeled the head SHA as the first and only commit'
 )
 assert(
   vim.wo[0].foldenable

@@ -634,15 +634,6 @@ local function stage_extmark(staged_extmarks, row, options, semantic_key)
   }
 end
 
-local function append_group_lines(target_lines, groups, first_group, last_group)
-  for group_index = first_group, last_group do
-    local group = groups[group_index]
-    if group then
-      vim.list_extend(target_lines, group.lines)
-    end
-  end
-end
-
 local function empty_rendered_line(rendered_line)
   local empty_chunks = {}
   for chunk_index, chunk in ipairs(rendered_line) do
@@ -653,15 +644,6 @@ local function empty_rendered_line(rendered_line)
     }
   end
   return empty_chunks
-end
-
-local function conceal_line(staged_extmarks, row)
-  stage_extmark(staged_extmarks, row, {
-    conceal_lines = '',
-    end_col = 0,
-    end_row = row + 1,
-    priority = 120,
-  })
 end
 
 local function table_label_row(buffer, parsed_table)
@@ -730,7 +712,7 @@ local function line_text_chunks(rendered_line)
   return text_chunks
 end
 
-local function render_row_local(buffer, staged_extmarks, parsed_table, groups, active_row)
+function M.stage_table_rows(buffer, staged_extmarks, parsed_table, groups, active_row)
   for _, display in ipairs(source_displays(groups)) do
     local row_key = ('table:%d:row:%d'):format(
       parsed_table.start_row,
@@ -775,47 +757,6 @@ local function render_row_local(buffer, staged_extmarks, parsed_table, groups, a
       line_options,
       row_key .. ':lines'
     )
-  end
-end
-
-local function render_complete_table(buffer, staged_extmarks, parsed_table, groups)
-  local rendered_lines = {}
-  append_group_lines(rendered_lines, groups, 2, #groups)
-  if parsed_table.start_row > 0 then
-    for source_row = parsed_table.start_row, parsed_table.end_row - 1 do
-      conceal_line(staged_extmarks, source_row)
-    end
-    stage_extmark(staged_extmarks, parsed_table.start_row - 1, {
-      priority = 120,
-      virt_lines = rendered_lines,
-    })
-    return
-  end
-
-  local source_header = vim.api.nvim_buf_get_lines(buffer, 0, 1, false)[1] or ''
-  local header_line = {}
-  for chunk_index = 2, #rendered_lines[1] do
-    header_line[#header_line + 1] = rendered_lines[1][chunk_index]
-  end
-  stage_extmark(staged_extmarks, 0, {
-    conceal = '',
-    end_col = #source_header,
-    priority = 121,
-    virt_text = header_line,
-    virt_text_pos = 'overlay',
-  })
-  for source_row = 1, parsed_table.end_row - 1 do
-    conceal_line(staged_extmarks, source_row)
-  end
-  local remaining_lines = {}
-  for line_index = 2, #rendered_lines do
-    remaining_lines[#remaining_lines + 1] = rendered_lines[line_index]
-  end
-  if #remaining_lines > 0 then
-    stage_extmark(staged_extmarks, 0, {
-      priority = 120,
-      virt_lines = remaining_lines,
-    })
   end
 end
 
@@ -928,12 +869,11 @@ function M.render(context)
     render_table_label(buffer, staged_extmarks, parsed_table, groups)
     local cursor_in_table = cursor_row >= parsed_table.start_row
       and cursor_row < parsed_table.end_row
-    if interactive_tables[table_index] then
-      local active_row = cursor_in_table and cursor_row or nil
-      render_row_local(buffer, staged_extmarks, parsed_table, groups, active_row)
-    else
-      render_complete_table(buffer, staged_extmarks, parsed_table, groups)
-    end
+    local active_row = interactive_tables[table_index]
+        and cursor_in_table
+        and cursor_row
+      or nil
+    M.stage_table_rows(buffer, staged_extmarks, parsed_table, groups, active_row)
   end
   apply_extmarks(buffer, staged_extmarks)
 end
