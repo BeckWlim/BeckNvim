@@ -2,6 +2,7 @@ local M = {}
 
 function M.setup()
   require('config.startup.options')
+  require('config.ui.float').setup()
   require('config.startup.autocmds').setup()
   require('config.startup.lazy')
   require('config.startup.keybindings').setup()

@@ -3181,9 +3181,10 @@ function M.open_file_history(options)
   ensure_loaded()
   local history_options = options or {}
   if state.closing then
-    vim.defer_fn(function()
-      M.open_file_history(history_options)
-    end, 50)
+    vim.notify(
+      'Git history is unavailable while the current Git mode is closing',
+      vim.log.levels.INFO
+    )
     return
   end
   local location = history_options.location

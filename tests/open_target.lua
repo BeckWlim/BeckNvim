@@ -50,6 +50,28 @@ assert(
   'Non-record GitHub URL did not retain external browser handoff'
 )
 
+local inline_pull_request = table.concat({
+  'The most direct match for foreground lookup latency is ',
+  '[PR #2405](https://github.com/kvcache-ai/Mooncake/pull/2405): large requests',
+})
+local inline_parent_buffer = vim.api.nvim_get_current_buf()
+local inline_buffer = vim.api.nvim_create_buf(true, true)
+vim.api.nvim_set_current_buf(inline_buffer)
+vim.bo[inline_buffer].filetype = 'text'
+vim.api.nvim_buf_set_lines(inline_buffer, 0, -1, false, { inline_pull_request })
+local inline_label_column = assert(inline_pull_request:find('#2405', 1, true)) - 1
+vim.api.nvim_win_set_cursor(0, { 1, inline_label_column })
+local opened_target_count = #opened_targets
+open_target.open_at_cursor()
+assert(
+  rendered_github_targets[#rendered_github_targets]
+      == 'https://github.com/kvcache-ai/Mooncake/pull/2405'
+    and #opened_targets == opened_target_count,
+  'Inline Markdown PR outside a Markdown buffer bypassed the GitHub detail renderer'
+)
+vim.api.nvim_set_current_buf(inline_parent_buffer)
+vim.api.nvim_buf_delete(inline_buffer, { force = true })
+
 require('vim.ui')._get_urls = function()
   return {
     'https://example.com/first',
@@ -79,6 +101,27 @@ assert(
     and notification.level == vim.log.levels.ERROR
     and notification.message == 'vim.ui.open: no handler found',
   'Synchronous URL opener error was not reported'
+)
+
+local failing_record_url = 'https://github.com/example/project/pull/404'
+package.loaded['config.git.issue'].open_url = function()
+  error('provider exploded')
+end
+local opened_before_provider_failure = #opened_targets
+notification = nil
+rawset(vim.ui, 'open', function(target)
+  opened_targets[#opened_targets + 1] = target
+  return { wait = function() opener_waited = true end }, nil
+end)
+assert(open_target.open(failing_record_url), 'Provider failure lost the browser fallback')
+assert(
+  #opened_targets == opened_before_provider_failure + 1
+    and opened_targets[#opened_targets] == failing_record_url
+    and notification
+    and notification.level == vim.log.levels.WARN
+    and notification.message:match('GitHub detail opener failed')
+    and notification.message:match('opening in external browser'),
+  'Provider failure did not explain its external-browser fallback'
 )
 
 local original_confirm = vim.fn.confirm

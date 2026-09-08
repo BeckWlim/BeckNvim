@@ -39,10 +39,6 @@ local function comments_endpoint(remote, issue_number)
   return issue_endpoint(remote, issue_number) .. '/comments?per_page=100'
 end
 
-local function pull_request_commits_endpoint(remote, issue_number)
-  return pull_request_endpoint(remote, issue_number) .. '/commits?per_page=100'
-end
-
 local function api_url(remote, endpoint)
   local api_root = remote.host == 'github.com'
       and 'https://api.github.com'
@@ -56,10 +52,6 @@ end
 
 local function comments_url(remote, issue_number)
   return api_url(remote, comments_endpoint(remote, issue_number))
-end
-
-local function pull_request_commits_url(remote, issue_number)
-  return api_url(remote, pull_request_commits_endpoint(remote, issue_number))
 end
 
 local function web_record_url(remote, issue_number, record_kind)
@@ -123,29 +115,18 @@ local function unreachable_error(completed_process)
   )
 end
 
-local function start_api_request(remote, request_url, max_time_seconds, callback)
-  local command = {
-    'curl',
-    '--silent',
-    '--show-error',
-    '--fail-with-body',
-    '--location',
-    '--connect-timeout',
-    '5',
-    '--max-time',
-    tostring(max_time_seconds),
-    '--header',
-    '@-',
-    request_url,
-  }
+local function start_curl_request(command, standard_input, callback)
   local process
   local proxy_environment = proxy.resolve()
+  local process_options = {
+    env = proxy_environment,
+    text = true,
+  }
+  if standard_input then
+    process_options.stdin = standard_input
+  end
   local process_started, start_error = pcall(function()
-    process = vim.system(command, {
-      env = proxy_environment,
-      stdin = request_headers(remote.host),
-      text = true,
-    }, function(completed_process)
+    process = vim.system(command, process_options, function(completed_process)
       vim.schedule(function()
         callback(completed_process)
       end)
@@ -161,6 +142,24 @@ local function start_api_request(remote, request_url, max_time_seconds, callback
       pcall(process.kill, process, 15)
     end
   end
+end
+
+local function start_api_request(remote, request_url, max_time_seconds, callback)
+  local command = {
+    'curl',
+    '--silent',
+    '--show-error',
+    '--fail-with-body',
+    '--location',
+    '--connect-timeout',
+    '5',
+    '--max-time',
+    tostring(max_time_seconds),
+    '--header',
+    '@-',
+    request_url,
+  }
+  return start_curl_request(command, request_headers(remote.host), callback)
 end
 
 local function github_cli_available()
@@ -501,28 +500,7 @@ local function start_web_request(remote, issue_number, record_kind, callback)
     'User-Agent: Mozilla/5.0 (X11; Linux x86_64) nvim-git-inspector',
     web_record_url(remote, issue_number, record_kind),
   }
-  local proxy_environment = proxy.resolve()
-  local process
-  local process_started, start_error = pcall(function()
-    process = vim.system(command, {
-      env = proxy_environment,
-      text = true,
-    }, function(completed_process)
-      vim.schedule(function()
-        callback(completed_process)
-      end)
-    end)
-  end)
-  if not process_started then
-    vim.schedule(function()
-      callback({ code = -1, stderr = tostring(start_error), stdout = '' })
-    end)
-  end
-  return function()
-    if process then
-      pcall(process.kill, process, 15)
-    end
-  end
+  return start_curl_request(command, nil, callback)
 end
 
 local function annotate_remote(issue, remote)
@@ -559,34 +537,16 @@ local function parse_issue(response_body, expected_kind)
       and response_document.head
       and response_document.head.sha
     or nil
-  local commit_shas = {}
-  local commit_shas_complete = false
-  if type(response_document.commits) == 'table' then
-    for _, commit in ipairs(response_document.commits) do
-      if type(commit) == 'table' and type(commit.sha) == 'string' then
-        commit_shas[#commit_shas + 1] = commit.sha
-      end
-    end
-    commit_shas_complete = true
-  end
-  if #commit_shas == 0 and type(commit_sha) == 'string' then
-    commit_shas[1] = commit_sha
-  end
   local commit_count = record_kind == 'Pull request'
       and type(response_document.commits) == 'number'
       and response_document.commits
-    or #commit_shas
-  if commit_count == 1 and #commit_shas == 1 then
-    commit_shas_complete = true
-  end
+    or 0
   return {
     author = response_document.user and response_document.user.login or 'unknown',
     body = normalize_newlines(response_document.body),
     comments = response_document.comments or 0,
     commit_sha = type(commit_sha) == 'string' and commit_sha or nil,
     commit_count = commit_count,
-    commit_shas = commit_shas,
-    commit_shas_complete = commit_shas_complete,
     created_at = response_document.created_at or '',
     html_url = response_document.html_url or '',
     kind = record_kind,
@@ -596,24 +556,6 @@ local function parse_issue(response_body, expected_kind)
     title = normalize_newlines(response_document.title),
     updated_at = response_document.updated_at or '',
   }
-end
-
-local function parse_pull_request_commits(response_body)
-  local decoded_successfully, response_document = pcall(vim.json.decode, response_body)
-  if not decoded_successfully or type(response_document) ~= 'table' then
-    return nil, 'GitHub returned an invalid pull-request commit response'
-  end
-  if not vim.islist(response_document) then
-    return nil, response_document.message
-      or 'GitHub pull-request commit response is incomplete'
-  end
-  local commit_shas = {}
-  for _, commit_document in ipairs(response_document) do
-    if type(commit_document) == 'table' and type(commit_document.sha) == 'string' then
-      commit_shas[#commit_shas + 1] = commit_document.sha
-    end
-  end
-  return commit_shas, nil
 end
 
 local function parse_comments(response_body)
@@ -668,7 +610,7 @@ local function process_reports_not_found(issue_process)
     and response_document.message:lower() == 'not found'
 end
 
-local function fetch_remote_issue(remote, issue_number, callback, expected_kind)
+local function fetch_remote_issue(remote, issue_number, callback, expected_kind, summary_callback)
   local cancelled = false
   local process_cancellations = {}
   local function track_process(cancel_process)
@@ -682,132 +624,66 @@ local function fetch_remote_issue(remote, issue_number, callback, expected_kind)
   end
 
   local function finish_with_enrichment(issue)
-    local known_commit_shas = issue.commit_shas or {}
-    local commit_count = issue.commit_count or #known_commit_shas
-    issue.commit_count = commit_count
-    issue.commit_shas = known_commit_shas
     local needs_discussion = issue.comments > 0
-    local needs_commit_list = issue.kind == 'Pull request'
-      and commit_count > 0
-      and issue.commit_shas_complete ~= true
-    local pending_enrichment_count = (needs_discussion and 1 or 0)
-      + (needs_commit_list and 1 or 0)
     issue.discussion = {}
     issue.discussion_complete = not needs_discussion
-    if pending_enrichment_count == 0 then
+    issue.discussion_loading = needs_discussion
+    if not needs_discussion then
       finish(issue, nil, nil)
       return
     end
-    local function finish_enrichment()
-      pending_enrichment_count = pending_enrichment_count - 1
-      if pending_enrichment_count == 0 then
-        finish(issue, nil, nil)
-      end
+    if summary_callback then
+      summary_callback(issue)
     end
 
     local function finish_comments_request(comments_process)
       if cancelled then
         return
       end
+      issue.discussion_loading = false
       if comments_process.code ~= 0 then
         issue.discussion = {}
         issue.discussion_complete = false
         issue.discussion_error = issue_process_error(comments_process)
-        finish_enrichment()
+        finish(issue, nil, nil)
         return
       end
       local discussion, discussion_error = parse_comments(comments_process.stdout or '')
       issue.discussion = discussion or {}
       issue.discussion_complete = discussion ~= nil and #discussion >= issue.comments
       issue.discussion_error = discussion_error
-      finish_enrichment()
+      finish(issue, nil, nil)
     end
-    local function request_comments_with_curl()
-      track_process(start_api_request(
-        remote,
-        comments_url(remote, issue_number),
-        10,
-        finish_comments_request
-      ))
-    end
+
     local function request_comments()
-      if github_cli_available() then
-        track_process(start_github_cli_request(
+      local function request_with_curl()
+        track_process(start_api_request(
           remote,
-          comments_endpoint(remote, issue_number),
-          function(comments_process)
-            if cancelled then
-              return
-            end
-            if comments_process.code == 0 then
-              finish_comments_request(comments_process)
-              return
-            end
-            request_comments_with_curl()
-          end
+          comments_url(remote, issue_number),
+          10,
+          finish_comments_request
         ))
-      else
-        request_comments_with_curl()
       end
-    end
-
-    local function finish_commits_request(commits_process)
-      if cancelled then
+      if not github_cli_available() then
+        request_with_curl()
         return
       end
-      if commits_process.code ~= 0 then
-        issue.commit_shas_complete = false
-        issue.commit_shas_error = issue_process_error(commits_process)
-        finish_enrichment()
-        return
-      end
-      local commit_shas, commit_parse_error = parse_pull_request_commits(
-        commits_process.stdout or ''
-      )
-      if commit_shas then
-        issue.commit_shas = commit_shas
-        issue.commit_shas_complete = #commit_shas >= commit_count
-      else
-        issue.commit_shas_complete = false
-      end
-      issue.commit_shas_error = commit_parse_error
-      finish_enrichment()
-    end
-    local function request_commits_with_curl()
-      track_process(start_api_request(
+      track_process(start_github_cli_request(
         remote,
-        pull_request_commits_url(remote, issue_number),
-        10,
-        finish_commits_request
+        comments_endpoint(remote, issue_number),
+        function(completed_process)
+          if cancelled then
+            return
+          end
+          if completed_process.code == 0 then
+            finish_comments_request(completed_process)
+            return
+          end
+          request_with_curl()
+        end
       ))
     end
-    local function request_commits()
-      if github_cli_available() then
-        track_process(start_github_cli_request(
-          remote,
-          pull_request_commits_endpoint(remote, issue_number),
-          function(commits_process)
-            if cancelled then
-              return
-            end
-            if commits_process.code == 0 then
-              finish_commits_request(commits_process)
-              return
-            end
-            request_commits_with_curl()
-          end
-        ))
-      else
-        request_commits_with_curl()
-      end
-    end
-
-    if needs_discussion then
-      request_comments()
-    end
-    if needs_commit_list then
-      request_commits()
-    end
+    request_comments()
   end
 
   local function request_public_page(response_error)
@@ -928,12 +804,12 @@ M.parse_record_url = reference.parse_record_url
 M.parse_issue = parse_issue
 M.parse_issue_html = parse_issue_html
 M.parse_comments = parse_comments
-M.parse_pull_request_commits = parse_pull_request_commits
 M.is_unreachable_process_error = is_unreachable_process_error
 
-function M.fetch_record(record_reference, callback)
+function M.fetch_record(record_reference, callback, options)
   local remote = record_reference.remote
   local issue_number = tostring(record_reference.number)
+  local fetch_options = options or {}
   return fetch_remote_issue(remote, issue_number, function(issue, issue_error, issue_not_found)
     if issue_not_found then
       local record_label = record_reference.kind and record_reference.kind:lower() or 'record'
@@ -944,7 +820,7 @@ function M.fetch_record(record_reference, callback)
       return
     end
     callback(issue, issue_error)
-  end, record_reference.kind)
+  end, record_reference.kind, fetch_options.on_summary)
 end
 
 function M.fetch_issue(root, issue_number, callback)

@@ -8,6 +8,9 @@ and `<Space>de` for branch/commit/issue search. Diffview owns footer rendering, 
 file selection. BeckNvim adds bounded asynchronous data loading and lifecycle safety, not competing
 highlight, cursor, or fold behavior.
 
+Only one root Git history can be active. The history entry keys refuse to mount another Git pane
+until `<C-q>` closes the current mode; use `<Space>de` for temporary search inside Git mode.
+
 Repository history also adds a newest `WORKTREE` row whenever the checkout is dirty. Opening that
 row previews the complete live worktree against `HEAD`, including untracked files; it does not move
 the editor cursor or create an additional jump action.

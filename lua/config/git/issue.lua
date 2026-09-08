@@ -53,25 +53,13 @@ function M.lines(github_record)
         github_record.number
       )
     or ('GitHub #%d'):format(github_record.number)
-  local commit_shas = github_record.commit_shas or {}
   local commit_lines = {}
   if github_record.kind == 'Pull request' then
-    local commit_count = github_record.commit_count or #commit_shas
-    local commit_shas_complete = github_record.commit_shas_complete ~= false
-    if commit_shas_complete then
-      for index, commit_sha in ipairs(commit_shas) do
-        commit_lines[index] = ('Commit %d: `%s`'):format(index, commit_sha)
-      end
-    elseif #commit_shas == 1 then
-      commit_lines[1] = ('Commits: %d · list unavailable'):format(commit_count)
-      commit_lines[2] = ('Head commit: `%s`'):format(commit_shas[1])
-    elseif #commit_shas > 0 then
-      commit_lines[1] = ('Commits: showing %d of %d'):format(#commit_shas, commit_count)
-      for index, commit_sha in ipairs(commit_shas) do
-        commit_lines[index + 1] = ('Commit %d: `%s`'):format(index, commit_sha)
-      end
-    elseif commit_count > 0 then
-      commit_lines[1] = ('Commits: %d · list unavailable'):format(commit_count)
+    if github_record.commit_count and github_record.commit_count > 0 then
+      commit_lines[#commit_lines + 1] = ('Commits: %d'):format(github_record.commit_count)
+    end
+    if github_record.commit_sha then
+      commit_lines[#commit_lines + 1] = ('Head commit: `%s`'):format(github_record.commit_sha)
     end
   end
   local rendered_lines = {
@@ -100,7 +88,9 @@ function M.lines(github_record)
   vim.list_extend(rendered_lines, { '', '## Discussion', '' })
   local discussion = github_record.discussion or {}
   if #discussion == 0 then
-    local discussion_status = github_record.comments == 0
+    local discussion_status = github_record.discussion_loading
+        and ('_Loading %d comments…_'):format(github_record.comments)
+      or github_record.comments == 0
         and '_No discussion._'
       or ('_Discussion could not be loaded; open GitHub to view %d comments._'):format(
         github_record.comments
@@ -184,6 +174,12 @@ end
 
 local function close_detail(reopen_results)
   local detail = active_detail
+  local pending_request = pending_direct_request
+  if detail
+      and pending_request
+      and detail.request_generation == pending_request.generation then
+    cancel_pending_direct_request()
+  end
   active_detail = nil
   if not detail then
     return false
@@ -288,9 +284,11 @@ local function attach_mappings(buffer, root, fetch_related)
 end
 
 function M.open_file(root, github_record, options)
-  cancel_pending_direct_request()
-  close_detail(false)
   local detail_options = options or {}
+  if not detail_options.preserve_pending_request then
+    cancel_pending_direct_request()
+  end
+  close_detail(false)
   local parent_tabpage = detail_options.parent_tabpage or vim.api.nvim_get_current_tabpage()
   local parent_window = detail_options.parent_window or vim.api.nvim_get_current_win()
   local fetch_related = detail_options.fetch_related or function(issue_number, callback)
@@ -305,11 +303,9 @@ function M.open_file(root, github_record, options)
   vim.bo[detail_buffer].swapfile = false
   vim.api.nvim_buf_set_name(detail_buffer, buffer_name(root, github_record))
   M.render_buffer(detail_buffer, github_record)
-  local commit_shas = github_record.commit_shas or {}
   local commit_title = github_record.kind == 'Pull request'
-      and #commit_shas > 0
-      and (' · %s'):format(commit_shas[1]:sub(1, 12)
-        .. (#commit_shas > 1 and (' +%d'):format(#commit_shas - 1) or ''))
+      and github_record.commit_sha
+      and (' · %s'):format(github_record.commit_sha:sub(1, 12))
     or ''
   local available_width = math.max(1, vim.o.columns - 4)
   local available_height = math.max(1, vim.o.lines - 4)
@@ -342,6 +338,7 @@ function M.open_file(root, github_record, options)
     buffer = detail_buffer,
     parent_tabpage = parent_tabpage,
     parent_window = parent_window,
+    request_generation = detail_options.request_generation,
     return_to_results = detail_options.return_to_results,
     window = detail_window,
   }
@@ -363,24 +360,8 @@ function M.open_url(target)
   local parent_tabpage = vim.api.nvim_get_current_tabpage()
   local parent_window = vim.api.nvim_get_current_win()
   local request_completed = false
-  vim.notify(
-    ('GitHub %s #%d: loading detail…'):format(
-      record_reference.kind:lower(),
-      record_reference.number
-    ),
-    vim.log.levels.INFO
-  )
-  local cancel_request = github.fetch_record(record_reference, function(github_record)
-    request_completed = true
-    if request_generation ~= direct_request_generation then
-      return
-    end
-    pending_direct_request = nil
-    clear_loading_message()
-    if not github_record then
-      open_target.open_external(target)
-      return
-    end
+  local summary_rendered = false
+  local function open_record(github_record, preserve_pending_request)
     local remote = record_reference.remote
     local function fetch_related(issue_number, callback)
       return github.fetch_record({
@@ -388,12 +369,59 @@ function M.open_url(target)
         remote = remote,
       }, callback)
     end
-    M.open_file(remote.repository, github_record, {
+    return M.open_file(remote.repository, github_record, {
       fetch_related = fetch_related,
       parent_tabpage = parent_tabpage,
       parent_window = parent_window,
+      preserve_pending_request = preserve_pending_request,
+      request_generation = preserve_pending_request and request_generation or nil,
     })
-  end)
+  end
+  vim.notify(
+    ('GitHub %s #%d: loading detail…'):format(
+      record_reference.kind:lower(),
+      record_reference.number
+    ),
+    vim.log.levels.INFO
+  )
+  local cancel_request = github.fetch_record(record_reference, function(github_record, record_error)
+    request_completed = true
+    if request_generation ~= direct_request_generation then
+      return
+    end
+    pending_direct_request = nil
+    clear_loading_message()
+    if not github_record then
+      vim.notify(
+        ('GitHub detail unavailable: %s; opening in external browser'):format(
+          record_error or 'unknown provider error'
+        ),
+        vim.log.levels.WARN
+      )
+      open_target.open_external(target)
+      return
+    end
+    if summary_rendered then
+      local detail = active_detail
+      if detail
+          and detail.request_generation == request_generation
+          and detail.buffer
+          and vim.api.nvim_buf_is_valid(detail.buffer) then
+        M.render_buffer(detail.buffer, github_record)
+      end
+      return
+    end
+    open_record(github_record, false)
+  end, {
+    on_summary = function(github_record)
+      if request_generation ~= direct_request_generation then
+        return
+      end
+      summary_rendered = true
+      clear_loading_message()
+      open_record(github_record, true)
+    end,
+  })
   if not request_completed then
     pending_direct_request = {
       cancel = cancel_request,

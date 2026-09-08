@@ -1683,6 +1683,15 @@ vim.api.nvim_win_set_buf = original_set_editor_buffer
 vim.schedule = original_schedule
 vim.defer_fn = original_return_defer
 vim.cmd = original_cmd
+local opened_view_count_during_return = #opened_views
+assert(
+  diffview.open_file_history({ kind = 'repository', location = { root = '/work/repository' } }) == nil,
+  'Git teardown accepted a delayed history mount'
+)
+assert(
+  #opened_views == opened_view_count_during_return,
+  'Git teardown mounted another history before the current view disposed'
+)
 assert(
   vim.fs.normalize(vim.api.nvim_buf_get_name(0)) == editor_target_path
     and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
@@ -1728,8 +1737,9 @@ pending_return_close()
 assert(vim.wait(100, function()
   return return_view.closed
     and settled_reentry_calls == 1
+    and #opened_views == opened_view_count_during_return
     and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
-end, 10), 'Git teardown did not preserve the already interactive editor target')
+end, 10), 'Git teardown did not preserve the editor or reject a delayed history mount')
 assert(
   branch_info_visible and statusline_branch_refreshes == 2,
   'Diffview teardown erased restored branch state'

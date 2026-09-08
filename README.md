@@ -46,7 +46,13 @@ installation honors `lazy-lock.json`; plugin updates are a separate maintenance 
 
 Open the project dashboard with `<Space>h`. The leader policy and complete defaults live in
 [Default keybindings](docs/keybindings.md). Normal-mode `a` is intentionally disabled; use `i` or
-`A` when entering Insert mode.
+`A` when entering Insert mode. Active floating dialogs keep mouse and window focus away from their
+background panes until the dialog closes. Use `gx` on a local path or inline Markdown link; GitHub
+issue and pull-request links open in the editor detail float when available, and explain any fallback
+before opening the external browser. Pull-request detail uses the primary summary response without
+loading the full commit list, and opens the detail float before loading discussion in the background.
+Git history entry keys open one root Git mode at a time; use
+`<Space>de` for search within it and `<C-q>` before opening another history scope.
 
 ## Main Modules
 

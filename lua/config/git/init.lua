@@ -125,6 +125,14 @@ local function mount_history_while_resolving_head(history_options)
 end
 
 local function open_history(kind)
+  local git_diffview = require('config.git.diffview')
+  if git_diffview.is_active() then
+    vim.notify(
+      'Git mode is already active; use <Space>de to search or <C-q> to close it',
+      vim.log.levels.INFO
+    )
+    return false
+  end
   history_request_generation = history_request_generation + 1
   local request_generation = history_request_generation
   local location, location_error
@@ -135,11 +143,11 @@ local function open_history(kind)
   end
   if not location then
     vim.notify(location_error, vim.log.levels.INFO)
-    return
+    return false
   end
 
   if kind ~= 'symbol' then
-    mount_history_while_resolving_head({
+    local mounted_view = mount_history_while_resolving_head({
       kind = kind,
       location = location,
       -- Generic post-render landing: an explicit open of the traced file places
@@ -149,7 +157,7 @@ local function open_history(kind)
         line = vim.api.nvim_win_get_cursor(0)[1],
       } or nil,
     })
-    return
+    return mounted_view ~= nil
   end
 
   local source_buffer = location.buffer
@@ -160,7 +168,8 @@ local function open_history(kind)
     source_cursor[2],
     function(structure, parse_error)
       if request_generation ~= history_request_generation
-          or not vim.api.nvim_buf_is_valid(source_buffer) then
+          or not vim.api.nvim_buf_is_valid(source_buffer)
+          or git_diffview.is_active() then
         return
       end
       if parse_error then
@@ -189,18 +198,19 @@ local function open_history(kind)
       })
     end
   )
+  return true
 end
 
 function M.history_file()
-  open_history('file')
+  return open_history('file')
 end
 
 function M.history_symbol()
-  open_history('symbol')
+  return open_history('symbol')
 end
 
 function M.history_repository()
-  open_history('repository')
+  return open_history('repository')
 end
 
 resolve_history_head_options = function(history_options, callback, progress_callback)

@@ -344,6 +344,7 @@ local replacement_call
 local direct_search_call
 local deferred_git_action
 local defer_git_search = false
+local git_mode_active = false
 local focus_history_result = false
 local focus_history_calls = 0
 local anchor_logs = {}
@@ -422,7 +423,7 @@ package.loaded['config.git.diffview'] = {
     return true
   end,
   is_active = function()
-    return false
+    return git_mode_active
   end,
   defer_until_settled = function(action_name, action_callback)
     if not defer_git_search then
@@ -517,8 +518,25 @@ local original_detect_repository = project.detect_repository
 project.detect_repository = function()
   return '/work/repository'
 end
+local active_history_command_count = #started_commands
+local active_history_mount_count = #history_operation_order
+local active_symbol_resolution_count = symbol_resolution_calls
+git_mode_active = true
+assert(
+  not git.history_file()
+    and not git.history_symbol()
+    and not git.history_repository(),
+  'An active Git mode accepted another root history request'
+)
+git_mode_active = false
+assert(
+  #started_commands == active_history_command_count
+    and #history_operation_order == active_history_mount_count
+    and symbol_resolution_calls == active_symbol_resolution_count,
+  'A nested Git history request crossed an acquisition or mount boundary'
+)
 overview_options = nil
-git.history_file()
+assert(git.history_file(), 'File history request was not accepted from the editor')
 assert(
   overview_options
     and overview_options.kind == 'file'
@@ -528,13 +546,28 @@ assert(
   'File history performed unnecessary cursor-symbol parsing or lost its scoped path'
 )
 overview_options = nil
-git.history_symbol()
+assert(git.history_symbol(), 'Symbol history request was not accepted from the editor')
 assert(
   overview_options == nil
     and symbol_resolution_calls == 1
     and type(pending_symbol_resolution) == 'function',
   'Symbol history blocked instead of waiting on cooperative Tree-sitter resolution'
 )
+local pending_nested_symbol_resolution = pending_symbol_resolution
+git_mode_active = true
+pending_nested_symbol_resolution({
+  first_line = 40,
+  label = 'MasterService::run',
+  last_line = 90,
+  node_type = 'function_definition',
+})
+git_mode_active = false
+assert(
+  overview_options == nil,
+  'A pending symbol lookup mounted a second root Git history'
+)
+assert(git.history_symbol(), 'A later symbol history request was not accepted from the editor')
+assert(symbol_resolution_calls == 2 and type(pending_symbol_resolution) == 'function')
 pending_symbol_resolution({
   first_line = 40,
   label = 'MasterService::run',

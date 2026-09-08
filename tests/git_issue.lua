@@ -2,6 +2,7 @@ local original_github = package.loaded['config.git.github']
 local original_issue = package.loaded['config.git.issue']
 local original_ui_open = vim.ui.open
 local original_nvim_echo = vim.api.nvim_echo
+local original_notify = vim.notify
 local original_treesitter = package.loaded['config.syntax.treesitter']
 local issue_requests = {}
 local direct_record_requests = {}
@@ -9,6 +10,11 @@ local opened_urls = {}
 local opener_waited = false
 local cleared_loading_messages = 0
 local highlighted_buffers = {}
+local notifications = {}
+
+rawset(vim, 'notify', function(message, level)
+  notifications[#notifications + 1] = { level = level, message = message }
+end)
 
 package.loaded['config.syntax.treesitter'] = {
   ensure_highlighting = function(buffer)
@@ -43,12 +49,17 @@ package.loaded['config.git.github'] = {
     }
     return function() end
   end,
-  fetch_record = function(record_reference, callback)
-    direct_record_requests[#direct_record_requests + 1] = {
+  fetch_record = function(record_reference, callback, options)
+    local direct_record_request = {
       callback = callback,
+      cancelled = false,
+      options = options,
       record_reference = record_reference,
     }
-    return function() end
+    direct_record_requests[#direct_record_requests + 1] = direct_record_request
+    return function()
+      direct_record_request.cancelled = true
+    end
   end,
   parse_record_url = function(target)
     local resource_segment, issue_number = target:match(
@@ -156,32 +167,17 @@ local pull_request = vim.deepcopy(issue)
 pull_request.kind = 'Pull request'
 pull_request.html_url = 'https://github.com/moon-hotel/Mooncake/pull/3452'
 pull_request.commit_count = 3
-pull_request.commit_shas = {
-  string.rep('a', 40),
-  string.rep('b', 40),
-  string.rep('c', 40),
-}
-pull_request.commit_shas_complete = true
+pull_request.commit_sha = string.rep('c', 40)
 local rendered_pull_request_text = table.concat(issue_view.lines(pull_request), '\n')
 assert(
   rendered_pull_request_text:match('%*%*Pull request · OPEN · REMOTE%*%*')
     and rendered_pull_request_text:match('Mooncake/pull/3452')
-    and rendered_pull_request_text:match('Commit 1: `' .. string.rep('a', 40) .. '`')
-    and rendered_pull_request_text:match('Commit 3: `' .. string.rep('c', 40) .. '`')
+    and rendered_pull_request_text:match('Commits: 3')
+    and rendered_pull_request_text:match('Head commit: `' .. string.rep('c', 40) .. '`')
+    and not rendered_pull_request_text:match('Commit 1:')
     and rendered_pull_request_text:match('## Discussion')
     and rendered_pull_request_text:match('Second complete discussion reply'),
-  'Pull request detail did not reuse the issue body and discussion render pipeline'
-)
-local partial_pull_request = vim.deepcopy(pull_request)
-partial_pull_request.commit_count = 6
-partial_pull_request.commit_shas = { string.rep('f', 40) }
-partial_pull_request.commit_shas_complete = false
-local partial_pull_request_text = table.concat(issue_view.lines(partial_pull_request), '\n')
-assert(
-  partial_pull_request_text:match('Commits: 6 · list unavailable')
-    and partial_pull_request_text:match('Head commit: `' .. string.rep('f', 40) .. '`')
-    and not partial_pull_request_text:match('Commit 1:'),
-  'Incomplete PR commit metadata mislabeled the head SHA as the first and only commit'
+  'Pull request detail did not retain its summary, body, and discussion pipeline'
 )
 assert(
   vim.wo[0].foldenable
@@ -318,7 +314,16 @@ assert(
   'Direct pull-request URL did not start one shared provider request before rendering'
 )
 local clears_before_pull_resolution = cleared_loading_messages
-direct_record_requests[1].callback(pull_request, nil)
+local pull_request_summary = vim.deepcopy(pull_request)
+pull_request_summary.discussion = {}
+pull_request_summary.discussion_complete = false
+pull_request_summary.discussion_loading = true
+assert(
+  direct_record_requests[1].options
+    and type(direct_record_requests[1].options.on_summary) == 'function',
+  'Direct pull-request lookup did not request progressive summary rendering'
+)
+direct_record_requests[1].options.on_summary(pull_request_summary)
 assert(vim.wait(100, function()
   return issue_view.is_active()
 end, 10), 'Resolved direct pull request did not open the GitHub detail float')
@@ -335,20 +340,53 @@ assert(
   vim.api.nvim_buf_get_name(direct_pull_buffer)
       == 'github://moon-hotel/Mooncake/pull/3452'
     and direct_pull_text:match('%*%*Pull request · OPEN · REMOTE%*%*')
-    and direct_pull_text:match('Second complete discussion reply'),
-  'Direct pull request did not reuse the issue detail buffer and discussion renderer'
+    and direct_pull_text:match('Loading 2 comments')
+    and not direct_pull_text:match('Second complete discussion reply')
+    and not direct_record_requests[1].cancelled,
+  'Direct pull request did not render its summary while discussion remained cancellable'
+)
+direct_record_requests[1].callback(pull_request, nil)
+local enriched_pull_text = table.concat(
+  vim.api.nvim_buf_get_lines(direct_pull_buffer, 0, -1, false),
+  '\n'
+)
+assert(
+  enriched_pull_text:match('Second complete discussion reply')
+    and not enriched_pull_text:match('Loading 2 comments'),
+  'Direct pull request did not update the existing detail with its discussion'
 )
 assert(issue_view.close(), 'Direct pull-request detail did not close')
+
+local cancellable_pull_url = 'https://github.com/moon-hotel/Mooncake/pull/4000'
+assert(issue_view.open_url(cancellable_pull_url), 'Cancellable pull-request URL was not accepted')
+local cancellable_pull_request = vim.deepcopy(pull_request_summary)
+cancellable_pull_request.number = 4000
+cancellable_pull_request.html_url = cancellable_pull_url
+direct_record_requests[2].options.on_summary(cancellable_pull_request)
+assert(issue_view.is_active(), 'Cancellable pull-request summary did not open its detail')
+assert(issue_view.close(), 'Progressive pull-request detail did not close')
+assert(
+  direct_record_requests[2].cancelled and not issue_view.is_active(),
+  'Closing progressive pull-request detail did not cancel discussion loading'
+)
 
 local direct_issue_url = 'https://github.com/moon-hotel/Mooncake/issues/999'
 assert(issue_view.open_url(direct_issue_url), 'Direct issue URL was not accepted')
 local clears_before_issue_fallback = cleared_loading_messages
-direct_record_requests[2].callback(nil, 'network unavailable')
+direct_record_requests[3].callback(nil, 'network unavailable')
 assert(
   opened_urls[#opened_urls] == direct_issue_url
     and not issue_view.is_active()
     and cleared_loading_messages == clears_before_issue_fallback + 1,
   'Failed direct issue rendering did not fall back to the external URL opener'
+)
+local fallback_notification = notifications[#notifications]
+assert(
+  fallback_notification
+    and fallback_notification.level == vim.log.levels.WARN
+    and fallback_notification.message:match('network unavailable')
+    and fallback_notification.message:match('opening in external browser'),
+  'Failed direct issue rendering did not explain its browser fallback'
 )
 
 package.loaded['config.git.github'] = original_github
@@ -356,3 +394,4 @@ package.loaded['config.git.issue'] = original_issue
 package.loaded['config.syntax.treesitter'] = original_treesitter
 vim.ui.open = original_ui_open
 vim.api.nvim_echo = original_nvim_echo
+rawset(vim, 'notify', original_notify)

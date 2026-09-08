@@ -2,6 +2,43 @@ local float = require('config.ui.float')
 
 assert(float.input_close_key == '<C-q>', 'float input close key changed')
 assert(float.normal_close_key == 'q', 'float normal close key changed')
+float.setup()
+
+local background_window = vim.api.nvim_get_current_win()
+local dialog_buffer = vim.api.nvim_create_buf(false, true)
+local dialog_window = vim.api.nvim_open_win(dialog_buffer, true, {
+  relative = 'editor',
+  row = 1,
+  col = 1,
+  width = 20,
+  height = 2,
+  focusable = true,
+  style = 'minimal',
+})
+vim.api.nvim_set_current_win(background_window)
+assert(vim.wait(100, function()
+  return vim.api.nvim_get_current_win() == dialog_window
+end, 1), 'background pane retained focus while a floating dialog was active')
+
+local nested_buffer = vim.api.nvim_create_buf(false, true)
+local nested_window = vim.api.nvim_open_win(nested_buffer, true, {
+  relative = 'editor',
+  row = 4,
+  col = 1,
+  width = 20,
+  height = 2,
+  focusable = true,
+  style = 'minimal',
+})
+assert(
+  vim.api.nvim_get_current_win() == nested_window,
+  'focus lock rejected another floating dialog window'
+)
+vim.api.nvim_win_close(nested_window, true)
+vim.api.nvim_win_close(dialog_window, true)
+assert(vim.wait(100, function()
+  return vim.api.nvim_get_current_win() == background_window
+end, 1), 'closing floating dialogs did not release the background pane')
 
 local input_buffer = vim.api.nvim_create_buf(false, true)
 local close_calls = 0

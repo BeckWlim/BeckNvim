@@ -38,7 +38,7 @@ lua/
 | `config/ui/filetree.lua` | Nvim-tree mappings, window-switching Tab preservation, and project-boundary confirmation |
 | `config/ui/open_target.lua` | Shared URL routing/handoff and confirmed local-file navigation for global and feature-owned actions |
 | `config/ui/terminal.lua` | ToggleTerm-local escape from terminal input to scrollable Normal mode |
-| `config/ui/float.lua` | Shared close-key policy for ordinary editable and read-only floating windows |
+| `config/ui/float.lua` | Shared close-key and background-focus lock policy for ordinary floating dialogs |
 | `config/search/workspace_symbols.lua` | Project-wide definition search and Telescope result entries |
 | `config/search/query_picker.lua` | Empty-first Telescope lifecycle, incremental refresh, status, and cancellation |
 | `config/search/lsp_locations.lua` | Cancellable LSP definition, declaration, reference, type, and implementation queries |
@@ -96,8 +96,11 @@ generation/cancellation principle while retaining their own native renderers.
 
 ## Uniform Floating-Window Behavior
 
-`config.ui.float` is the single definition of ordinary float close behavior. Callers provide a
-buffer and close callback, or a Telescope-compatible mapping callback. Editable floats opt into
+`config.ui.float` is the single definition of ordinary float close and focus-lock behavior. While a
+focusable float is active, attempts to focus a non-floating window in the same tab are returned to
+that float; focus may still move between floating panes, and closing the active float releases its
+lock. Callers provide a buffer and close callback, or a Telescope-compatible mapping callback.
+Editable floats opt into
 `accepts_input`: insert-mode `q` remains content and `<C-q>` closes; after returning to normal mode,
 `q` closes and `<C-q>` remains unbound for Visual Block. Read-only floats receive only normal-mode
 `q`. Window layout, rendering, and feature-specific actions remain in their owning modules.
@@ -314,7 +317,12 @@ publishes stable `phase`, `ready`,
 not subscribe to raw Diffview callbacks or mutate lifecycle state. Event payloads contain only
 generation, kind, phase, outcome, detail, and path metadata—never Diffview view/window objects.
 
-The complete tab is one lifecycle unit. Each mounted history receives a monotonically increasing
+The complete tab is one lifecycle unit. Public file, symbol, and repository history entry points
+reject a second root history while any Git mode is active; `<Space>de` is the sole temporary layer
+entry from an existing history. A pending symbol-resolution callback repeats that active-view guard
+before mounting, so it cannot race a newer Git pane. History requests made during teardown are
+rejected instead of being retained by a polling retry and remounting after the editor handoff.
+Each mounted history receives a monotonically increasing
 generation and moves through explicit mounting/listing/enriching/rendering/ready/returning/closing/
 disposed phases, with `failed` as an explicit terminal work state. Every asynchronous
 callback checks both its view generation and render
@@ -428,10 +436,12 @@ same URL action in Telescope previews and detail buffers, so it opens the struct
 instead of delegating to Neovim's generic Markdown URL extraction. The detached opener is not waited
 on because WSL `explorer.exe` can return a nonzero status after successfully handing the URL to
 Windows; synchronous handler-discovery failures remain visible. Global Normal and Visual `gx` use
-the same compatibility layer. It resolves rendered Markdown labels before falling back to Neovim's
-cursor and selection target discovery, so concealed destinations remain reachable. GitHub
+the same compatibility layer. It resolves inline Markdown labels in any buffer before falling back
+to Neovim's cursor and selection target discovery, so concealed destinations remain reachable even
+when a Markdown-rendering surface uses a specialized filetype. GitHub
 `/issues/<number>` and `/pull/<number>` targets first resolve through the same provider and open the
-same detail float; failure falls back to the asynchronous browser handoff. Direct PR resolution
+same detail float; failure emits a warning with the provider error before falling back to the
+asynchronous browser handoff. Direct PR resolution
 carries its resource kind through the public-page fallback, preserving `/pull/` and the shared
 body-and-discussion renderer. Local
 file targets resolve from the current buffer and ask in the command-line footer whether to use the
@@ -460,13 +470,16 @@ available. A failed or rate-limited REST request falls back to embedded React or
 records, with Open Graph metadata last. Public-page transport has bounded connection/transfer times
 and retries transient failures. Conversation comments use the
 same authenticated GitHub CLI when available, otherwise a bounded REST request retrieves up to 100
-comments; failure to enrich discussion does not discard an already resolved issue or pull request.
+comments. Direct `gx` navigation publishes the resolved record immediately, opens the existing
+detail float with an explicit discussion-loading state, and replaces that state in place when the
+optional comment request settles. Closing or replacing the float cancels that request through the
+same generation-owned direct-request lifecycle. Failure to enrich discussion does not discard an
+already resolved issue or pull request.
 SSH Git authorization remains owned by Git and is never extracted as an HTTP
 credential. GitHub issue and pull-request metadata receives the shared proxy environment explicitly.
 Pull-request acquisition treats the detail endpoint's numeric commit count and head SHA as summary
-metadata, then loads up to 100 ordered commit hashes from the bounded PR-commits endpoint. If that
-optional enrichment fails or the PR exceeds the cap, the detail card labels the known hashes as
-partial instead of presenting the head SHA as the PR's first and only commit.
+metadata and does not request the full commit list, so the detail float is not delayed by a second
+PR-specific network round trip. The detail card shows only the count and head SHA.
 The Markdown detail preserves the complete available body and ordinary `j`/`k` and page scrolling.
 An HTTP 404 is a structured absent result rather than a provider error. If every configured remote
 confirms absence, no remote row is emitted for that exact-number query. Connectivity, parsing, and

@@ -20,10 +20,7 @@ local function split_file_reference(target)
   return path_text, fragment_text
 end
 
-local function markdown_destination_at_cursor()
-  if vim.bo.filetype ~= 'markdown' then
-    return nil
-  end
+local function inline_markdown_destination_at_cursor()
   local cursor_column = vim.api.nvim_win_get_cursor(0)[2] + 1
   local current_line = vim.api.nvim_get_current_line()
   local search_start = 1
@@ -172,8 +169,7 @@ local function open_file_reference(file_reference)
       display_path
     ),
     '&Yes (current window)\n&No\n&Vertical split\n&Horizontal split',
-    2,
-    'Question'
+    2
   )
   if confirmation == 0 or confirmation == 2 then
     return false
@@ -215,12 +211,46 @@ local function open_github_record(target)
   if not target:lower():match('^https?://[^/]*github[^/]*/') then
     return false
   end
-  local module_loaded, issue_view = pcall(require, 'config.git.issue')
-  if not module_loaded or type(issue_view.open_url) ~= 'function' then
+  local module_error
+  local issue_view
+  local module_loaded = xpcall(function()
+    issue_view = require('config.git.issue')
+  end, function(execution_error)
+    module_error = tostring(execution_error)
+  end)
+  if not module_loaded then
+    vim.notify(
+      ('GitHub detail provider failed to load: %s; opening in external browser'):format(
+        module_error or 'unknown error'
+      ),
+      vim.log.levels.WARN
+    )
     return false
   end
-  local render_started, target_handled = pcall(issue_view.open_url, target)
-  return render_started and target_handled == true
+  if type(issue_view.open_url) ~= 'function' then
+    vim.notify(
+      'GitHub detail provider is unavailable; opening in external browser',
+      vim.log.levels.WARN
+    )
+    return false
+  end
+  local handler_error
+  local target_handled
+  local handler_succeeded = xpcall(function()
+    target_handled = issue_view.open_url(target)
+  end, function(execution_error)
+    handler_error = tostring(execution_error)
+  end)
+  if not handler_succeeded then
+    vim.notify(
+      ('GitHub detail opener failed: %s; opening in external browser'):format(
+        handler_error or 'unknown error'
+      ),
+      vim.log.levels.WARN
+    )
+    return false
+  end
+  return target_handled == true
 end
 
 function M.open_external(target)
@@ -246,7 +276,7 @@ function M.open(target)
 end
 
 function M.open_at_cursor()
-  local markdown_destination = markdown_destination_at_cursor()
+  local markdown_destination = inline_markdown_destination_at_cursor()
   local cursor_targets = markdown_destination
       and { markdown_destination }
     or require('vim.ui')._get_urls()

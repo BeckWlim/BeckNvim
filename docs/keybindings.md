@@ -16,6 +16,9 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 
 ## Git Mode
 
+The history entry keys are editor entry points and do not mount a second Git pane while Git mode is
+already active.
+
 | Key | Action |
 | --- | --- |
 | `<Space>de` | Search branches, commits, issues, and pull requests |
@@ -36,6 +39,7 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 | `gr` / `gI` | Find references/go to implementation |
 | `<Space>rn` | Rename symbol |
 | `<Space>cc` | Walk outward through syntax context |
+| `gx` | Open a local path or URI; GitHub records prefer the editor detail float |
 | `<Space>t` | Open Chinese/English translation |
 | `:Proxy` | Inspect or change the session HTTP proxy |
 
