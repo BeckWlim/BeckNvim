@@ -20,6 +20,8 @@ move HEAD when buffers or the worktree are dirty. Selecting a branch reviews it 
 
 `<C-q>` pops one layer. From history it opens the corresponding working-tree file when it exists,
 without copying the historical cursor position; otherwise it restores the untouched editor.
+Git code panes and the returned working-tree window retain the editor's line-number settings, even
+when Git mode was opened from the intentionally gutterless homepage.
 
 See [Default keybindings](keybindings.md) for controls and [Architecture](architecture.md) for
 ownership and state-machine details.

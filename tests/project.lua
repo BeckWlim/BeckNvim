@@ -63,6 +63,34 @@ assert(
 rawset(vim.lsp, 'get_clients', original_get_clients)
 vim.api.nvim_buf_delete(lsp_buffer, { force = true })
 
+local original_window_directory = vim.fn.getcwd(0)
+local activated_event
+vim.api.nvim_create_autocmd('User', {
+  pattern = project.root_changed_pattern,
+  once = true,
+  callback = function(event)
+    activated_event = event.data
+  end,
+})
+local activated_root = project.activate(lsp_root .. '/')
+assert(activated_root == lsp_root, 'project activation did not normalize its root')
+assert(vim.fn.getcwd(0) == lsp_root, 'project activation did not update the window directory')
+assert(
+  activated_event
+    and activated_event.root == lsp_root
+    and activated_event.tabpage == vim.api.nvim_get_current_tabpage(),
+  'project activation did not publish its authoritative root transition'
+)
+local retained_activation = project.current_activation()
+assert(
+  retained_activation
+    and retained_activation.generation == activated_event.generation
+    and retained_activation.root == activated_event.root
+    and type(activated_event.generation) == 'number',
+  'project activation gate did not retain its current generation'
+)
+vim.cmd('lcd ' .. vim.fn.fnameescape(original_window_directory))
+
 local git_root = vim.fs.joinpath(temporary_root, 'repository')
 local environment_root = vim.fs.joinpath(git_root, 'python')
 local source_path = vim.fs.joinpath(environment_root, 'src', 'main.py')

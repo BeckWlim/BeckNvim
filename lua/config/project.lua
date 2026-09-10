@@ -1,5 +1,9 @@
 local M = {}
 local repository_provider_cache = {}
+local root_generation = 0
+local activation_variable = 'project_root_activation'
+
+M.root_changed_pattern = 'ProjectRootChanged'
 
 -- Root authority, from strongest to weakest:
 --   1. The nearest Git repository root.
@@ -124,6 +128,43 @@ end
 
 function M.for_path(path)
   return M.resolve_path(path) or vim.fs.normalize(vim.uv.cwd())
+end
+
+function M.activate(root)
+  local normalized_root = vim.fs.normalize(root)
+  local activated_tabpage = vim.api.nvim_get_current_tabpage()
+  vim.cmd('lcd ' .. vim.fn.fnameescape(normalized_root))
+  root_generation = root_generation + 1
+  local activation = {
+    generation = root_generation,
+    root = normalized_root,
+    tabpage = activated_tabpage,
+  }
+  vim.api.nvim_tabpage_set_var(activated_tabpage, activation_variable, activation)
+  vim.api.nvim_exec_autocmds('User', {
+    pattern = M.root_changed_pattern,
+    data = activation,
+    modeline = false,
+  })
+  return normalized_root
+end
+
+function M.current_activation(tabpage)
+  local selected_tabpage = type(tabpage) == 'number'
+      and tabpage
+    or vim.api.nvim_get_current_tabpage()
+  if not vim.api.nvim_tabpage_is_valid(selected_tabpage) then
+    return
+  end
+  local activation_found, current_activation = pcall(
+    vim.api.nvim_tabpage_get_var,
+    selected_tabpage,
+    activation_variable
+  )
+  if not activation_found or type(current_activation) ~= 'table' then
+    return
+  end
+  return current_activation
 end
 
 function M.has_marker(root, markers)

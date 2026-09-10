@@ -56,13 +56,28 @@ local function map_editing_aids()
   local open_target = require('config.ui.open_target')
   local folds = require('config.syntax.folds')
   local navigation = require('config.search.navigation')
+  local syntax_selection = require('config.syntax.selection')
   local treesitter_context = require('config.syntax.treesitter_context')
 
+  syntax_selection.setup()
+
   map('a', '<Nop>', 'Disable append mode')
+  vim.keymap.set('x', 'q', '<Esc>', {
+    silent = true,
+    desc = 'Exit Visual mode',
+  })
   map('<Space>zz', folds.toggle, 'Toggle code fold')
   map('<Space>zc', 'zM', 'Close all code folds')
   map('<Space>zo', 'zR', 'Open all code folds')
   map('<Space>cc', treesitter_context.go_to_nearest_context, 'Go to nearest enclosing context')
+  vim.keymap.set({ 'n', 'x' }, '<Space>vj', syntax_selection.select_previous, {
+    silent = true,
+    desc = 'Select current or previous source symbol',
+  })
+  vim.keymap.set({ 'n', 'x' }, '<Space>vl', syntax_selection.select_next, {
+    silent = true,
+    desc = 'Select current or next source symbol',
+  })
 
   map('<Space>gf', navigation.goto_referenced_file, 'Go to referenced file')
   map('<Space>gv', function()

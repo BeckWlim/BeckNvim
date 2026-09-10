@@ -7,6 +7,8 @@ local selected_node = { name = '..' }
 local opened_node
 local parent_change_count = 0
 local node_change_count = 0
+local synchronized_roots = {}
+local active_activation
 package.loaded['nvim-tree.api'] = {
   node = {
     open = {
@@ -16,6 +18,9 @@ package.loaded['nvim-tree.api'] = {
     },
   },
   tree = {
+    change_root = function(root)
+      synchronized_roots[#synchronized_roots + 1] = root
+    end,
     change_root_to_parent = function()
       parent_change_count = parent_change_count + 1
     end,
@@ -24,6 +29,9 @@ package.loaded['nvim-tree.api'] = {
     end,
     get_node_under_cursor = function()
       return selected_node
+    end,
+    winid = function()
+      return nil
     end,
   },
   map = {
@@ -39,6 +47,10 @@ package.loaded['nvim-tree.api'] = {
   },
 }
 package.loaded['config.project'] = {
+  root_changed_pattern = 'ProjectRootChanged',
+  current_activation = function()
+    return active_activation
+  end,
   resolve_path = function(path)
     if path:sub(1, 13) == '/projects/one' then
       return '/projects/one'
@@ -52,6 +64,32 @@ package.loaded['config.project'] = {
 package.loaded['config.ui.filetree'] = nil
 
 local filetree = require('config.ui.filetree')
+filetree.setup()
+active_activation = {
+  generation = 1,
+  root = '/projects/two',
+  tabpage = vim.api.nvim_get_current_tabpage(),
+}
+vim.api.nvim_exec_autocmds('User', {
+  pattern = 'ProjectRootChanged',
+  data = active_activation,
+})
+active_activation = {
+  generation = 2,
+  root = '/projects/one',
+  tabpage = vim.api.nvim_get_current_tabpage(),
+}
+vim.api.nvim_exec_autocmds('User', {
+  pattern = 'ProjectRootChanged',
+  data = active_activation,
+})
+assert(
+  vim.wait(1000, function()
+    return synchronized_roots[#synchronized_roots] == '/projects/one'
+  end),
+  'file tree did not follow the authoritative project-root transition'
+)
+assert(#synchronized_roots == 1, 'file tree applied a stale queued project-root transition')
 filetree.on_attach(tree_buffer)
 local tree_mappings = vim.api.nvim_buf_get_keymap(tree_buffer, 'n')
 assert(
@@ -129,6 +167,7 @@ assert(
 )
 
 vim.api.nvim_buf_delete(tree_buffer, { force = true })
+pcall(vim.api.nvim_del_augroup_by_name, 'project_filetree_sync')
 package.loaded['nvim-tree.api'] = original_nvim_tree_api
 package.loaded['config.ui.filetree'] = original_filetree
 package.loaded['config.project'] = original_project

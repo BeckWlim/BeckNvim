@@ -9,6 +9,7 @@ local replaced_modules = {
   'config.search.lsp_locations',
   'config.git',
   'config.search.navigation',
+  'config.syntax.selection',
   'config.translation',
   'config.syntax.treesitter_context',
   'config.type_hierarchy',
@@ -53,6 +54,11 @@ package.loaded['config.search.navigation'] = {
   goto_referenced_file = no_op,
   goto_referenced_file_in_split = no_op,
 }
+package.loaded['config.syntax.selection'] = {
+  select_next = no_op,
+  select_previous = no_op,
+  setup = no_op,
+}
 package.loaded['config.translation'] = { open = no_op }
 package.loaded['config.syntax.treesitter_context'] = { go_to_nearest_context = no_op }
 package.loaded['config.type_hierarchy'] = {
@@ -79,7 +85,7 @@ local expected_mappings = {
   '<Space>wv', '<Space>ws', '<Space>wq', '<Space>wo',
   '<Space>ri', '<Space>rk', '<Space>rj', '<Space>rl', '<Space>r=',
   '<Tab>', '<S-Tab>', '<Space>o', '<Space>p',
-  'a', '<Space>zz', '<Space>zc', '<Space>zo', '<Space>cc',
+  'a', '<Space>zz', '<Space>zc', '<Space>zo', '<Space>cc', '<Space>vj', '<Space>vl',
   '<Space>gf', '<Space>gv', '<Space>gx', 'gx',
   '<F3>', '<Space>h', '<Space>mp', '<Space>t',
   '<Space>ff', '<Space>fv', '<Space>fg', '<Space>fb', '<Space>fr',
@@ -108,6 +114,32 @@ assert(
   'Expected visual-mode gx mapping is missing'
 )
 
+local visual_quit_mapping = vim.fn.maparg('q', 'x', false, true)
+assert(
+  type(visual_quit_mapping) == 'table'
+    and visual_quit_mapping.lhs == 'q'
+    and visual_quit_mapping.rhs == '<Esc>',
+  'Visual-mode q does not exit Visual mode'
+)
+assert(visual_quit_mapping.desc == 'Exit Visual mode', 'Visual-mode q has no description')
+
+for _, lhs in ipairs({ '<Space>vj', '<Space>vl' }) do
+  local mapping = vim.fn.maparg(lhs, 'x', false, true)
+  assert(
+    type(mapping) == 'table' and mapping.lhs == lhs and mapping.callback,
+    'Expected semantic visual mapping is missing: ' .. lhs
+  )
+  assert(mapping.desc and mapping.desc ~= '', 'Visual mapping has no description: ' .. lhs)
+end
+for _, lhs in ipairs({ '<Space>vs', '<Space>vc', '<Space>vS' }) do
+  for _, mode in ipairs({ 'n', 'x' }) do
+    assert(
+      vim.tbl_isempty(vim.fn.maparg(lhs, mode, false, true)),
+      'Obsolete semantic-selection mapping is still present: ' .. lhs
+    )
+  end
+end
+
 vim.fn.maparg('<Space>de', 'n', false, true).callback()
 assert(git_search_calls == 1, 'Space-de did not open standalone repository Git search')
 
@@ -126,6 +158,10 @@ for _, lhs in ipairs(expected_mappings) do
   vim.keymap.del('n', lhs)
 end
 vim.keymap.del('x', 'gx')
+vim.keymap.del('x', 'q')
+for _, lhs in ipairs({ '<Space>vj', '<Space>vl' }) do
+  vim.keymap.del('x', lhs)
+end
 for _, module_name in ipairs(replaced_modules) do
   package.loaded[module_name] = original_modules[module_name]
 end

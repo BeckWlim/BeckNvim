@@ -9,7 +9,8 @@ lua/
 │   ├── init.lua                  Startup assembly
 │   ├── project.lua               Project-root authority and path containment
 │   ├── startup/                  options.lua, autocmds.lua, lazy.lua, keybindings.lua
-│   ├── ui/                       float.lua, folder_picker.lua, dashboard.lua, statusline.lua, filetree.lua, terminal.lua
+│   ├── ui/                       window_state.lua, float.lua, folder_picker.lua, dashboard.lua,
+│   │                             statusline.lua, filetree.lua, terminal.lua
 │   ├── search/                   telescope.lua, query_picker.lua, workspace_symbols.lua,
 │   │                             lsp_locations.lua, grep_preview.lua, navigation.lua
 │   ├── git/                      init.lua (workflow), diffview.lua (history UI), github.lua and
@@ -30,12 +31,13 @@ lua/
 
 | Module | Responsibility |
 | --- | --- |
-| `config/project.lua` | Project-root authority, path containment, markers, and cached Git-host detection |
+| `config/project.lua` | Project-root authority, activation gate, path containment, markers, and cached Git-host detection |
 | `config/startup/` | Editor options, global autocmds, lazy.nvim bootstrap, and the single keymap assembly |
+| `config/ui/window_state.lua` | Registered special-surface state gate for resolving editor-facing window options across UI transitions |
 | `config/ui/statusline.lua` | Explicit project identity and project-relative current-file state |
 | `config/ui/dashboard.lua` | Bounded project drawer, project-relative MRU state, and dashboard actions |
 | `config/ui/folder_picker.lua` | Reusable Telescope directory browsing, path input, completion, and adaptive sizing |
-| `config/ui/filetree.lua` | Nvim-tree mappings, window-switching Tab preservation, and project-boundary confirmation |
+| `config/ui/filetree.lua` | Nvim-tree mappings, authoritative root synchronization, window-switching Tab preservation, and project-boundary confirmation |
 | `config/ui/open_target.lua` | Shared URL routing/handoff and confirmed local-file navigation for global and feature-owned actions |
 | `config/ui/terminal.lua` | ToggleTerm-local escape from terminal input to scrollable Normal mode |
 | `config/ui/float.lua` | Shared close-key and background-focus lock policy for ordinary floating dialogs |
@@ -62,7 +64,7 @@ lua/
 | `config/lsp/type_information.lua` | Toggleable hover inference and type-definition preview for LSP languages |
 | `config/lsp/diagnostics.lua` | Diagnostic float and document diagnostic picker wiring |
 | `config/lsp/detail_window.lua` | Shared focus, same-key close, and copy behavior for detail windows |
-| `config/syntax/` | Parser installation and highlighting bootstrap (`treesitter.lua`), Treesitter pinned context, scope and rainbow visuals, highlight policy, and folds |
+| `config/syntax/` | Parser installation and highlighting bootstrap (`treesitter.lua`), identifier selection and navigation (`selection.lua`), Treesitter pinned context, scope and rainbow visuals, highlight policy, and folds |
 | `config/type_hierarchy/` | Recursive class and implementation pickers: `init.lua` dispatches by filetype, `python.lua` owns the indexed AST paths and Python source parsing, `lsp.lua` owns the live-request paths, `core.lua` owns shared picker plumbing and walk bookkeeping |
 | `config/translation/` | Translation query window (`init.lua`) plus backend construction and response parsing (`providers.lua`) |
 | `config/python/environment.lua` | Python interpreter and environment resolution |
@@ -301,6 +303,12 @@ real pinned Tree-sitter context inside the focused code pane. The pinned source 
 restrained light-green declaration background with a distinct brighter-green lower boundary. The
 remaining code render is reduced to syntax
 foregrounds, one ordinary cursor-line background, and Diffview's add/change/delete backgrounds.
+Each root Git view resolves the current window through `config.ui.window_state` and captures the
+editor's absolute/relative line-number intent before Diffview creates its tab. It reapplies that
+intent to both code panes after every layout and to the returned working-tree window before the
+first editor redraw. Special surfaces register their own resolver with the shared gate: the
+dashboard exposes its saved editor options rather than its deliberately gutterless presentation.
+Diffview's commit/file footer remains natively unnumbered.
 Render completion synchronizes Tree-sitter independently for both Diffview file buffers rather than
 depending on which pane happened to receive the last `FileType` or window-enter event.
 No history render performs an automatic declaration lookup, fold reveal, or cursor jump. Diffview's
@@ -629,13 +637,22 @@ Project-root authority belongs to `config/project.lua`. Git repository roots out
 roots; LSP roots outrank `.venv`, language manifest, and build-file fallbacks. Consumers must use
 this shared policy instead of maintaining their own marker order. Language-server startup markers
 remain with `config/lsp/init.lua`. Mason installation coverage is maintained in the same LSP module.
+Explicit project activation also passes through `config.project.activate`, which updates the current
+window-local directory and publishes one authoritative, tab-owned root generation; closing the tab
+tears down that retained state with it. UI consumers subscribe to the transition instead of inferring
+project changes from unrelated buffer or directory events. The file-tree subscriber queues the
+latest generation for the next event-loop turn and rejects stale generations before updating
+nvim-tree's root and window-local directory.
 
 `dashboard-nvim` remains responsible for the homepage buffer lifecycle. The local
 `dashboard.theme.project` module delegates its compact rendering and navigation to
 `config.ui.dashboard`; recent files come from `vim.v.oldfiles`, are grouped through the shared project
 authority policy, and are capped before rendering. Activating a project updates the dashboard
-window's local working directory and context in place; it does not create an empty file buffer or
-open the file tree.
+window's local working directory and context in place; an existing file tree follows the same root
+without being opened or focused. The dashboard restores editor window options on `BufWinLeave`, not
+ordinary `BufLeave`, so switching to Git mode does not expose a line-number gutter on the preserved
+homepage. Its registered window-state resolver still lets Git panes and returned files inherit the
+underlying editor line-number intent.
 
 Project audits share project context through `config.project`; each audit module owns its own task
 or diagnostic state.

@@ -8,7 +8,7 @@ one restrained visual system while preserving native plugin behavior wherever po
 
 - Project dashboard with recent projects, files, and a shared directory picker.
 - Fast file, text, symbol, definition, reference, and type-hierarchy workflows.
-- Tree-sitter highlighting, folding, breadcrumbs, and pinned class/function context.
+- Tree-sitter highlighting, folding, identifier-wise visual selection, breadcrumbs, and pinned class/function context.
 - Unified Git inspection for file, symbol, and repository history plus branch/commit/issue search.
 - Diffview-owned commit expansion, collapse, file selection, and native footer presentation.
 - Width-aware Markdown, diagnostics, completion, terminals, translation, and proxy tools.
@@ -45,14 +45,18 @@ installation honors `lazy-lock.json`; plugin updates are a separate maintenance 
 `:checkhealth`, `:Lazy check`, and `:Mason` if a capability is unavailable.
 
 Open the project dashboard with `<Space>h`. The leader policy and complete defaults live in
-[Default keybindings](docs/keybindings.md). Normal-mode `a` is intentionally disabled; use `i` or
-`A` when entering Insert mode. Active floating dialogs keep mouse and window focus away from their
+[Default keybindings](docs/keybindings.md). Activating a dashboard project or opening one of its
+recent files keeps an existing file tree on that project root. Normal-mode `a` is intentionally
+disabled; use `i` or `A` when entering Insert mode. Visual-mode `q` exits the selection while
+Normal-mode `q` retains native macro recording. Active floating dialogs keep mouse and window focus away from their
 background panes until the dialog closes. Use `gx` on a local path or inline Markdown link; GitHub
 issue and pull-request links open in the editor detail float when available, and explain any fallback
 before opening the external browser. Pull-request detail uses the primary summary response without
 loading the full commit list, and opens the detail float before loading discussion in the background.
 Git history entry keys open one root Git mode at a time; use
 `<Space>de` for search within it and `<C-q>` before opening another history scope.
+Git code panes and returned files retain the editor's line-number settings without flashing a gutter
+on the preserved dashboard during the handoff.
 
 ## Main Modules
 

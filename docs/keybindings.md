@@ -39,6 +39,7 @@ already active.
 | `gr` / `gI` | Find references/go to implementation |
 | `<Space>rn` | Rename symbol |
 | `<Space>cc` | Walk outward through syntax context |
+| `<Space>vj` / `<Space>vl` | Select the identifier at the cursor; repeat to move to the previous/next identifier |
 | `gx` | Open a local path or URI; GitHub records prefer the editor detail float |
 | `<Space>t` | Open Chinese/English translation |
 | `:Proxy` | Inspect or change the session HTTP proxy |
@@ -47,6 +48,7 @@ already active.
 
 | Key | Action |
 | --- | --- |
+| `q` | Exit Visual mode; retains macro recording in Normal mode |
 | `a` | Disabled in Normal mode; use `i` or `A` to enter Insert mode |
 
 Use `:map` and plugin help to inspect context-specific mappings without duplicating upstream docs.

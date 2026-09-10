@@ -22,6 +22,10 @@ return {
         },
       },
     },
+    config = function(_, opts)
+      require('nvim-tree').setup(opts)
+      require('config.ui.filetree').setup()
+    end,
   },
   {
     'akinsho/toggleterm.nvim',

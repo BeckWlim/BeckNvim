@@ -1,4 +1,5 @@
 local M = {}
+local window_state = require('config.ui.window_state')
 local dashboard_namespace = vim.api.nvim_create_namespace('project_dashboard')
 local dashboard_states = {}
 local requested_context
@@ -574,9 +575,7 @@ local function schedule_initial_render(state)
 end
 
 function M.activate_project(project_path)
-  local normalized_project_path = vim.fs.normalize(project_path)
-  vim.cmd('lcd ' .. vim.fn.fnameescape(normalized_project_path))
-  return normalized_project_path
+  return require('config.project').activate(project_path)
 end
 
 local function open_selected_file(state)
@@ -585,7 +584,7 @@ local function open_selected_file(state)
   if not project_entry or not file_entry then
     return
   end
-  vim.cmd('lcd ' .. vim.fn.fnameescape(project_entry.root))
+  M.activate_project(project_entry.root)
   vim.cmd('edit ' .. vim.fn.fnameescape(file_entry.path))
 end
 
@@ -856,7 +855,7 @@ function M.attach(bufnr, winid, projects, context)
     end,
     desc = 'Release project dashboard state',
   })
-  vim.api.nvim_create_autocmd({ 'BufLeave', 'BufWipeout' }, {
+  vim.api.nvim_create_autocmd({ 'BufWinLeave', 'BufWipeout' }, {
     buffer = bufnr,
     once = true,
     callback = function()
@@ -866,6 +865,12 @@ function M.attach(bufnr, winid, projects, context)
   })
   return bufnr
 end
+
+window_state.register('dashboard', function(winid)
+  local dashboard_buffer = vim.api.nvim_win_get_buf(winid)
+  local state = dashboard_states[dashboard_buffer]
+  return state and state.original_window_options or nil
+end)
 
 function M.options()
   return {

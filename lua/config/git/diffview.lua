@@ -3,6 +3,7 @@ local footer_loader = require('config.git.footer_loader')
 local panel = require('config.git.panel')
 local lifecycle = require('config.git.lifecycle')
 local events = require('config.git.events')
+local window_state = require('config.ui.window_state')
 
 local M = {}
 local footer_annotation_namespace = vim.api.nvim_create_namespace('config-git-history-footer')
@@ -47,6 +48,58 @@ end
 local function active_view()
   local diffview_lib = package.loaded['diffview.lib']
   return diffview_lib and diffview_lib.get_current_view()
+end
+
+local function current_editor_line_number_options()
+  local current_window = vim.api.nvim_get_current_win()
+  local resolved_options = assert(
+    window_state.resolve(current_window, { 'number', 'relativenumber' }),
+    'current editor window became invalid while opening Git history'
+  )
+  return {
+    number = resolved_options.number == true,
+    relativenumber = resolved_options.relativenumber == true,
+  }
+end
+
+local function resolve_editor_line_number_options(history_options)
+  local parent_view = history_options.parent_view
+  local inherited_options = parent_view and parent_view.git_editor_line_number_options
+  local source_options = history_options.editor_line_number_options
+    or inherited_options
+    or current_editor_line_number_options()
+  return {
+    number = source_options.number == true,
+    relativenumber = source_options.relativenumber == true,
+  }
+end
+
+local function apply_editor_line_number_options_to_window(view, window_id)
+  local line_number_options = view and view.git_editor_line_number_options
+  if not line_number_options
+      or not window_id
+      or not vim.api.nvim_win_is_valid(window_id) then
+    return false
+  end
+  vim.wo[window_id].number = line_number_options.number
+  vim.wo[window_id].relativenumber = line_number_options.relativenumber
+  return true
+end
+
+local function apply_editor_line_number_options(view)
+  local current_layout = view and view.cur_layout
+  if not current_layout then
+    return false
+  end
+  local applied = false
+  for _, side in ipairs({ 'a', 'b' }) do
+    local diff_window = current_layout[side]
+    local window_id = diff_window and diff_window.id
+    if apply_editor_line_number_options_to_window(view, window_id) then
+      applied = true
+    end
+  end
+  return applied
 end
 
 local function cancel_pending_history_request()
@@ -835,6 +888,7 @@ local function apply_editor_return_message(view, message)
       if vim.api.nvim_win_get_buf(editor_window) ~= message.buffer then
         vim.api.nvim_win_set_buf(editor_window, message.buffer)
       end
+      apply_editor_line_number_options_to_window(view, editor_window)
       if vim.api.nvim_get_current_win() ~= editor_window then
         vim.api.nvim_set_current_win(editor_window)
       end
@@ -894,6 +948,7 @@ function M.return_to_editor_line()
   end, function()
     if vim.api.nvim_buf_is_valid(return_message.buffer)
         and vim.api.nvim_get_current_buf() == return_message.buffer then
+      apply_editor_line_number_options_to_window(view, vim.api.nvim_get_current_win())
       refresh_editor_branch()
       pcall(vim.cmd, 'redrawstatus')
     end
@@ -2201,6 +2256,7 @@ local function attach_history_behavior(view, history_kind)
         ) then
       return
     end
+    apply_editor_line_number_options(view)
     local implicit_initial_file = view.git_implicit_history_file == file
     if implicit_initial_file then
       view.git_implicit_history_file = nil
@@ -2306,6 +2362,7 @@ local function attach_history_behavior(view, history_kind)
         ) then
       return
     end
+    apply_editor_line_number_options(view)
     request_footer_decoration(view)
   end)
 end
@@ -3161,6 +3218,9 @@ function M.apply_history_context(view, options)
   if not M.finish_history_head_request(view) then
     return false
   end
+  history_options.editor_line_number_options = vim.deepcopy(
+    view.git_editor_line_number_options
+  )
   history_options.head_resolution_pending = nil
   history_options.render_ready_callback = nil
   view.git_anchor_plan = vim.deepcopy(history_options.anchor_plan)
@@ -3179,7 +3239,7 @@ end
 
 function M.open_file_history(options)
   ensure_loaded()
-  local history_options = options or {}
+  local history_options = vim.deepcopy(options or {})
   if state.closing then
     vim.notify(
       'Git history is unavailable while the current Git mode is closing',
@@ -3192,6 +3252,8 @@ function M.open_file_history(options)
     vim.notify('Diffview history requires a repository location', vim.log.levels.INFO)
     return
   end
+  local editor_line_number_options = resolve_editor_line_number_options(history_options)
+  history_options.editor_line_number_options = vim.deepcopy(editor_line_number_options)
 
   local history_args = {
     '-C' .. location.root,
@@ -3221,6 +3283,7 @@ function M.open_file_history(options)
   view.git_footer_tree = history_options.kind == 'file' or history_options.kind == 'symbol'
   view.git_footer_enriching = view.git_footer_tree
   view.git_diff_opened = false
+  view.git_editor_line_number_options = editor_line_number_options
   view.git_history_options = vim.deepcopy(history_options)
   view.git_history_options.render_ready_callback = nil
   view.git_branch_name = history_options.branch_name
@@ -3246,6 +3309,7 @@ function M.open_file_history(options)
   vim.notify(('Git history: loading %s'):format(history_scope), vim.log.levels.INFO)
   attach_history_behavior(view, history_options.kind)
   view:open()
+  apply_editor_line_number_options(view)
   attach_footer_loader(view, history_options)
   update_history_panel_winbar(view)
   pcall(vim.cmd, 'redraw')
@@ -3314,6 +3378,9 @@ function M.replace_file_history(previous_view, history_options)
   end
   local replacement_options = vim.deepcopy(history_options or {})
   replacement_options.parent_view = nil
+  replacement_options.editor_line_number_options = vim.deepcopy(
+    previous_view.git_editor_line_number_options
+  )
   local requested_render_callback = replacement_options.render_ready_callback
   replacement_options.render_ready_callback = function(replacement_view, render_succeeded, detail)
     lifecycle.mark_closing(previous_view, 'replacement history rendered')

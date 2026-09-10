@@ -3,6 +3,7 @@ vim.opt.runtimepath:prepend(vim.fn.getcwd())
 for _, test_file in ipairs({
   'tests/project.lua',
   'tests/statusline.lua',
+  'tests/window_state.lua',
   'tests/folder_picker.lua',
   'tests/dashboard.lua',
   'tests/lsp.lua',
@@ -14,6 +15,7 @@ for _, test_file in ipairs({
   'tests/filetree.lua',
   'tests/folds.lua',
   'tests/treesitter.lua',
+  'tests/syntax_selection.lua',
   'tests/syntax_visuals.lua',
   'tests/highlights.lua',
   'tests/markdown.lua',

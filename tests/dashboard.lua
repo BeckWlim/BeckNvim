@@ -9,6 +9,7 @@ package.loaded['config.ui.folder_picker'] = {
 package.loaded['config.ui.dashboard'] = nil
 
 local dashboard = require('config.ui.dashboard')
+local window_state = require('config.ui.window_state')
 local temporary_root = vim.fn.tempname()
 local first_root = vim.fs.joinpath(temporary_root, 'alpha')
 local second_root = vim.fs.joinpath(temporary_root, 'beta')
@@ -93,6 +94,28 @@ assert(
 assert(not vim.wo[dashboard_window].number, 'dashboard retained the code line-number gutter')
 assert(not vim.wo[dashboard_window].relativenumber, 'dashboard retained relative line numbers')
 assert(vim.wo[dashboard_window].signcolumn == 'no', 'dashboard retained its sign gutter')
+assert(
+  vim.deep_equal(
+    window_state.resolve(dashboard_window, { 'number', 'relativenumber', 'signcolumn' }),
+    { number = true, relativenumber = true, signcolumn = 'auto' }
+  ),
+  'dashboard did not expose the underlying editor window options'
+)
+local dashboard_tabpage = vim.api.nvim_get_current_tabpage()
+vim.cmd('tabnew')
+assert(
+  not vim.wo[dashboard_window].number
+    and not vim.wo[dashboard_window].relativenumber
+    and vim.wo[dashboard_window].signcolumn == 'no',
+  'leaving the dashboard tab exposed the editor gutter on the preserved homepage'
+)
+vim.cmd('tabclose')
+assert(
+  vim.api.nvim_get_current_tabpage() == dashboard_tabpage
+    and not vim.wo[dashboard_window].number
+    and not vim.wo[dashboard_window].relativenumber,
+  'returning to the dashboard tab flashed line numbers before replacing its buffer'
+)
 local rendered_lines = vim.api.nvim_buf_get_lines(dashboard_buffer, 0, -1, false)
 local rendered_text = table.concat(rendered_lines, '\n')
 assert(rendered_text:find('', 1, true), 'dashboard omitted the compact title icon')

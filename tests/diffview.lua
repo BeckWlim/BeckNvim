@@ -8,6 +8,7 @@ local replaced_modules = {
   'config.syntax.treesitter',
   'config.syntax.treesitter_context',
   'config.ui.statusline',
+  'config.ui.window_state',
   'diffview',
   'diffview.actions',
   'diffview.async',
@@ -42,6 +43,14 @@ local footer_detail_requests = 0
 local pending_footer_detail
 local footer_attach_handlers
 local previous_editing_tabpage
+local line_number_test_state = {
+  option_request_count = 0,
+  option_request_count_before_history = 0,
+  options = {
+    number = true,
+    relativenumber = true,
+  },
+}
 
 package.loaded['config.git'] = {
   branches = function() end,
@@ -154,6 +163,13 @@ package.loaded['config.syntax.treesitter_context'] = {
 package.loaded['config.syntax.treesitter'] = {
   ensure_highlighting = function(buffer)
     syntax_highlight_buffers[#syntax_highlight_buffers + 1] = buffer
+  end,
+}
+package.loaded['config.ui.window_state'] = {
+  resolve = function()
+    line_number_test_state.option_request_count =
+      line_number_test_state.option_request_count + 1
+    return vim.deepcopy(line_number_test_state.options)
   end,
 }
 package.loaded['config.ui.statusline'] = {
@@ -1062,6 +1078,8 @@ local location = {
   relative_path = 'lua/example.lua',
   root = '/work/repository',
 }
+line_number_test_state.option_request_count_before_history =
+  line_number_test_state.option_request_count
 diffview.open_file_history({ kind = 'file', location = location })
 local branch_view = opened_views[1]
 assert(
@@ -1078,6 +1096,35 @@ assert(
     and branch_view.git_history_options.location.root == '/work/repository',
   'Branch Diffview did not retain the specification needed by temporary search'
 )
+do
+  assert(
+    line_number_test_state.option_request_count
+        == line_number_test_state.option_request_count_before_history + 1
+      and vim.deep_equal(
+        branch_view.git_editor_line_number_options,
+        line_number_test_state.options
+      ),
+    'Git history did not capture the editor line-number intent before mounting'
+  )
+  local inherited_code_window = vim.api.nvim_get_current_win()
+  local inherited_number = vim.wo[inherited_code_window].number
+  local inherited_relativenumber = vim.wo[inherited_code_window].relativenumber
+  vim.wo[inherited_code_window].number = false
+  vim.wo[inherited_code_window].relativenumber = false
+  branch_view.cur_layout = {
+    a = { id = inherited_code_window },
+    b = { id = inherited_code_window },
+  }
+  branch_view.events.post_layout()
+  assert(
+    vim.wo[inherited_code_window].number
+      and vim.wo[inherited_code_window].relativenumber,
+    'Git code panes inherited the dashboard gutter instead of editor intent'
+  )
+  vim.wo[inherited_code_window].number = inherited_number
+  vim.wo[inherited_code_window].relativenumber = inherited_relativenumber
+  branch_view.cur_layout = nil
+end
 assert(panel.level() == 'git', 'Opening branch history did not enter the Git panel layer')
 
 local rendered_window = vim.api.nvim_get_current_win()
@@ -1572,6 +1619,8 @@ vim.keymap.set('n', '<Space>de', function() end, {
 })
 local return_editor_window = vim.api.nvim_get_current_win()
 vim.api.nvim_win_set_cursor(return_editor_window, { 1, 0 })
+vim.wo[return_editor_window].number = false
+vim.wo[return_editor_window].relativenumber = false
 vim.cmd('tabnew')
 local git_tabpage = vim.api.nvim_get_current_tabpage()
 local historical_window = vim.api.nvim_get_current_win()
@@ -1606,6 +1655,10 @@ local return_view = {
   cur_layout = {
     b = { id = historical_window },
     windows = { { id = historical_window } },
+  },
+  git_editor_line_number_options = {
+    number = true,
+    relativenumber = true,
   },
   panel = {
     cur_item = { {}, { absolute_path = '/work/random-file.lua' } },
@@ -1670,6 +1723,11 @@ assert(
   vim.api.nvim_get_current_tabpage() == editor_tabpage,
   'Footer Ctrl-Q did not return to the editor tab immediately'
 )
+assert(
+  not vim.wo[return_editor_window].number
+    and not vim.wo[return_editor_window].relativenumber,
+  'Git return exposed an editor gutter on the preserved homepage frame'
+)
 local return_message_buffer = vim.fn.bufnr(editor_target_path)
 assert(return_message_buffer > 0, 'Git exit did not address a target buffer')
 assert(vim.b[return_message_buffer].git_return_cursor == nil,
@@ -1695,8 +1753,10 @@ assert(
 assert(
   vim.fs.normalize(vim.api.nvim_buf_get_name(0)) == editor_target_path
     and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
+    and vim.wo[return_editor_window].number
+    and vim.wo[return_editor_window].relativenumber
     and vim.b[return_message_buffer].git_return_cursor == nil,
-  'The editor return changed the cursor instead of only displaying the file'
+  'The editor return did not restore the file with editor line numbers'
 )
 assert(
   vim.deep_equal(return_phase_order, { 'jump', 'render' }),
@@ -1739,6 +1799,8 @@ assert(vim.wait(100, function()
     and settled_reentry_calls == 1
     and #opened_views == opened_view_count_during_return
     and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
+    and vim.wo[return_editor_window].number
+    and vim.wo[return_editor_window].relativenumber
 end, 10), 'Git teardown did not preserve the editor or reject a delayed history mount')
 assert(
   branch_info_visible and statusline_branch_refreshes == 2,

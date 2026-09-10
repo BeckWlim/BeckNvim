@@ -1,4 +1,99 @@
 local M = {}
+local sync_lifecycle = 0
+local pending_roots_by_tabpage = {}
+
+function M.sync_root(root, tabpage)
+  local normalized_root = vim.fs.normalize(root)
+  local api_loaded, api = pcall(require, 'nvim-tree.api')
+  if not api_loaded or type(api.tree) ~= 'table'
+      or type(api.tree.change_root) ~= 'function' then
+    return false
+  end
+
+  local selected_tabpage = type(tabpage) == 'number' and tabpage or 0
+  local winid_succeeded, resolved_tree_winid = pcall(function()
+    if type(api.tree.winid) == 'function' then
+      return api.tree.winid({ tabpage = selected_tabpage })
+    end
+  end)
+  local tree_winid = winid_succeeded and resolved_tree_winid or nil
+  local function apply_root()
+    if tree_winid and vim.api.nvim_win_is_valid(tree_winid) then
+      vim.cmd('lcd ' .. vim.fn.fnameescape(normalized_root))
+    end
+    api.tree.change_root(normalized_root)
+  end
+
+  if tree_winid and vim.api.nvim_win_is_valid(tree_winid) then
+    local sync_succeeded = pcall(vim.api.nvim_win_call, tree_winid, apply_root)
+    return sync_succeeded
+  end
+  local sync_succeeded = pcall(apply_root)
+  return sync_succeeded
+end
+
+function M.setup()
+  local project = require('config.project')
+  sync_lifecycle = sync_lifecycle + 1
+  local current_lifecycle = sync_lifecycle
+  pending_roots_by_tabpage = {}
+  local sync_group = vim.api.nvim_create_augroup('project_filetree_sync', { clear = true })
+
+  local function enqueue_root(activation)
+    if type(activation) ~= 'table'
+        or type(activation.root) ~= 'string'
+        or type(activation.tabpage) ~= 'number'
+        or type(activation.generation) ~= 'number' then
+      return
+    end
+    pending_roots_by_tabpage[activation.tabpage] = activation
+    vim.schedule(function()
+      if sync_lifecycle ~= current_lifecycle then
+        return
+      end
+      local pending_activation = pending_roots_by_tabpage[activation.tabpage]
+      if pending_activation ~= activation then
+        return
+      end
+      pending_roots_by_tabpage[activation.tabpage] = nil
+      if not vim.api.nvim_tabpage_is_valid(activation.tabpage) then
+        return
+      end
+      local authoritative_activation = project.current_activation(activation.tabpage)
+      if not authoritative_activation
+          or authoritative_activation.generation ~= activation.generation
+          or authoritative_activation.root ~= activation.root then
+        return
+      end
+      M.sync_root(activation.root, activation.tabpage)
+    end)
+  end
+
+  vim.api.nvim_create_autocmd('User', {
+    group = sync_group,
+    pattern = project.root_changed_pattern,
+    callback = function(event)
+      enqueue_root(event.data)
+    end,
+    desc = 'Synchronize the file tree with the active project root',
+  })
+  vim.api.nvim_create_autocmd('TabClosed', {
+    group = sync_group,
+    callback = function()
+      for tabpage in pairs(pending_roots_by_tabpage) do
+        if not vim.api.nvim_tabpage_is_valid(tabpage) then
+          pending_roots_by_tabpage[tabpage] = nil
+        end
+      end
+    end,
+    desc = 'Release queued file-tree project transitions',
+  })
+
+  local active_activation = project.current_activation()
+  if active_activation then
+    enqueue_root(active_activation)
+  end
+end
 
 local function detected_project_label(root)
   if not root then
