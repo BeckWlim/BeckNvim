@@ -137,26 +137,55 @@ table to fill its cap.
 Inline-code delimiters are concealed like ordinary rendered Markdown, while the cell adapter carries
 their span metadata through wrapping and renders each resulting fragment with a distinct key-like
 background and the resolved `@markup.raw.markdown_inline` purple foreground.
-When the cursor reaches the blank label row or any table source row, the render callback switches to
-a row-local layout: every header, delimiter, and body source row owns a stable semantic overlay and
-continuation extmark. Only the active row exposes raw source; changing rows updates the old and new
-row decorations without moving a table-wide virtual block. The renderer uses its supported
-one-millisecond event throttle, stages the complete next decoration set, and reconciles by semantic
-extmark key plus structural equality. Unchanged rows are not submitted to Neovim again; only the old
-and new active-row specifications can change. The namespace is therefore neither cleared nor
-structurally rebuilt between rows. Full
-clearing remains owned by the plugin's parse/disable/teardown lifecycle.
+Every header, delimiter, and body source row owns a stable semantic overlay and continuation
+extmark, including the row under the cursor. The source remains the buffer truth, so normal-mode
+motions traverse its original columns, while a window-column overlay keeps the table preview fixed
+on screen. Each overlay is padded through the raw line's display width; this masks the source without
+concealing it or changing cursor semantics. Between input keys the hidden native cursor is parked at
+the start of its source row, preventing Neovim's redraw from horizontally scrolling surrounding
+content to reveal an off-screen raw byte column. The key listener restores the logical source
+position immediately before mapped input is processed, and `CursorMoved` captures the resulting
+native position before parking again. In normal mode, Tree-sitter cell byte ranges map the raw
+cursor column through the same link, code, whitespace, UTF-8, and word-wrap transformation used by
+the preview. The matching wrapped cell fragment receives the shared `CursorLine` background, and a
+`Cursor`-styled proxy marks the corresponding rendered character. The native terminal cursor is
+hidden with a blend-only cursor group while that proxy is active in Normal or Visual mode, then
+restored on delimiter rows, other modes, buffer changes, disable, or teardown. The saved logical
+cursor remains the source position while its visible proxy can move between preview continuations.
+Characterwise and blockwise Visual modes use the same source-span mapping to apply Neovim's
+`Visual` background only to the corresponding rendered characters; linewise mode deliberately
+covers each selected rendered row. All three retain a proxy at the moving selection end.
+The table therefore stays rendered and exposes the selection while motions, operators, searches,
+and yank remain native buffer operations.
 
-Raw source and rendered cell wrapping can otherwise occupy different screen-line counts. The
-row-local interaction zone temporarily disables window soft wrapping and replaces the active row's
-rendered continuations with background-only height reservations. Each row retains the same total
-height through blank → header → delimiter → body focus transitions; leaving the interaction zone
-restores ordinary rendered Markdown wrapping. The `󰈙 table` label independently overlays the blank
-source line immediately before the table, so it adds no vertical margin. Tables without that
-predecessor retain a fixed virtual-line fallback. Because
-Neovim does not populate the number column for virtual lines, each source-backed render group carries
-its original row and reproduces the window's absolute or relative number in the gutter; continuation
-and decorative lines remain unnumbered. The source and virtual rows share the
+The adapter handles input, `CursorMoved`, and `ModeChanged` synchronously while the cursor or
+selection is in a table. It fixes the resting view at `leftcol=0`; operator-pending motions and
+Visual-mode yanks still run against the restored native source range, then return to the parked
+rendered state. Parsed widths and immutable wrapped rows
+are cached per window. Horizontal movement in one source row rebuilds and reconciles only that row's
+overlay and continuation extmarks; full layout work remains limited to source-row, mode, text, or
+window-geometry changes. The plugin's later scheduled render reuses the same cache and reasserts the
+viewport-specific no-wrap policy before returning, so it cannot briefly restore raw soft-wrap rows
+while a table is visible. The complete
+decoration set is still reconciled by semantic extmark key plus structural equality whenever a full
+render is required.
+
+Raw source and rendered cell wrapping can otherwise occupy different screen-line counts: Neovim
+still reserves wrapped screen rows for a concealed or overlaid source line, which appears as empty
+space below the preview. While a parsed table intersects the window's actual viewport, the adapter
+disables window soft wrapping so those phantom rows cannot corrupt the table display, including when
+the cursor is in nearby prose. The parser's off-screen lookahead does not affect this decision, so
+ordinary prose wrapping returns as soon as every table leaves the viewport. Horizontal motion over a
+long source line may create a nonzero
+window offset; the plugin normally clears rendering in that state, so the adapter preserves its
+table extmarks while either the normal-mode cursor or a visual selection intersects an enabled
+table. It refreshes the active fragment when applicable and reasserts the no-wrap policy. Insert
+mode, leaving the table, disabling rendering, and teardown still follow the plugin's normal clear
+lifecycle. The `󰈙 table` label independently overlays the blank source line immediately before the
+table, so it adds no vertical margin. Tables without that predecessor retain a fixed virtual-line
+fallback. Because Neovim does not populate the number column for virtual lines, each source-backed
+render group carries its original row and reproduces the window's absolute or relative number in the
+gutter; continuation and decorative lines remain unnumbered. The source and virtual rows share the
 subdued background of a fenced `text` block, a separate `󰈙 table` label precedes the header, and the
 two rules use a foreground dimmer than ordinary text.
 
@@ -631,7 +660,8 @@ declaration under the cursor and display class-qualified Python and C++ names.
 
 Place plugin declarations in `plugins/` and feature behavior in a responsibility-focused `config`
 module. Extend project-definition support by adding the file globs, definition pattern, parser, and
-focused fixture to `config.search.workspace_symbols` and `tests/workspace_symbols.lua`.
+focused fixture to `config.search.workspace_symbols` and
+`tests/search/workspace_symbols.lua`.
 
 Project-root authority belongs to `config/project.lua`. Git repository roots outrank attached LSP
 roots; LSP roots outrank `.venv`, language manifest, and build-file fallbacks. Consumers must use

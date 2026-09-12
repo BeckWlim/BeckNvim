@@ -1,0 +1,249 @@
+-- Focused tests for config.search.workspace_symbols.
+local symbols = require('config.search.workspace_symbols')
+
+local definition_cases = {
+  { 'example.py', 'class IndexedClass:', 'Class', 'IndexedClass' },
+  { 'example.py', 'async def fetch_record():', 'Function', 'fetch_record' },
+  { 'example.py', 'type Record[T] = list[T]', 'Type', 'Record' },
+  { 'example.py', 'ModelT = TypeVar("ModelT")', 'TypeVar', 'ModelT' },
+  { 'example.py', 'RecordId: TypeAlias = int', 'Type', 'RecordId' },
+  { 'example.py', 'record_count: int = 0', 'Variable', 'record_count' },
+  { 'example.lua', 'local function open_picker()', 'Function', 'open_picker' },
+  { 'example.sh', 'load_project() {', 'Function', 'load_project' },
+  { 'example.vim', 'def BuildIndex()', 'Function', 'BuildIndex' },
+  { 'example.cpp', 'struct ProjectSymbol {', 'Type', 'ProjectSymbol' },
+  { 'example.cpp', '#define SYMBOL_LIMIT 100', 'Macro', 'SYMBOL_LIMIT' },
+  { 'example.cpp', 'static const int PROJECT_LIMIT = 10;', 'Variable', 'PROJECT_LIMIT' },
+  {
+    'example.cpp',
+    'auto MasterService::PutStart(int value) -> bool {',
+    'Function',
+    'MasterService::PutStart',
+  },
+  {
+    'example.cpp',
+    'WrappedMasterService::PutStart(int value) {',
+    'Function',
+    'WrappedMasterService::PutStart',
+  },
+}
+
+for _, definition_case in ipairs(definition_cases) do
+  local parsed_definition = symbols.definition(definition_case[1], definition_case[2])
+  assert(parsed_definition, 'Failed to parse definition: ' .. definition_case[2])
+  assert(parsed_definition.kind == definition_case[3], 'Parsed the wrong definition kind')
+  assert(parsed_definition.name == definition_case[4], 'Parsed the wrong definition name')
+end
+
+local fixture_root = vim.fs.normalize(vim.fn.getcwd() .. '/tests/fixtures/symbol_project')
+for _, expected_name in ipairs({
+  'IndexedClass',
+  'indexed_symbol',
+  'ModelT',
+  'RecordId',
+  'open_picker',
+  'load_project',
+  'BuildIndex',
+  'ProjectSymbol',
+  'SYMBOL_LIMIT',
+  'PROJECT_LIMIT',
+  'MasterService::PutStart',
+  'WrappedMasterService::PutStart',
+}) do
+  local commands = symbols.commands(expected_name, fixture_root)
+  assert(commands, 'Project definition search did not build query commands')
+  local command_outputs = {}
+  for _, command in ipairs(commands) do
+    local command_result = vim.system(command, { text = true }):wait()
+    assert(
+      command_result.code == 0 or command_result.code == 1,
+      'Project definition search failed: ' .. command_result.stderr
+    )
+    table.insert(command_outputs, command_result.stdout)
+  end
+  local combined_output = table.concat(command_outputs, '\n')
+  assert(
+    combined_output:find(expected_name, 1, true),
+    'Project definition search omitted ' .. expected_name
+  )
+end
+assert(
+  symbols.definition('example.md', '## Project symbols') == nil,
+  'Markdown headings were included in project definition results'
+)
+local markdown_query_commands = symbols.commands('Project', fixture_root)
+assert(markdown_query_commands, 'Markdown exclusion query did not build definition commands')
+local markdown_query_output = {}
+for _, markdown_query_command in ipairs(markdown_query_commands) do
+  local markdown_query_result = vim.system(markdown_query_command, { text = true }):wait()
+  assert(
+    markdown_query_result.code == 0 or markdown_query_result.code == 1,
+    'Project definition search failed: ' .. markdown_query_result.stderr
+  )
+  table.insert(markdown_query_output, markdown_query_result.stdout)
+end
+assert(
+  not table.concat(markdown_query_output, '\n'):find('example.md', 1, true),
+  'Project definition commands included Markdown results'
+)
+assert(symbols.commands('', fixture_root) == nil, 'Empty definition query triggered a full scan')
+assert(symbols.commands('x', fixture_root) == nil, 'One-character query triggered a broad scan')
+
+local original_notify = vim.notify
+local loading_message
+rawset(vim, 'notify', function(message, _level)
+  loading_message = message
+end)
+symbols.open()
+rawset(vim, 'notify', original_notify)
+assert(loading_message == 'Project definition search is loading; retry shortly')
+
+symbols.setup()
+assert(vim.wait(1000, symbols.is_ready), 'Project definition search did not become ready')
+
+local original_get_clients = vim.lsp.get_clients
+local original_pickers = package.loaded['telescope.pickers']
+local original_config = package.loaded['telescope.config']
+local original_entry_display = package.loaded['telescope.pickers.entry_display']
+local original_make_entry = package.loaded['telescope.make_entry']
+local original_plenary_job = package.loaded['plenary.job']
+local picker_finder
+local picker_spec
+local picker_opened = false
+local fake_jobs = {}
+local FakeJob = {}
+
+function FakeJob:new(opts)
+  local fake_job = {
+    is_shutdown = false,
+  }
+  function fake_job:start() end
+  function fake_job:shutdown()
+    self.is_shutdown = true
+    opts.on_exit()
+  end
+  table.insert(fake_jobs, fake_job)
+  return fake_job
+end
+
+rawset(vim.lsp, 'get_clients', function()
+  return {}
+end)
+package.loaded['telescope.pickers'] = {
+  new = function(_, spec)
+    picker_finder = spec.finder
+    picker_spec = spec
+    return {
+      find = function()
+        picker_opened = true
+      end,
+    }
+  end,
+}
+package.loaded['telescope.config'] = {
+  values = {
+    grep_previewer = function()
+      return {}
+    end,
+    generic_sorter = function()
+      return {}
+    end,
+  },
+}
+package.loaded['telescope.pickers.entry_display'] = {
+  create = function()
+    return function(items)
+      return items
+    end
+  end,
+}
+package.loaded['plenary.job'] = FakeJob
+package.loaded['telescope.make_entry'] = {
+  gen_from_vimgrep = function()
+    return function()
+      return {}
+    end
+  end,
+}
+
+symbols.open()
+
+vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'local indexed_target = 1' })
+vim.api.nvim_win_set_cursor(0, { 1, 8 })
+symbols.open_for_cursor()
+assert(
+  picker_spec.default_text == 'indexed_target',
+  'Cursor-word definition search did not seed the cursor word'
+)
+vim.api.nvim_buf_set_lines(0, 0, -1, false, {})
+
+local historical_buffer = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_lines(historical_buffer, 0, -1, false, {
+  'local function before_commit()',
+  'end',
+  'local after_value = 1',
+})
+local historical_entries = symbols.buffer_definitions(
+  historical_buffer,
+  '/work/repository/example.lua',
+  '/work/repository'
+)
+assert(#historical_entries == 2, 'Historical-buffer search did not index in-memory definitions')
+assert(
+  historical_entries[1].symbol_name == 'before_commit'
+    and historical_entries[1].lnum == 1,
+  'Historical-buffer function entry lost its revision-local line'
+)
+assert(
+  historical_entries[2].symbol_name == 'after_value'
+    and historical_entries[2].lnum == 3,
+  'Historical-buffer variable entry lost its revision-local line'
+)
+local large_historical_source = {}
+for definition_index = 1, 1005 do
+  large_historical_source[definition_index] = ('local historical_%d = %d'):format(
+    definition_index,
+    definition_index
+  )
+end
+vim.api.nvim_buf_set_lines(historical_buffer, 0, -1, false, large_historical_source)
+assert(
+  #symbols.buffer_definitions(
+    historical_buffer,
+    '/work/repository/example.lua',
+    '/work/repository'
+  ) == 1000,
+  'Historical-buffer definition index exceeded its performance cap'
+)
+vim.api.nvim_buf_delete(historical_buffer, { force = true })
+
+rawset(vim.lsp, 'get_clients', original_get_clients)
+package.loaded['telescope.pickers'] = original_pickers
+package.loaded['telescope.config'] = original_config
+package.loaded['telescope.pickers.entry_display'] = original_entry_display
+package.loaded['telescope.make_entry'] = original_make_entry
+package.loaded['plenary.job'] = original_plenary_job
+
+assert(picker_opened, 'Project definition picker did not open directly')
+assert(type(picker_finder) == 'table', 'Project definitions did not use a live finder')
+local empty_query_completed = false
+picker_finder('', function() end, function()
+  empty_query_completed = true
+end)
+assert(empty_query_completed, 'Opening the picker triggered a full project scan')
+
+local first_query_completions = 0
+local second_query_completions = 0
+local superseded_job_count = #symbols.commands('Indexed', fixture_root)
+picker_finder('Indexed', function() end, function()
+  first_query_completions = first_query_completions + 1
+end)
+picker_finder('Project', function() end, function()
+  second_query_completions = second_query_completions + 1
+end)
+assert(first_query_completions == 0, 'Superseded definition query finalized a newer picker state')
+for job_index = 1, superseded_job_count do
+  assert(fake_jobs[job_index].is_shutdown, 'Superseded ripgrep job was not stopped')
+end
+picker_finder.close()
+assert(second_query_completions == 0, 'Closed definition query finalized the picker')

@@ -1,36 +1,51 @@
 # BeckNvim
 
-BeckNvim is a focused Neovim configuration for project navigation, semantic search, Git history,
-and readable code review. It keeps editor, Telescope, Diffview, Markdown, and syntax-context UI in
-one restrained visual system while preserving native plugin behavior wherever possible.
+BeckNvim is a project-oriented Neovim configuration focused on navigation, semantic search, Git
+inspection, language tooling, and readable code review. Its features share a consistent visual
+system while keeping native Neovim and plugin behavior wherever practical.
 
 ## Highlights
 
-- Project dashboard with recent projects, files, and a shared directory picker.
-- Fast file, text, symbol, definition, reference, and type-hierarchy workflows.
-- Tree-sitter highlighting, folding, identifier-wise visual selection, breadcrumbs, and pinned class/function context.
-- Unified Git inspection for file, symbol, and repository history plus branch/commit/issue search.
-- Diffview-owned commit expansion, collapse, file selection, and native footer presentation.
-- Width-aware Markdown, diagnostics, completion, terminals, translation, and proxy tools.
-- Asynchronous Git and network work with cancellation, bounded queues, and clean return paths.
+- Project dashboard, recent-project state, file browsing, and project-root synchronization.
+- Fast file, text, symbol, definition, reference, and type-hierarchy search.
+- Unified file, symbol, repository, branch, commit, issue, and pull-request inspection.
+- Diffview-based history review with bounded asynchronous loading and safe state transitions.
+- LSP completion, diagnostics, type information, and language-aware navigation.
+- Tree-sitter highlighting, folding, syntax context, scope visualization, and structural selection.
+- Readable Markdown rendering with responsive tables and stable native editing behavior.
+- Integrated terminal, translation, proxy management, and project diagnostics.
+
+## Main Modules
+
+| Module | Main responsibility |
+| --- | --- |
+| `config/startup/` | Editor options, autocmds, keymap assembly, and plugin bootstrap |
+| `config/project.lua` | Project-root discovery, activation, containment, and cached project state |
+| `config/ui/` | Dashboard, file tree, statusline, terminal, shared floats, and window state |
+| `config/search/` | Telescope configuration, project search, previews, and LSP location results |
+| `config/git/` | Git history workflows, Diffview lifecycle, repository data, and GitHub details |
+| `config/lsp/` | Language-server setup, completion, diagnostics, and type-information views |
+| `config/syntax/` | Tree-sitter setup, Markdown rendering, folds, highlights, and syntax context |
+| `config/type_hierarchy/` | Recursive class hierarchy and implementation discovery |
+| `config/python/` | Python environment resolution and hierarchy indexing |
+| `config/network/` | Proxy discovery, persistent session state, and proxy selection UI |
+| `config/translation/` | Translation interface, provider construction, and response parsing |
+| `config/audit/` | Project-wide diagnostic collection and audit coordination |
+| `plugins/` | Plugin declarations, dependencies, loading conditions, and setup |
+
+The complete ownership and lifecycle model is documented in
+[Architecture](docs/architecture.md).
 
 ## Installation
 
-### Requirements
+Requirements:
 
 - Neovim 0.11 or newer
 - Git, ripgrep, Python 3.10+, curl, wget, and unzip
-- make and a C compiler
 - Node.js, npm, and the tree-sitter CLI
-- CMake and Ninja for C/C++ build workflows
+- make, a C compiler, CMake, and Ninja
 - A Nerd Font
-
-For local system clipboard integration, install the provider that matches your display server:
-
-- X11: `xclip`
-- Wayland: `wl-clipboard`, which provides the `wl-copy` and `wl-paste` commands
-
-### Install
+- `xclip` on X11 or `wl-clipboard` on Wayland for system clipboard integration
 
 ```bash
 mv ~/.config/nvim ~/.config/nvim.bak
@@ -38,40 +53,8 @@ git clone https://github.com/BeckWlim/BeckNvim.git ~/.config/nvim
 nvim
 ```
 
-On first launch, lazy.nvim restores pinned plugins and Mason installs configured language servers.
-Mason manages language servers for Bash, C/C++, Lua, Markdown, Python, and Vim script. Required
-Python and C++ Tree-sitter parsers install when the CLI and compiler are available. Normal
-installation honors `lazy-lock.json`; plugin updates are a separate maintenance action. Run
-`:checkhealth`, `:Lazy check`, and `:Mason` if a capability is unavailable.
-
-Open the project dashboard with `<Space>h`. The leader policy and complete defaults live in
-[Default keybindings](docs/keybindings.md). Activating a dashboard project or opening one of its
-recent files keeps an existing file tree on that project root. Normal-mode `a` is intentionally
-disabled; use `i` or `A` when entering Insert mode. Visual-mode `q` exits the selection while
-Normal-mode `q` retains native macro recording. Active floating dialogs keep mouse and window focus away from their
-background panes until the dialog closes. Use `gx` on a local path or inline Markdown link; GitHub
-issue and pull-request links open in the editor detail float when available, and explain any fallback
-before opening the external browser. Pull-request detail uses the primary summary response without
-loading the full commit list, and opens the detail float before loading discussion in the background.
-Git history entry keys open one root Git mode at a time; use
-`<Space>de` for search within it and `<C-q>` before opening another history scope.
-Git code panes and returned files retain the editor's line-number settings without flashing a gutter
-on the preserved dashboard during the handoff.
-
-## Main Modules
-
-```text
-init.lua
-lua/config/
-├── startup/       bootstrap and startup policy
-├── search/        Telescope lifecycle, previews, and project search
-├── git/           repository boundary, search, Diffview, and panel lifecycle
-├── syntax/        Tree-sitter context, highlights, and visual policy
-├── lsp/           language navigation and type information
-├── ui/            dashboard, statusline, floats, and shared presentation
-├── network/       proxy discovery and session state
-└── translation/   translation workflow
-```
+On first launch, lazy.nvim restores pinned plugins and Mason installs the configured language
+servers. Plugin versions remain pinned by `lazy-lock.json` until explicitly updated.
 
 ## Documentation
 
