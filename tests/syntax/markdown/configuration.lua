@@ -10,23 +10,57 @@ end
 
 assert(markdown_spec, 'render-markdown plugin specification is missing')
 local markdown = require('config.syntax.markdown')
+local markdown_features = require('config.syntax.markdown_features')
 local markdown_handler = markdown_spec.opts.custom_handlers.markdown
 assert(
   markdown_handler == markdown.handler
     and markdown_handler.extends == true
     and markdown_handler.parse == markdown.parse,
-  'Markdown table adapter does not use the renderer custom-handler lifecycle'
+  'Markdown features do not use the renderer custom-handler lifecycle'
 )
 assert(
   markdown_spec.opts.on.attach == markdown.attach
     and markdown_spec.opts.on.clear == markdown.clear
     and markdown_spec.opts.on.render == markdown.render,
-  'Markdown table adapter is outside the renderer callback lifecycle'
+  'Markdown features are outside the renderer callback lifecycle'
 )
 assert(
   type(markdown.sync_cursor) == 'function',
   'Markdown table cursor updates are not available to the attach lifecycle'
 )
+assert(
+  type(markdown_features.request_render) == 'function',
+  'Markdown features do not share a re-render request pipeline'
+)
+assert(
+  type(markdown_features.apply) == 'function'
+    and type(markdown_features.update) == 'function'
+    and type(markdown_features.clear) == 'function'
+    and type(markdown_features.park_cursor) == 'function'
+    and type(markdown_features.dispatch) == 'function',
+  'Markdown features do not share persistent extmark operations'
+)
+
+local original_render_markdown = package.loaded['render-markdown']
+local requested_renders = {}
+package.loaded['render-markdown'] = {
+  render = function(context)
+    requested_renders[#requested_renders + 1] = context
+  end,
+}
+local request_buffer = vim.api.nvim_create_buf(false, true)
+markdown_features.request_render(request_buffer, 'TableRender')
+markdown_features.request_render(request_buffer, 'MermaidRender')
+assert(vim.wait(100, function()
+  return #requested_renders == 1
+end, 1), 'Markdown feature re-render requests were not scheduled')
+assert(
+  requested_renders[1].buf == request_buffer
+    and requested_renders[1].event == 'MermaidRender',
+  'Markdown feature re-render requests were not coalesced with the latest reason'
+)
+vim.api.nvim_buf_delete(request_buffer, { force = true })
+package.loaded['render-markdown'] = original_render_markdown
 
 local cursor_event_buffer = vim.api.nvim_create_buf(false, true)
 markdown.attach({ buf = cursor_event_buffer })
@@ -48,8 +82,19 @@ assert(
   'built-in pipe-table rendering conflicts with the equal-width adapter'
 )
 assert(
+  vim.deep_equal(markdown_spec.opts.code.disable, { 'mermaid' }),
+  'built-in Mermaid code rendering conflicts with the custom feature adapter'
+)
+assert(
   markdown_spec.opts.debounce == 1,
   'Markdown table cursor-row focus retains a visible debounce interval'
+)
+assert(
+  vim.deep_equal(
+    markdown_spec.opts.render_modes,
+    { 'n', 'c', 't', 'v', 'V', '\22' }
+  ),
+  'Markdown rendering is not retained across Normal and Visual modes'
 )
 assert(
   markdown.cell_margins.left == 1

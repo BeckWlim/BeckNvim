@@ -85,7 +85,7 @@ local function includes_highlight(highlights, expected)
 end
 
 local function highlighted_display_width(buffer, row, highlight)
-  local namespace = vim.api.nvim_get_namespaces().markdown_tables
+  local namespace = vim.api.nvim_get_namespaces().markdown_features
   local width = 0
   for _, extmark in ipairs(vim.api.nvim_buf_get_extmarks(
     buffer,

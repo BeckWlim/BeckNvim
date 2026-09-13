@@ -41,6 +41,7 @@ already active.
 | `<Space>cc` | Walk outward through syntax context |
 | `<Space>vj` / `<Space>vl` | Select the identifier at the cursor; repeat to move to the previous/next identifier |
 | `gx` | Open a local path or URI; GitHub records prefer the editor detail float |
+| `<Space>mp` | Toggle inline Markdown presentation |
 | `<Space>t` | Open Chinese/English translation |
 | `:Proxy` | Inspect or change the session HTTP proxy |
 

@@ -56,10 +56,14 @@ return {
         clear = require('config.syntax.markdown').clear,
         render = require('config.syntax.markdown').render,
       },
+      code = {
+        disable = { 'mermaid' },
+      },
       pipe_table = {
         enabled = false,
       },
       preset = 'lazy',
+      render_modes = { 'n', 'c', 't', 'v', 'V', '\22' },
       win_options = {
         breakindent = { default = false, rendered = true },
         breakindentopt = {

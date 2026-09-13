@@ -19,7 +19,8 @@ lua/
 │   ├── lsp/                      init.lua (servers), completion.lua, type_information.lua,
 │   │                             diagnostics.lua, detail_window.lua
 │   ├── syntax/                   treesitter.lua (parser bootstrap), treesitter_context.lua,
-│   │                             visuals.lua, highlights.lua, folds.lua
+│   │                             markdown.lua, markdown_features.lua, mermaid.lua, visuals.lua,
+│   │                             highlights.lua, folds.lua
 │   ├── type_hierarchy/           Recursive class and implementation pickers
 │   ├── translation/              Translation query UI and backend providers
 │   ├── python/                   Python environment and hierarchy indexing
@@ -65,6 +66,8 @@ lua/
 | `config/lsp/diagnostics.lua` | Diagnostic float and document diagnostic picker wiring |
 | `config/lsp/detail_window.lua` | Shared focus, same-key close, and copy behavior for detail windows |
 | `config/syntax/` | Parser installation and highlighting bootstrap (`treesitter.lua`), identifier selection and navigation (`selection.lua`), Treesitter pinned context, scope and rainbow visuals, highlight policy, and folds |
+| `config/syntax/mermaid.lua` | Automatic Mermaid-fence discovery, bounded Termaid jobs, validated semantic-style output, and inline render marks |
+| `config/syntax/markdown_features.lua` | Reusable Markdown feature lifecycle, semantic extmarks, refresh coalescing, and logical cursor parking |
 | `config/type_hierarchy/` | Recursive class and implementation pickers: `init.lua` dispatches by filetype, `python.lua` owns the indexed AST paths and Python source parsing, `lsp.lua` owns the live-request paths, `core.lua` owns shared picker plumbing and walk bookkeeping |
 | `config/translation/` | Translation query window (`init.lua`) plus backend construction and response parsing (`providers.lua`) |
 | `config/python/environment.lua` | Python interpreter and environment resolution |
@@ -117,6 +120,8 @@ float all consume this definition directly. Telescope explicitly disables its bu
 word-aware soft rows in the rendered state, with break indentation, a visible continuation marker,
 and smooth scrolling; it never inserts wrapping newlines into the source. The raw state restores the
 global no-wrap policy so the option cannot leak into a later code buffer in the same window.
+Normal and Visual modes keep the rendered presentation by default; the existing `<Space>mp` command
+remains the only explicit whole-presentation toggle.
 
 Pipe tables extend the plugin through its supported custom-handler boundary while retaining the
 plugin's parser, redraw, conceal, and teardown lifecycle. The built-in pipe-table pass is disabled so
@@ -188,6 +193,67 @@ render group carries its original row and reproduces the window's absolute or re
 gutter; continuation and decorative lines remain unnumbered. The source and virtual rows share the
 subdued background of a fenced `text` block, a separate `󰈙 table` label precedes the header, and the
 two rules use a foreground dimmer than ordinary text.
+
+## Markdown Feature Pipeline and Mermaid
+
+`config.syntax.markdown` is the assembly point for configuration-owned Markdown features, while
+`config.syntax.markdown_features` owns their reusable render pipeline. The custom handler dispatches
+the renderer's parse, attach, clear, and render lifecycle to the table feature and to
+`config.syntax.mermaid`. Both stage stable semantic rows into the same
+`markdown_features` extmark namespace and use the owner's common apply, incremental-update, and
+feature-clear operations. The same owner parks logical source positions and arbitrates the global
+native-cursor style, so moving directly between feature types cannot stack or prematurely restore
+cursor definitions. Asynchronous features request a coalesced refresh through the shared pipeline;
+they do not call plugin internals or construct another window. This dispatch boundary is reusable
+for another Markdown feature without adding a parallel renderer lifecycle.
+
+Mermaid fences are attempted automatically as they enter the rendered Markdown view. The Mermaid
+adapter sends only visible, bounded source to the external `termaid` command and requests its
+versioned `styled-json` contract. Termaid returns compact text chunks tagged with stable semantic
+roles; the adapter validates the complete schema, control characters, chunk count, row count, and
+display width before mapping those roles onto a fixed configuration-owned Monokai palette. Node
+geometry and labels share a high-contrast warm color, while edge paths, arrowheads, and edge labels
+share a distinct cyan. Subgraph, status, and section colors retain the Markdown block's neutral
+background instead of importing a competing canvas plane. An older Termaid that rejects the
+format option is detected per executable and retried once through the plain-text path. Malformed
+styled output also gets one bounded plain retry. The same source-backed strategy used by tables
+distributes output over
+the diagram's real content rows: every row gets an overlay and additional rendered rows remain
+attached as local virtual continuations. Content rows are never concealed, so the completed diagram
+stays stable with the Normal-mode cursor inside or outside its range. A dedicated palette
+distinguishes the diagram from ordinary code. Built-in code rendering is disabled only for the `mermaid`
+language, allowing the adapter's `󰙅 mermaid` label to own the opening fence without a competing or
+duplicate header; successful rendering also conceals the closing fence. Other code languages retain
+the plugin's ordinary treatment. While the Normal-mode cursor is inside a successfully rendered
+diagram, one
+stable rendered row for the corresponding source row gains `CursorLine` styling, a cursor proxy maps
+the source column proportionally onto that row, and the native cursor is hidden. Termaid's styled
+rows do not contain source-position metadata, so this mapping deliberately avoids pretending that
+individual diagram cells are editable objects. Mermaid reuses the shared source-cursor parking
+operation used by tables, preventing a long raw line from shifting the rendered viewport. Visual
+mode keeps the diagram rendered while selection, operators, and yank continue to address the source;
+Insert mode exposes native text for editing.
+The shared input listener leaves ordinary mouse-wheel scrolling native. If Neovim reports no cursor
+or viewport movement for a wheel tick at a source row with virtual continuations, it releases the
+parked proxy and applies one source-row motion in the requested direction. This narrow fallback
+prevents wheel scrolling from becoming trapped inside a tall rendered table or diagram.
+Missing executables, oversized input, startup errors, failed renders, and timeouts return no marks
+and therefore leave the source as ordinary Markdown text.
+
+Per-buffer generations reject stale callbacks after edits or width changes. Each buffer attempts at
+most eight Mermaid blocks, runs no more than two Termaid processes concurrently, and gives every job
+an eight-second timeout. Output is capped at one MiB, 4,096 fitted rows, and 65,536 styled chunks.
+Buffer teardown cancels active processes. Termaid retains ownership of diagram parsing, semantic
+roles, label wrapping, layout, compaction, optional vertical reflow, and Unicode/ASCII generation;
+Neovim owns only validation, highlight mapping, and interaction layering. Mermaid budgets 85 percent
+of the narrowest usable text width so the canvas occupies close to 80 percent of the complete window
+after its gutter and Termaid's discrete layout steps. Window width changes cause a new
+width-bounded render. The adapter requests Termaid's strict reflow mode and validates every returned
+display row. Termaid searches label widths for at most six iterations before one optional vertical
+fallback, keeping the complete fit to at most eight render attempts while choosing a canvas close to
+the requested limit. Common Termaid padding is removed to keep the result left-aligned. A renderer
+failure, height-budget failure, or residual width overflow leaves the Mermaid fence as raw Markdown
+instead of splitting an already-routed canvas and corrupting its connectors.
 
 ## Project Definition Search
 

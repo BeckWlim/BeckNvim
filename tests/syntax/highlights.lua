@@ -71,6 +71,50 @@ local markdown_table_label = vim.api.nvim_get_hl(0, {
   name = 'RenderMarkdownTableLabel',
   link = false,
 })
+local markdown_mermaid = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaid',
+  link = false,
+})
+local markdown_mermaid_arrow = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidArrow',
+  link = false,
+})
+local markdown_mermaid_content_label = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidContentLabel',
+  link = false,
+})
+local markdown_mermaid_edge = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidEdge',
+  link = false,
+})
+local markdown_mermaid_edge_label = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidEdgeLabel',
+  link = false,
+})
+local markdown_mermaid_hidden_cursor = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidHiddenCursor',
+  link = false,
+})
+local markdown_mermaid_icon = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidIcon',
+  link = false,
+})
+local markdown_mermaid_italic_label = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidItalicLabel',
+  link = false,
+})
+local markdown_mermaid_label = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidLabel',
+  link = false,
+})
+local markdown_mermaid_node = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidNode',
+  link = false,
+})
+local markdown_mermaid_subgraph = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidSubgraph',
+  link = false,
+})
 local translation_content = vim.api.nvim_get_hl(0, {
   name = 'TranslationContent',
   link = false,
@@ -225,6 +269,41 @@ assert(
     and markdown_table_label.bg == color_column.bg
     and markdown_table_label.fg == tonumber('A6A69C', 16),
   'Markdown table label does not match the fenced-text identity'
+)
+assert(
+  markdown_mermaid.bg == color_column.bg
+    and markdown_mermaid.fg == tonumber('B9DCE5', 16)
+    and markdown_mermaid_icon.bg == color_column.bg
+    and markdown_mermaid_icon.fg == tonumber('AE81FF', 16)
+    and markdown_mermaid_icon.bold
+    and markdown_mermaid_label.bg == color_column.bg
+    and markdown_mermaid_label.fg == tonumber('A6A69C', 16),
+  'Mermaid content or icon tag lost its dedicated palette'
+)
+assert(
+  markdown_mermaid_hidden_cursor.blend == 100,
+  'Mermaid cursor proxy does not hide the native source cursor'
+)
+assert(
+  markdown_mermaid_node.bg == color_column.bg
+    and markdown_mermaid_node.fg == tonumber('E6DB74', 16)
+    and markdown_mermaid_edge.bg == color_column.bg
+    and markdown_mermaid_edge.fg == tonumber('66D9EF', 16)
+    and markdown_mermaid_arrow.bg == color_column.bg
+    and markdown_mermaid_arrow.fg == tonumber('66D9EF', 16)
+    and markdown_mermaid_arrow.bold
+    and markdown_mermaid_edge_label.bg == color_column.bg
+    and markdown_mermaid_edge_label.fg == tonumber('66D9EF', 16)
+    and markdown_mermaid_edge_label.italic
+    and markdown_mermaid_content_label.bg == color_column.bg
+    and markdown_mermaid_content_label.fg == tonumber('E6DB74', 16)
+    and markdown_mermaid_content_label.bold
+    and markdown_mermaid_italic_label.bg == color_column.bg
+    and markdown_mermaid_italic_label.fg == tonumber('E6DB74', 16)
+    and markdown_mermaid_italic_label.italic
+    and markdown_mermaid_subgraph.bg == color_column.bg
+    and markdown_mermaid_subgraph.fg == tonumber('AE81FF', 16),
+  'Mermaid semantic roles do not use the shared Monokai palette and block plane'
 )
 assert(
   translation_float.bg == normal_highlight.bg and translation_float.fg == normal_highlight.fg,

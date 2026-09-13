@@ -12,7 +12,7 @@ system while keeping native Neovim and plugin behavior wherever practical.
 - Diffview-based history review with bounded asynchronous loading and safe state transitions.
 - LSP completion, diagnostics, type information, and language-aware navigation.
 - Tree-sitter highlighting, folding, syntax context, scope visualization, and structural selection.
-- Readable Markdown rendering with responsive tables and stable native editing behavior.
+- Readable Markdown rendering with responsive tables, semantic-color Mermaid diagrams, and stable native editing behavior.
 - Integrated terminal, translation, proxy management, and project diagnostics.
 
 ## Main Modules
@@ -38,20 +38,35 @@ The complete ownership and lifecycle model is documented in
 
 ## Installation
 
-Requirements:
-
-- Neovim 0.11 or newer
-- Git, ripgrep, Python 3.10+, curl, wget, and unzip
-- Node.js, npm, and the tree-sitter CLI
-- make, a C compiler, CMake, and Ninja
-- A Nerd Font
-- `xclip` on X11 or `wl-clipboard` on Wayland for system clipboard integration
+The automated setup supports Debian/Ubuntu, Fedora/RHEL, Arch Linux, openSUSE, and macOS with
+Homebrew. It installs system build and search tools, verified user-local Neovim and Tree-sitter CLI
+binaries, `uv`, the `BeckWlim/termaid` fork, and the plugins pinned by `lazy-lock.json`.
 
 ```bash
 mv ~/.config/nvim ~/.config/nvim.bak
 git clone https://github.com/BeckWlim/BeckNvim.git ~/.config/nvim
+cd ~/.config/nvim
+./setup.sh
 nvim
 ```
+
+The script is idempotent. Use `./setup.sh --check` for a non-mutating dependency audit,
+`--skip-system` when system packages are managed separately, or `--skip-plugins` to defer the Lazy
+bootstrap. Termaid follows the requested fork `main` branch by default; set
+`BECKNVIM_TERMAID_REF` to a tag or commit when an immutable installation is preferred:
+
+```bash
+BECKNVIM_TERMAID_REF=<commit> ./setup.sh
+```
+
+Manual requirements:
+
+- Neovim 0.12 or newer
+- Git, ripgrep, Python 3.10+, curl, wget, and unzip
+- Node.js, npm, and tree-sitter CLI 0.26.1 or newer
+- make, a C compiler, CMake, and Ninja
+- A Nerd Font
+- `xclip` on X11 or `wl-clipboard` on Wayland for system clipboard integration
 
 On first launch, lazy.nvim restores pinned plugins and Mason installs the configured language
 servers. Plugin versions remain pinned by `lazy-lock.json` until explicitly updated.

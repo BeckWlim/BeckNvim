@@ -45,6 +45,32 @@ local markdown_table_colors = {
   label = '#A6A69C',
 }
 
+local markdown_mermaid_colors = {
+  active = '#A6E22E',
+  arrow = '#66D9EF',
+  critical = '#F92672',
+  done = '#8F908A',
+  edge = '#66D9EF',
+  edge_label = '#66D9EF',
+  foreground = '#B9DCE5',
+  icon = '#AE81FF',
+  label = '#A6A69C',
+  milestone = '#FD971F',
+  node = '#E6DB74',
+  node_label = '#E6DB74',
+  subgraph = '#AE81FF',
+  sections = {
+    '#F92672',
+    '#66D9EF',
+    '#A6E22E',
+    '#E6DB74',
+    '#AE81FF',
+    '#FD971F',
+    '#FFB3D1',
+    '#89E051',
+  },
+}
+
 local function history_ui_palette(editor_background, editor_foreground)
   return {
     added = '#A6E22E',
@@ -215,6 +241,86 @@ local function apply()
   vim.api.nvim_set_hl(0, 'RenderMarkdownTableLabel', {
     bg = markdown_block_background,
     fg = markdown_table_colors.label,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaid', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.foreground,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidActive', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.active,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidArrow', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.arrow,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidCritical', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.critical,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidDone', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.done,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidEdge', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.edge,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidEdgeLabel', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.edge_label,
+    italic = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidItalicLabel', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.node_label,
+    italic = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidContentLabel', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.node_label,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidMilestone', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.milestone,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidNode', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.node,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidSubgraph', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.subgraph,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidSubgraphLabel', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.subgraph,
+    bold = true,
+  })
+  for index, foreground in ipairs(markdown_mermaid_colors.sections) do
+    vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidSection' .. index, {
+      bg = markdown_block_background,
+      fg = foreground,
+      bold = true,
+    })
+  end
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidIcon', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.icon,
+    bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidLabel', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.label,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidHiddenCursor', {
+    blend = 100,
+    fg = editor_foreground,
   })
   vim.api.nvim_set_hl(0, '@markup.table.markdown', {
     bg = markdown_block_background,

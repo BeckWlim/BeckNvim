@@ -1,4 +1,5 @@
 local M = {}
+local markdown_features = require('config.syntax.markdown_features')
 
 M.cell_margins = { left = 1, right = 2 }
 M.table_layout = {
@@ -6,17 +7,10 @@ M.table_layout = {
   outer_right_ratio = 0.2,
 }
 
-local table_namespace = vim.api.nvim_create_namespace('markdown_tables')
 local table_query_cache
 local table_query_resolved = false
-local extmark_ids_by_buffer = {}
-local extmark_specs_by_buffer = {}
 local tables_by_buffer = {}
 local render_states_by_window = {}
-local cursor_states_by_window = {}
-local cursor_key_listener_installed = false
-local cursor_key_namespace = vim.api.nvim_create_namespace('markdown_table_cursor_keys')
-local hidden_cursor
 
 local table_highlights = {
   cell = 'RenderMarkdownTableCell',
@@ -482,16 +476,11 @@ local function parse_table(buffer, table_node)
   }
 end
 
-local function chunks_width(chunks)
-  local width = 0
-  for _, chunk in ipairs(chunks) do
-    width = width + display_width(chunk[1])
-  end
-  return width
-end
-
 local function padded_chunks(chunks, width, alignment, base_highlight)
-  local remaining_width = math.max(width - chunks_width(chunks), 0)
+  local remaining_width = math.max(
+    width - markdown_features.chunks_width(chunks),
+    0
+  )
   local left_padding = 0
   if alignment == 'right' then
     left_padding = remaining_width
@@ -534,47 +523,6 @@ local function active_cell(row, interaction)
     0
   )
   return cell_index, source_offset
-end
-
-local function layered_highlight(base, highlight)
-  local highlights = type(base) == 'table' and vim.deepcopy(base) or { base }
-  highlights[#highlights + 1] = highlight
-  return highlights
-end
-
-local function highlighted_fragment_chunks(chunks, highlight)
-  return vim.tbl_map(function(chunk)
-    return { chunk[1], layered_highlight(chunk[2], highlight) }
-  end, chunks)
-end
-
-local function append_chunk(chunks, text, highlight)
-  local previous = chunks[#chunks]
-  if previous and vim.deep_equal(previous[2], highlight) then
-    previous[1] = previous[1] .. text
-  else
-    chunks[#chunks + 1] = { text, highlight }
-  end
-end
-
-local function cursor_proxy_chunks(chunks, cursor_column)
-  local rendered = {}
-  local display_column = 0
-  local cursor_added = false
-  for _, chunk in ipairs(chunks) do
-    local character_count = vim.fn.strchars(chunk[1])
-    for character_index = 0, character_count - 1 do
-      local character = vim.fn.strcharpart(chunk[1], character_index, 1)
-      local highlight = chunk[2]
-      if not cursor_added and display_column == cursor_column then
-        highlight = layered_highlight(highlight, 'Cursor')
-        cursor_added = true
-      end
-      append_chunk(rendered, character, highlight)
-      display_column = display_column + display_width(character)
-    end
-  end
-  return rendered
 end
 
 local function ordered_positions(first, second)
@@ -644,26 +592,6 @@ local function selected_character_ranges(row, wrapped_characters, interaction)
   return selected
 end
 
-local function highlighted_range_chunks(chunks, first_column, last_column, highlight)
-  local rendered = {}
-  local display_column = 0
-  for _, chunk in ipairs(chunks) do
-    local character_count = vim.fn.strchars(chunk[1])
-    for character_index = 0, character_count - 1 do
-      local character = vim.fn.strcharpart(chunk[1], character_index, 1)
-      local character_width = display_width(character)
-      local character_highlight = chunk[2]
-      if display_column < last_column
-          and display_column + character_width > first_column then
-        character_highlight = layered_highlight(character_highlight, highlight)
-      end
-      append_chunk(rendered, character, character_highlight)
-      display_column = display_column + character_width
-    end
-  end
-  return rendered
-end
-
 local function prepare_row(row, column_widths)
   local wrapped_cells = {}
   local wrapped_characters = {}
@@ -722,16 +650,19 @@ local function row_lines(
       local active_fragment_cell = column_index == active_cell_index
         and line_index == active_fragment
       if interaction and interaction.mode == 'V' and selected[column_index] then
-        cell_chunks = highlighted_fragment_chunks(cell_chunks, 'Visual')
+        cell_chunks = markdown_features.highlighted_chunks(cell_chunks, 'Visual')
       elseif selected_range then
-        cell_chunks = highlighted_range_chunks(
+        cell_chunks = markdown_features.highlighted_range_chunks(
           cell_chunks,
           left_padding + selected_range.first_column,
           left_padding + selected_range.last_column,
           'Visual'
         )
       elseif active_fragment_cell then
-        cell_chunks = highlighted_fragment_chunks(cell_chunks, 'CursorLine')
+        cell_chunks = markdown_features.highlighted_chunks(
+          cell_chunks,
+          'CursorLine'
+        )
       end
       if active_fragment_cell then
         local cursor_column = left_padding
@@ -739,7 +670,10 @@ local function row_lines(
         for character_index = 1, active_character_index - 1 do
           cursor_column = cursor_column + display_width(characters[character_index].text)
         end
-        cell_chunks = cursor_proxy_chunks(cell_chunks, cursor_column)
+        cell_chunks = markdown_features.cursor_proxy_chunks(
+          cell_chunks,
+          cursor_column
+        )
       end
       vim.list_extend(line_chunks, cell_chunks)
       if column_index < #column_widths then
@@ -844,12 +778,13 @@ local function window_interaction(window)
     return nil
   end
   local buffer = vim.api.nvim_win_get_buf(window)
-  local cursor_state = cursor_states_by_window[window]
-  if cursor_state
-      and cursor_state.parked
-      and cursor_state.buffer == buffer
-      and cursor_state.interaction.mode == mode then
-    return cursor_state.interaction
+  local parked_interaction = markdown_features.parked_interaction(
+    'table',
+    buffer,
+    window
+  )
+  if parked_interaction and parked_interaction.mode == mode then
+    return parked_interaction
   end
   local cursor_position = vim.api.nvim_win_get_cursor(window)
   local interaction = {
@@ -1029,111 +964,16 @@ local function row_has_cursor_proxy(row, parsed_tables)
   return false
 end
 
-local function release_parked_cursor(buffer, window, restore_position)
-  local cursor_state = cursor_states_by_window[window]
-  if not cursor_state or (buffer and cursor_state.buffer ~= buffer) then
-    return
-  end
-  cursor_states_by_window[window] = nil
-  if not restore_position
-      or not cursor_state.parked
-      or not vim.api.nvim_win_is_valid(window)
-      or vim.api.nvim_win_get_buf(window) ~= cursor_state.buffer then
-    return
-  end
-  local cursor = cursor_state.interaction.cursor
-  pcall(vim.api.nvim_win_set_cursor, window, { cursor.row + 1, cursor.column })
-end
-
-local function park_native_cursor(buffer, window, parsed_tables, interaction)
-  if vim.api.nvim_get_current_win() ~= window
-      or not interaction
-      or not row_has_cursor_proxy(interaction.cursor.row, parsed_tables) then
-    release_parked_cursor(buffer, window, false)
-    return false
-  end
-  cursor_states_by_window[window] = {
-    buffer = buffer,
-    interaction = interaction,
-    parked = true,
-  }
-  local cursor_position = vim.api.nvim_win_get_cursor(window)
-  if cursor_position[2] ~= 0 then
-    vim.api.nvim_win_set_cursor(window, { cursor_position[1], 0 })
-  end
-  return true
-end
-
-local function restore_cursor_for_input()
-  local window = vim.api.nvim_get_current_win()
-  local cursor_state = cursor_states_by_window[window]
-  if not cursor_state
-      or not cursor_state.parked
-      or not table_mode(vim.api.nvim_get_mode().mode)
-      or not vim.api.nvim_win_is_valid(window)
-      or vim.api.nvim_win_get_buf(window) ~= cursor_state.buffer then
-    return
-  end
-  cursor_state.parked = false
-  local cursor = cursor_state.interaction.cursor
-  local succeeded = pcall(
-    vim.api.nvim_win_set_cursor,
-    window,
-    { cursor.row + 1, cursor.column }
-  )
-  if not succeeded then
-    cursor_states_by_window[window] = nil
-  end
-end
-
-local function ensure_cursor_key_listener()
-  if cursor_key_listener_installed then
-    return
-  end
-  vim.on_key(restore_cursor_for_input, cursor_key_namespace)
-  cursor_key_listener_installed = true
-end
-
-local function restore_native_cursor(buffer, window)
-  if not hidden_cursor
-      or (buffer and hidden_cursor.buffer ~= buffer)
-      or (window and hidden_cursor.window ~= window) then
-    return
-  end
-  if vim.o.guicursor == hidden_cursor.value then
-    vim.o.guicursor = hidden_cursor.original
-  end
-  hidden_cursor = nil
-end
-
-local function sync_native_cursor(buffer, window, parsed_tables)
+local function release_inactive_cursor(buffer, window, parsed_tables)
   if vim.api.nvim_get_current_win() ~= window then
     return
   end
   local mode = table_mode(vim.api.nvim_get_mode().mode)
   local cursor_row = vim.api.nvim_win_get_cursor(window)[1] - 1
   if not mode or not row_has_cursor_proxy(cursor_row, parsed_tables) then
-    restore_native_cursor()
+    markdown_features.release_cursor('table', buffer, window, false)
     return
   end
-  if hidden_cursor
-      and hidden_cursor.buffer == buffer
-      and hidden_cursor.window == window then
-    return
-  end
-  restore_native_cursor()
-  local original = vim.o.guicursor
-  local separator = original == '' and '' or ','
-  local value = original
-    .. separator
-    .. 'n-v:block-RenderMarkdownTableHiddenCursor'
-  vim.o.guicursor = value
-  hidden_cursor = {
-    buffer = buffer,
-    original = original,
-    value = value,
-    window = window,
-  }
 end
 
 local function table_interaction(window, parsed_tables, mode)
@@ -1245,18 +1085,11 @@ local function line_text_chunks(rendered_line)
 end
 
 local function overlay_text_chunks(rendered_line, source_line)
-  local text_chunks = line_text_chunks(rendered_line)
-  local padding_width = math.max(
-    display_width(source_line) - chunks_width(text_chunks),
-    0
+  return markdown_features.pad_overlay_chunks(
+    line_text_chunks(rendered_line),
+    source_line,
+    table_highlights.cell
   )
-  if padding_width > 0 then
-    text_chunks[#text_chunks + 1] = {
-      string.rep(' ', padding_width),
-      table_highlights.cell,
-    }
-  end
-  return text_chunks
 end
 
 local function stage_table_row(buffer, staged_extmarks, parsed_table, display)
@@ -1298,68 +1131,6 @@ function M.stage_table_rows(buffer, staged_extmarks, parsed_table, groups)
   end
 end
 
-local function set_extmark(buffer, current_id, current_spec, staged_extmark)
-  local unchanged = current_id ~= nil
-    and (current_spec == staged_extmark
-      or vim.deep_equal(current_spec, staged_extmark))
-  if unchanged then
-    return current_id
-  end
-  local resolved_options = current_id
-      and vim.tbl_extend('force', {}, staged_extmark.options, {
-        id = current_id,
-      })
-    or staged_extmark.options
-  return vim.api.nvim_buf_set_extmark(
-    buffer,
-    table_namespace,
-    staged_extmark.row,
-    0,
-    resolved_options
-  )
-end
-
-local function apply_extmarks(buffer, staged_extmarks)
-  local current_extmark_ids = extmark_ids_by_buffer[buffer] or {}
-  local current_extmark_specs = extmark_specs_by_buffer[buffer] or {}
-  local next_extmark_ids = {}
-  local next_extmark_specs = {}
-  for _, staged_extmark in ipairs(staged_extmarks) do
-    local current_extmark_id = current_extmark_ids[staged_extmark.key]
-    local current_extmark_spec = current_extmark_specs[staged_extmark.key]
-    next_extmark_ids[staged_extmark.key] = set_extmark(
-      buffer,
-      current_extmark_id,
-      current_extmark_spec,
-      staged_extmark
-    )
-    next_extmark_specs[staged_extmark.key] = staged_extmark
-  end
-  for semantic_key, current_extmark_id in pairs(current_extmark_ids) do
-    if not next_extmark_ids[semantic_key] then
-      vim.api.nvim_buf_del_extmark(buffer, table_namespace, current_extmark_id)
-    end
-  end
-  extmark_ids_by_buffer[buffer] = next_extmark_ids
-  extmark_specs_by_buffer[buffer] = next_extmark_specs
-end
-
-local function update_extmarks(buffer, staged_extmarks)
-  local extmark_ids = extmark_ids_by_buffer[buffer] or {}
-  local extmark_specs = extmark_specs_by_buffer[buffer] or {}
-  for _, staged_extmark in ipairs(staged_extmarks) do
-    extmark_ids[staged_extmark.key] = set_extmark(
-      buffer,
-      extmark_ids[staged_extmark.key],
-      extmark_specs[staged_extmark.key],
-      staged_extmark
-    )
-    extmark_specs[staged_extmark.key] = staged_extmark
-  end
-  extmark_ids_by_buffer[buffer] = extmark_ids
-  extmark_specs_by_buffer[buffer] = extmark_specs
-end
-
 local function invalidate_render_states(buffer)
   for window, render_state in pairs(render_states_by_window) do
     if render_state.buffer == buffer then
@@ -1370,7 +1141,7 @@ end
 
 ---@param context render.md.handler.Context
 ---@return render.md.Mark[]
-function M.parse(context)
+local function parse_tables(context)
   invalidate_render_states(context.buf)
   local parsed_query = table_query()
   if not parsed_query then
@@ -1391,8 +1162,7 @@ function M.parse(context)
   return {}
 end
 
-function M.attach(context)
-  ensure_cursor_key_listener()
+local function attach_tables(context)
   vim.api.nvim_create_autocmd({ 'CursorMoved', 'ModeChanged' }, {
     buffer = context.buf,
     callback = function()
@@ -1403,23 +1173,15 @@ function M.attach(context)
     buffer = context.buf,
     callback = function()
       local window = vim.api.nvim_get_current_win()
-      release_parked_cursor(context.buf, window, true)
-      restore_native_cursor(context.buf, window)
+      markdown_features.release_cursor('table', context.buf, window, true)
     end,
   })
   vim.api.nvim_create_autocmd('BufWipeout', {
     buffer = context.buf,
     once = true,
     callback = function()
-      restore_native_cursor(context.buf)
-      for window, cursor_state in pairs(cursor_states_by_window) do
-        if cursor_state.buffer == context.buf then
-          cursor_states_by_window[window] = nil
-        end
-      end
-      extmark_ids_by_buffer[context.buf] = nil
-      extmark_specs_by_buffer[context.buf] = nil
       tables_by_buffer[context.buf] = nil
+      markdown_features.forget_buffer(context.buf)
       invalidate_render_states(context.buf)
     end,
   })
@@ -1451,7 +1213,6 @@ local function update_cursor_row(
   render_state
 )
   if render_state.cursor_column == interaction.cursor.column then
-    sync_native_cursor(buffer, window, parsed_tables)
     return true
   end
   for table_index, parsed_table in ipairs(parsed_tables) do
@@ -1472,9 +1233,8 @@ local function update_cursor_row(
           source_row = row.source_row,
           trailing_lines = layout.trailing_lines[row.source_row] or {},
         })
-        update_extmarks(buffer, staged_extmarks)
+        markdown_features.update('table', buffer, staged_extmarks)
         render_state.cursor_column = interaction.cursor.column
-        sync_native_cursor(buffer, window, parsed_tables)
         return true
       end
     end
@@ -1525,7 +1285,7 @@ local function render_tables(buffer, window)
     render_table_label(buffer, staged_extmarks, parsed_table, groups)
     M.stage_table_rows(buffer, staged_extmarks, parsed_table, groups)
   end
-  apply_extmarks(buffer, staged_extmarks)
+  markdown_features.apply('table', buffer, staged_extmarks)
   render_states_by_window[window] = {
     anchor_column = interaction and interaction.anchor
         and interaction.anchor.column
@@ -1540,25 +1300,20 @@ local function render_tables(buffer, window)
     parsed_tables = parsed_tables,
     signature = signature,
   }
-  sync_native_cursor(buffer, window, parsed_tables)
+  release_inactive_cursor(buffer, window, parsed_tables)
 end
 
-function M.clear(context)
+local function clear_tables(context)
   if preserve_table_preview(context) then
     render_tables(context.buf, context.win)
     return
   end
-  release_parked_cursor(context.buf, context.win, true)
-  restore_native_cursor(context.buf, context.win)
-  if vim.api.nvim_buf_is_valid(context.buf) then
-    vim.api.nvim_buf_clear_namespace(context.buf, table_namespace, 0, -1)
-  end
-  extmark_ids_by_buffer[context.buf] = nil
-  extmark_specs_by_buffer[context.buf] = nil
+  markdown_features.release_cursor('table', context.buf, context.win, true)
+  markdown_features.clear('table', context.buf)
   invalidate_render_states(context.buf)
 end
 
-function M.render(context)
+local function render_table_feature(context)
   local buffer = context.buf
   local window = context.win
   if not vim.api.nvim_buf_is_valid(buffer)
@@ -1580,7 +1335,7 @@ function M.sync_cursor(buffer)
   if not vim.api.nvim_buf_is_valid(buffer)
       or not vim.api.nvim_win_is_valid(window)
       or vim.api.nvim_win_get_buf(window) ~= buffer then
-    restore_native_cursor(buffer)
+    markdown_features.release_cursor('table', buffer, window, true)
     return
   end
   local parsed_tables = tables_by_buffer[buffer] or {}
@@ -1589,20 +1344,29 @@ function M.sync_cursor(buffer)
   local interacting_with_table = rendering_enabled
     and table_interaction(window, parsed_tables, mode)
   if not interacting_with_table then
-    release_parked_cursor(buffer, window, true)
-    restore_native_cursor(buffer, window)
+    markdown_features.release_cursor('table', buffer, window, true)
     if rendering_enabled and table_mode(mode) == 'n' then
       vim.wo[window].wrap = not table_intersects_view(window, parsed_tables)
     end
     return
   end
-  local cursor_state = cursor_states_by_window[window]
-  local interaction = cursor_state
-      and cursor_state.parked
-      and cursor_state.buffer == buffer
-      and cursor_state.interaction
+  local interaction = markdown_features.parked_interaction(
+    'table',
+    buffer,
+    window
+  )
     or window_interaction(window)
-  park_native_cursor(buffer, window, parsed_tables, interaction)
+  if row_has_cursor_proxy(interaction.cursor.row, parsed_tables) then
+    markdown_features.park_cursor(
+      'table',
+      buffer,
+      window,
+      interaction,
+      'RenderMarkdownTableHiddenCursor'
+    )
+  else
+    markdown_features.release_cursor('table', buffer, window, false)
+  end
   vim.api.nvim_win_call(window, function()
     local view = vim.fn.winsaveview()
     if view.leftcol > 0 then
@@ -1611,6 +1375,37 @@ function M.sync_cursor(buffer)
     end
   end)
   render_tables(buffer, window)
+end
+
+local table_feature = {
+  attach = attach_tables,
+  clear = clear_tables,
+  parse = parse_tables,
+  render = render_table_feature,
+}
+
+local render_features = {
+  table_feature,
+  require('config.syntax.mermaid'),
+}
+
+---@param context render.md.handler.Context
+---@return render.md.Mark[]
+function M.parse(context)
+  return markdown_features.parse(render_features, context)
+end
+
+function M.attach(context)
+  markdown_features.setup_cursor_listener(context.buf)
+  markdown_features.dispatch(render_features, 'attach', context)
+end
+
+function M.clear(context)
+  markdown_features.dispatch(render_features, 'clear', context)
+end
+
+function M.render(context)
+  markdown_features.dispatch(render_features, 'render', context)
 end
 
 M.handler = {
