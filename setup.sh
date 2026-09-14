@@ -2,9 +2,13 @@
 
 set -Eeuo pipefail
 
-readonly BECKNVIM_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly BECKNVIM_USER_BIN="${HOME}/.local/bin"
 readonly BECKNVIM_USER_OPT="${HOME}/.local/opt"
+readonly BECKNVIM_MINIMUM_NODE_VERSION='22.0.0'
+readonly BECKNVIM_NODE_MAJOR='24'
+readonly BECKNVIM_NVM_VERSION='0.40.7'
+readonly BECKNVIM_MINIMUM_PYTHON_VERSION='3.10.0'
+readonly BECKNVIM_PYTHON_VERSION='3.13'
 readonly BECKNVIM_MINIMUM_NVIM_VERSION='0.12.0'
 readonly BECKNVIM_NVIM_VERSION='0.12.2'
 readonly BECKNVIM_MINIMUM_TREE_SITTER_VERSION='0.26.1'
@@ -14,7 +18,6 @@ readonly BECKNVIM_TERMAID_REPOSITORY='https://github.com/BeckWlim/termaid.git'
 BECKNVIM_MODE='install'
 BECKNVIM_INSTALL_SYSTEM=1
 BECKNVIM_INSTALL_CLIPBOARD=1
-BECKNVIM_BOOTSTRAP_PLUGINS=1
 BECKNVIM_TEMP_DIR=''
 BECKNVIM_FAILURES=0
 BECKNVIM_ORIGINAL_PATH="${PATH}"
@@ -29,7 +32,6 @@ Options:
   --check           Validate dependencies without changing the system
   --skip-system     Do not install operating-system packages
   --skip-clipboard  Do not install X11 or Wayland clipboard providers
-  --skip-plugins    Do not restore the plugins pinned by lazy-lock.json
   -h, --help        Show this help
 
 Environment:
@@ -69,9 +71,6 @@ while [[ $# -gt 0 ]]; do
     --skip-clipboard)
       BECKNVIM_INSTALL_CLIPBOARD=0
       ;;
-    --skip-plugins)
-      BECKNVIM_BOOTSTRAP_PLUGINS=0
-      ;;
     -h|--help)
       usage
       exit 0
@@ -96,70 +95,101 @@ run_as_root() {
   fi
 }
 
-install_system_packages() {
-  local -a packages
+dependency_available() {
+  local dependency="$1"
+  case "${dependency}" in
+    c) cc --version >/dev/null 2>&1 || gcc --version >/dev/null 2>&1 ;;
+    cxx) c++ --version >/dev/null 2>&1 || g++ --version >/dev/null 2>&1 ;;
+    build-tools)
+      dependency_available c && dependency_available cxx && dependency_available make
+      ;;
+    certificates)
+      [[ -s /etc/ssl/certs/ca-certificates.crt || -s /etc/pki/tls/certs/ca-bundle.crt \
+        || -s /etc/ssl/ca-bundle.pem || -s /etc/ssl/cert.pem ]]
+      ;;
+    unzip) unzip -v >/dev/null 2>&1 ;;
+    wl-copy|xclip) command -v "${dependency}" >/dev/null 2>&1 ;;
+    *) "${dependency}" --version >/dev/null 2>&1 ;;
+  esac
+}
 
-  if command -v apt-get >/dev/null 2>&1; then
-    packages=(
-      build-essential ca-certificates cmake curl git gzip ninja-build nodejs npm
-      pkg-config python3 python3-venv ripgrep tar unzip wget
-    )
-    if [[ ${BECKNVIM_INSTALL_CLIPBOARD} -eq 1 ]]; then
-      packages+=(wl-clipboard xclip)
+system_package_manager() {
+  local manager
+  for manager in apt-get dnf pacman zypper brew; do
+    if command -v "${manager}" >/dev/null 2>&1; then
+      printf '%s\n' "${manager}"
+      return
     fi
-    log 'Installing Debian/Ubuntu system packages'
-    run_as_root apt-get update
-    run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "${packages[@]}"
-    return
-  fi
-
-  if command -v dnf >/dev/null 2>&1; then
-    packages=(
-      ca-certificates cmake curl gcc gcc-c++ git gzip make ninja-build nodejs npm
-      pkgconf-pkg-config python3 ripgrep tar unzip wget
-    )
-    if [[ ${BECKNVIM_INSTALL_CLIPBOARD} -eq 1 ]]; then
-      packages+=(wl-clipboard xclip)
-    fi
-    log 'Installing Fedora/RHEL system packages'
-    run_as_root dnf install -y "${packages[@]}"
-    return
-  fi
-
-  if command -v pacman >/dev/null 2>&1; then
-    packages=(
-      base-devel ca-certificates cmake curl git gzip ninja nodejs npm pkgconf python
-      ripgrep tar unzip wget
-    )
-    if [[ ${BECKNVIM_INSTALL_CLIPBOARD} -eq 1 ]]; then
-      packages+=(wl-clipboard xclip)
-    fi
-    log 'Installing Arch Linux system packages'
-    run_as_root pacman -Syu --needed --noconfirm "${packages[@]}"
-    return
-  fi
-
-  if command -v zypper >/dev/null 2>&1; then
-    packages=(
-      ca-certificates cmake curl gcc gcc-c++ git gzip make ninja nodejs npm
-      pkg-config python3 ripgrep tar unzip wget
-    )
-    if [[ ${BECKNVIM_INSTALL_CLIPBOARD} -eq 1 ]]; then
-      packages+=(wl-clipboard xclip)
-    fi
-    log 'Installing openSUSE system packages'
-    run_as_root zypper --non-interactive install "${packages[@]}"
-    return
-  fi
-
-  if command -v brew >/dev/null 2>&1; then
-    packages=(cmake curl gcc git ninja node python ripgrep unzip wget)
-    log 'Installing macOS Homebrew packages'
-    brew install "${packages[@]}"
-    return
-  fi
-
+  done
   die 'unsupported package manager; use --skip-system after installing the README requirements'
+}
+
+install_package_batch() {
+  local manager="$1"
+  shift
+  [[ $# -gt 0 ]] || return 0
+  log "Installing missing packages with ${manager}: $*"
+  case "${manager}" in
+    apt-get) run_as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@" ;;
+    dnf) run_as_root dnf install -y "$@" ;;
+    pacman) run_as_root pacman -Syu --needed --noconfirm "$@" ;;
+    zypper) run_as_root zypper --non-interactive install "$@" ;;
+    brew) brew install "$@" ;;
+  esac
+}
+
+install_system_packages() {
+  local manager
+  manager="$(system_package_manager)"
+  # Each entry pairs a package name with the capability it provides.
+  local -a specifications=(cmake:cmake curl:curl git:git ripgrep:rg unzip:unzip)
+  case "${manager}" in
+    apt-get)
+      specifications+=(build-essential:build-tools ninja-build:ninja pkg-config:pkg-config)
+      ;;
+    dnf)
+      specifications+=(gcc:c gcc-c++:cxx make:make ninja-build:ninja
+        pkgconf-pkg-config:pkg-config)
+      ;;
+    pacman)
+      specifications+=(base-devel:build-tools ninja:ninja pkgconf:pkg-config)
+      ;;
+    zypper)
+      specifications+=(gcc:c gcc-c++:cxx make:make ninja:ninja
+        pkg-config:pkg-config)
+      ;;
+    brew)
+      specifications+=(gcc:c gcc:cxx make:make ninja:ninja pkg-config:pkg-config)
+      ;;
+  esac
+  if [[ "${manager}" != 'brew' ]]; then
+    specifications+=(ca-certificates:certificates gzip:gzip tar:tar)
+    if [[ ${BECKNVIM_INSTALL_CLIPBOARD} -eq 1 ]]; then
+      if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        specifications+=(wl-clipboard:wl-copy)
+      elif [[ -n "${DISPLAY:-}" ]]; then
+        specifications+=(xclip:xclip)
+      fi
+    fi
+  fi
+
+  local specification package_name capability
+  local -a packages=()
+  for specification in "${specifications[@]}"; do
+    package_name="${specification%%:*}"
+    capability="${specification#*:}"
+    if ! dependency_available "${capability}" && [[ " ${packages[*]} " != *" ${package_name} "* ]]; then
+      packages+=("${package_name}")
+    fi
+  done
+  if [[ ${#packages[@]} -eq 0 ]]; then
+    log 'System dependencies already available; skipping package installation'
+    return
+  fi
+  if [[ "${manager}" == 'apt-get' ]]; then
+    run_as_root apt-get update
+  fi
+  install_package_batch "${manager}" "${packages[@]}"
 }
 
 download() {
@@ -219,6 +249,64 @@ nvim_version() {
   nvim --version 2>/dev/null | sed -n '1s/^NVIM v\([0-9.]*\).*$/\1/p'
 }
 
+node_version() {
+  node --version 2>/dev/null | sed -n 's/^v\([0-9.]*\).*$/\1/p'
+}
+
+node_compatible() {
+  local current_version
+  current_version="$(node_version)" || return 1
+  version_at_least "${current_version}" "${BECKNVIM_MINIMUM_NODE_VERSION}" \
+    && npm --version >/dev/null 2>&1
+}
+
+activate_nvm_node() (
+  # nvm is sourced only in this subshell because it does not support strict
+  # shell options. Keep the installer's own error handling and bindings intact.
+  set +e
+  set +u
+  local node_path_file="$1"
+  source "${NVM_DIR}/nvm.sh" --no-use || exit 1
+  if nvm use --silent default && node_compatible; then
+    log 'Reusing the default Node.js runtime managed by nvm'
+  else
+    nvm install "${BECKNVIM_NODE_MAJOR}" || exit 1
+    nvm alias default "${BECKNVIM_NODE_MAJOR}" || exit 1
+  fi
+  node_compatible || exit 1
+  command -v node > "${node_path_file}"
+)
+
+ensure_node() {
+  if node_compatible; then
+    log "Node.js $(node_version) and npm $(npm --version) already satisfy the configuration"
+    return
+  fi
+
+  export NVM_DIR="${NVM_DIR:-${HOME}/.nvm}"
+  if [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
+    local installer="${BECKNVIM_TEMP_DIR}/nvm-install.sh"
+    log "Installing nvm ${BECKNVIM_NVM_VERSION} in ${NVM_DIR}"
+    download "https://raw.githubusercontent.com/nvm-sh/nvm/v${BECKNVIM_NVM_VERSION}/install.sh" \
+      "${installer}"
+    mkdir -p "${NVM_DIR}"
+    NODE_VERSION='' bash "${installer}"
+  fi
+
+  local node_path_file="${BECKNVIM_TEMP_DIR}/node-path"
+  log "Ensuring Node.js ${BECKNVIM_NODE_MAJOR} through nvm"
+  activate_nvm_node "${node_path_file}" || die 'nvm could not provide a compatible Node.js and npm'
+  local installed_node_path
+  IFS= read -r installed_node_path < "${node_path_file}"
+  [[ "${installed_node_path}" == /* && -x "${installed_node_path}" ]] \
+    || die 'nvm did not provide an executable Node.js path'
+  export PATH="${installed_node_path%/*}:${PATH}"
+  hash -r
+  node_compatible || die 'Node.js or npm is unavailable after nvm installation'
+  log "Node.js $(node_version) and npm $(npm --version) are ready"
+  log "Open a new shell, or source ${NVM_DIR}/nvm.sh before launching nvim"
+}
+
 tree_sitter_version() {
   tree-sitter --version 2>/dev/null | sed -n 's/^tree-sitter \([0-9.]*\).*$/\1/p'
 }
@@ -273,7 +361,7 @@ tree_sitter_checksum() {
 ensure_neovim() {
   local current_version=''
   if command -v nvim >/dev/null 2>&1; then
-    current_version="$(nvim_version)"
+    current_version="$(nvim_version || true)"
   fi
   if version_at_least "${current_version}" "${BECKNVIM_MINIMUM_NVIM_VERSION}"; then
     log "Neovim ${current_version} already satisfies the configuration"
@@ -313,7 +401,7 @@ ensure_neovim() {
 }
 
 ensure_uv() {
-  if command -v uv >/dev/null 2>&1; then
+  if uv --version >/dev/null 2>&1; then
     log "uv already available at $(command -v uv)"
     return
   fi
@@ -326,15 +414,123 @@ ensure_uv() {
   command -v uv >/dev/null 2>&1 || die 'uv installation did not provide an executable'
 }
 
+python_compatible() {
+  local python_command="${1:-python3}"
+  "${python_command}" -c \
+    'import sys, venv, ensurepip; sys.exit(sys.version_info[:3] < tuple(map(int, sys.argv[1].split("."))))' \
+    "${BECKNVIM_MINIMUM_PYTHON_VERSION}" >/dev/null 2>&1
+}
+
+system_package_installed() {
+  local manager="$1"
+  local package_name="$2"
+  case "${manager}" in
+    apt-get) [[ "$(dpkg-query -W -f='${Status}' "${package_name}" 2>/dev/null)" == 'install ok installed' ]] ;;
+    dnf|zypper) rpm -q "${package_name}" >/dev/null 2>&1 ;;
+    pacman) pacman -Q "${package_name}" >/dev/null 2>&1 ;;
+    brew) [[ -n "$(brew list --versions "${package_name}" 2>/dev/null)" ]] ;;
+  esac
+}
+
+install_python_build_packages() {
+  if [[ ${BECKNVIM_INSTALL_SYSTEM} -eq 0 ]]; then
+    log 'Skipping Python build packages; using the existing build environment'
+    return
+  fi
+  local manager
+  manager="$(system_package_manager)"
+  local -a build_packages=()
+  case "${manager}" in
+    apt-get)
+      build_packages=(build-essential patch libssl-dev zlib1g-dev libbz2-dev libreadline-dev
+        libsqlite3-dev libncursesw5-dev xz-utils libffi-dev liblzma-dev)
+      ;;
+    dnf)
+      build_packages=(gcc make patch openssl-devel zlib-devel bzip2-devel readline-devel
+        sqlite-devel ncurses-devel xz xz-devel libffi-devel)
+      ;;
+    pacman) build_packages=(base-devel openssl zlib bzip2 readline sqlite ncurses xz libffi) ;;
+    zypper)
+      build_packages=(gcc make patch openssl-devel zlib-devel libbz2-devel readline-devel
+        sqlite3-devel ncurses-devel xz xz-devel libffi-devel)
+      ;;
+    brew) build_packages=(openssl@3 readline sqlite3 xz zlib bzip2 libffi pkgconfig) ;;
+  esac
+  local package_name
+  local -a missing_packages=()
+  for package_name in "${build_packages[@]}"; do
+    if ! system_package_installed "${manager}" "${package_name}"; then
+      missing_packages+=("${package_name}")
+    fi
+  done
+  [[ ${#missing_packages[@]} -gt 0 ]] || return 0
+  if [[ "${manager}" == 'apt-get' ]]; then
+    run_as_root apt-get update
+  fi
+  install_package_batch "${manager}" "${missing_packages[@]}"
+}
+
+ensure_pyenv() {
+  export PYENV_ROOT="${PYENV_ROOT:-${HOME}/.pyenv}"
+  export PATH="${PYENV_ROOT}/bin:${PATH}"
+  if pyenv --version >/dev/null 2>&1; then
+    return
+  fi
+  local installer="${BECKNVIM_TEMP_DIR}/pyenv-install.sh"
+  log "Installing pyenv in ${PYENV_ROOT}"
+  download 'https://pyenv.run' "${installer}"
+  bash "${installer}"
+  hash -r
+  pyenv --version >/dev/null 2>&1 || die 'pyenv installation did not provide an executable'
+}
+
+ensure_python() {
+  if python_compatible; then
+    log "$(python3 --version) with venv support already satisfies the configuration"
+    return
+  fi
+
+  local python_link="${BECKNVIM_USER_BIN}/python3"
+  if [[ -e "${python_link}" && ! -L "${python_link}" ]]; then
+    die "refusing to replace the regular file ${python_link}"
+  fi
+  ensure_pyenv
+  local existing_python_version=''
+  existing_python_version="$(pyenv latest "${BECKNVIM_PYTHON_VERSION}" 2>/dev/null || true)"
+  local selected_python_version=''
+  if [[ -n "${existing_python_version}" ]] \
+    && python_compatible "${PYENV_ROOT}/versions/${existing_python_version}/bin/python3"; then
+    selected_python_version="${existing_python_version}"
+    log "Reusing Python ${selected_python_version} managed by pyenv"
+  else
+    install_python_build_packages
+    log "Installing Python ${BECKNVIM_PYTHON_VERSION} through pyenv; compiling may take several minutes"
+    # Resolve the latest patch known to pyenv, then reuse it on subsequent runs.
+    selected_python_version="$(pyenv latest --known "${BECKNVIM_PYTHON_VERSION}")"
+    pyenv install --skip-existing --verbose "${selected_python_version}" \
+      || die "pyenv could not install Python ${selected_python_version}"
+  fi
+  local installed_python_prefix
+  installed_python_prefix="$(pyenv prefix "${selected_python_version}")"
+  local installed_python_path
+  installed_python_path="${installed_python_prefix}/bin/python3"
+  [[ "${installed_python_path}" == /* && -x "${installed_python_path}" ]] \
+    || die 'pyenv did not provide an executable Python path'
+  python_compatible "${installed_python_path}" || die 'installed Python does not satisfy the configuration'
+  ln -sfn "${installed_python_path}" "${python_link}"
+  hash -r
+  python_compatible || die "add ${BECKNVIM_USER_BIN} to PATH to use the installed Python"
+  log "$(python3 --version) with venv support is ready"
+}
+
 ensure_tree_sitter() {
   local owned_binary="${BECKNVIM_USER_BIN}/tree-sitter"
-  local owned_version=''
-  if [[ -x "${owned_binary}" ]]; then
-    owned_version="$(${owned_binary} --version 2>/dev/null \
-      | sed -n 's/^tree-sitter \([0-9.]*\).*$/\1/p')"
+  local current_version=''
+  if command -v tree-sitter >/dev/null 2>&1; then
+    current_version="$(tree_sitter_version || true)"
   fi
-  if version_at_least "${owned_version}" "${BECKNVIM_TREE_SITTER_VERSION}"; then
-    log "Tree-sitter CLI ${owned_version} already installed in ${BECKNVIM_USER_BIN}"
+  if version_at_least "${current_version}" "${BECKNVIM_MINIMUM_TREE_SITTER_VERSION}"; then
+    log "Tree-sitter CLI ${current_version} already satisfies the configuration: $(command -v tree-sitter)"
     return
   fi
 
@@ -364,20 +560,34 @@ ensure_termaid() {
   local ref="${BECKNVIM_TERMAID_REF:-main}"
   [[ "${ref}" =~ ^[A-Za-z0-9._/-]+$ ]] \
     || die 'BECKNVIM_TERMAID_REF contains unsupported characters'
-  local source="git+${BECKNVIM_TERMAID_REPOSITORY}@${ref}"
+  if [[ -z "${BECKNVIM_TERMAID_REF:-}" ]] && termaid_compatible; then
+    log "Termaid already supports the renderer: $(command -v termaid)"
+    return
+  fi
+  ensure_uv
+  local install_source="git+${BECKNVIM_TERMAID_REPOSITORY}@${ref}"
+  local python_executable
+  python_executable="$(python3 -c 'import sys; print(sys.executable)')"
+  local -a install_options=(--force --verbose --python "${python_executable}" --no-python-downloads)
+  if [[ -n "${BECKNVIM_TERMAID_REF:-}" ]]; then
+    install_options+=(--refresh)
+  fi
   log "Installing Termaid from BeckWlim/termaid@${ref}"
+  log 'uv will report Git fetch, dependency resolution, and build progress below'
   UV_TOOL_BIN_DIR="${BECKNVIM_USER_BIN}" \
-    uv tool install --force --refresh "${source}"
+    GIT_HTTP_LOW_SPEED_LIMIT="${GIT_HTTP_LOW_SPEED_LIMIT:-1}" \
+    GIT_HTTP_LOW_SPEED_TIME="${GIT_HTTP_LOW_SPEED_TIME:-60}" \
+    uv tool install "${install_options[@]}" "${install_source}"
   hash -r
 }
 
 check_command() {
-  local command="$1"
+  local command_name="$1"
   local feature="$2"
-  if command -v "${command}" >/dev/null 2>&1; then
-    log "Found ${command}: $(command -v "${command}")"
+  if dependency_available "${command_name}"; then
+    log "Found ${command_name}: $(command -v "${command_name}")"
   else
-    warn "missing ${command} (${feature})"
+    warn "missing or unusable ${command_name} (${feature})"
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
   fi
 }
@@ -395,6 +605,15 @@ check_version() {
   fi
 }
 
+termaid_compatible() {
+  local help_output
+  help_output="$(termaid --help 2>/dev/null)" || return 1
+  [[ "${help_output}" == *'styled-json'* \
+    && "${help_output}" == *'--strict-width'* \
+    && "${help_output}" == *'--fit-mode'* \
+    && "${help_output}" == *'--max-height'* ]]
+}
+
 check_termaid_contract() {
   if ! command -v termaid >/dev/null 2>&1; then
     warn 'missing termaid (semantic Mermaid rendering)'
@@ -402,12 +621,7 @@ check_termaid_contract() {
     return
   fi
 
-  local help_output
-  help_output="$(termaid --help 2>&1 || true)"
-  if [[ "${help_output}" == *'styled-json'* \
-      && "${help_output}" == *'--strict-width'* \
-      && "${help_output}" == *'--fit-mode'* \
-      && "${help_output}" == *'--max-height'* ]]; then
+  if termaid_compatible; then
     log "Termaid supports the BeckNvim renderer contract: $(command -v termaid)"
   else
     warn 'termaid does not support styled-json and strict reflow rendering'
@@ -433,16 +647,20 @@ run_checks() {
   check_command 'git' 'plugin and repository workflows'
   check_command 'rg' 'Telescope and workspace search'
   check_command 'curl' 'translation and HTTP-backed features'
-  check_command 'wget' 'download fallback'
   check_command 'unzip' 'plugin and tool extraction'
   if command -v python3 >/dev/null 2>&1; then
     check_version 'Python' "$(python3 -c 'import platform; print(platform.python_version())')" \
-      '3.10.0' 'Python hierarchy and project analysis'
+      "${BECKNVIM_MINIMUM_PYTHON_VERSION}" 'Python hierarchy and project analysis'
+    if ! python_compatible; then
+      warn 'python3 must meet the minimum version and provide venv and ensurepip (Mason Python packages)'
+      BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
+    fi
   else
     warn 'missing python3 (Python hierarchy and project analysis)'
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
   fi
-  check_command 'node' 'Mason language servers and parser generation'
+  check_version 'Node.js' "$(node_version || true)" "${BECKNVIM_MINIMUM_NODE_VERSION}" \
+    'Mason language servers and parser generation'
   check_command 'npm' 'Node-backed Mason packages'
   check_command 'make' 'native Telescope sorter compilation'
   check_command 'cmake' 'CMake project workflow'
@@ -480,7 +698,6 @@ run_checks() {
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
   fi
 
-  check_command 'uv' 'isolated Termaid installation'
   check_termaid_contract
   check_clipboard
 
@@ -491,47 +708,36 @@ run_checks() {
   log 'All required external dependencies are available'
 }
 
-bootstrap_plugins() {
-  log 'Restoring plugins pinned by lazy-lock.json'
-  (
-    cd "${BECKNVIM_ROOT}"
-    nvim --headless -u init.lua -i NONE '+Lazy! sync' '+qa'
-  )
-  log 'Checking a complete headless startup'
-  (
-    cd "${BECKNVIM_ROOT}"
-    nvim --headless -u init.lua -i NONE '+qa'
-  )
+main() {
+  if [[ "${BECKNVIM_MODE}" == 'check' ]]; then
+    run_checks
+    exit 0
+  fi
+
+  BECKNVIM_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/becknvim-setup.XXXXXX")"
+  mkdir -p "${BECKNVIM_USER_BIN}" "${BECKNVIM_USER_OPT}"
+
+  if [[ ${BECKNVIM_INSTALL_SYSTEM} -eq 1 ]]; then
+    install_system_packages
+  else
+    log 'Skipping operating-system package installation'
+  fi
+
+  ensure_node
+  ensure_python
+  ensure_neovim
+  ensure_tree_sitter
+  ensure_termaid
+  run_checks
+
+  if [[ ":${BECKNVIM_ORIGINAL_PATH}:" != *":${BECKNVIM_USER_BIN}:"* ]]; then
+    warn "add ${BECKNVIM_USER_BIN} to PATH before starting Neovim from a new shell"
+  fi
+  warn 'install a Nerd Font manually and select it in the terminal application'
+  log 'Setup complete'
+  log 'Open nvim; lazy.nvim and Mason will install missing plugins and language servers'
 }
 
-if [[ "${BECKNVIM_MODE}" == 'check' ]]; then
-  run_checks
-  exit 0
-fi
-
-BECKNVIM_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/becknvim-setup.XXXXXX")"
-mkdir -p "${BECKNVIM_USER_BIN}" "${BECKNVIM_USER_OPT}"
-
-if [[ ${BECKNVIM_INSTALL_SYSTEM} -eq 1 ]]; then
-  install_system_packages
-else
-  log 'Skipping operating-system package installation'
-fi
-
-ensure_neovim
-ensure_uv
-ensure_tree_sitter
-ensure_termaid
-run_checks
-
-if [[ ${BECKNVIM_BOOTSTRAP_PLUGINS} -eq 1 ]]; then
-  bootstrap_plugins
-else
-  log 'Skipping Neovim plugin bootstrap'
-fi
-
-if [[ ":${BECKNVIM_ORIGINAL_PATH}:" != *":${BECKNVIM_USER_BIN}:"* ]]; then
-  warn "add ${BECKNVIM_USER_BIN} to PATH before starting Neovim from a new shell"
-fi
-warn 'install a Nerd Font manually and select it in the terminal application'
-log 'Setup complete'
+# Parse the entrypoint and exit together so edits during installation cannot
+# make Bash resume reading a changed script after the long-running work.
+main; exit

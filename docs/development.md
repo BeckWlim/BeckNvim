@@ -7,6 +7,10 @@ Focused tests mirror production ownership under `tests/<subsystem>/`; tests for 
 use the same nesting, such as `config.syntax.markdown` under `tests/syntax/markdown/`.
 
 ```bash
+bash -n setup.sh
+bash -n tests/setup.sh
+bash -n tests/setup_runtime.sh
+bash tests/setup.sh
 XDG_CACHE_HOME=/tmp/nvim-test-cache XDG_STATE_HOME=/tmp/nvim-test-state \
   nvim --headless -u NONE -i NONE -l tests/run.lua
 git diff --check

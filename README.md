@@ -38,38 +38,25 @@ The complete ownership and lifecycle model is documented in
 
 ## Installation
 
-The automated setup supports Debian/Ubuntu, Fedora/RHEL, Arch Linux, openSUSE, and macOS with
-Homebrew. It installs system build and search tools, verified user-local Neovim and Tree-sitter CLI
-binaries, `uv`, the `BeckWlim/termaid` fork, and the plugins pinned by `lazy-lock.json`.
+Back up any existing `~/.config/nvim` directory, then run:
 
 ```bash
-mv ~/.config/nvim ~/.config/nvim.bak
 git clone https://github.com/BeckWlim/BeckNvim.git ~/.config/nvim
 cd ~/.config/nvim
 ./setup.sh
+```
+
+Setup installs missing external tools and reuses compatible ones already installed. Follow any
+PATH instructions it prints, reopen your terminal, and start Neovim:
+
+```bash
 nvim
 ```
 
-The script is idempotent. Use `./setup.sh --check` for a non-mutating dependency audit,
-`--skip-system` when system packages are managed separately, or `--skip-plugins` to defer the Lazy
-bootstrap. Termaid follows the requested fork `main` branch by default; set
-`BECKNVIM_TERMAID_REF` to a tag or commit when an immutable installation is preferred:
+On first launch, lazy.nvim installs missing plugins and Mason installs configured language servers.
+Use a Nerd Font in your terminal for icons.
 
-```bash
-BECKNVIM_TERMAID_REF=<commit> ./setup.sh
-```
-
-Manual requirements:
-
-- Neovim 0.12 or newer
-- Git, ripgrep, Python 3.10+, curl, wget, and unzip
-- Node.js, npm, and tree-sitter CLI 0.26.1 or newer
-- make, a C compiler, CMake, and Ninja
-- A Nerd Font
-- `xclip` on X11 or `wl-clipboard` on Wayland for system clipboard integration
-
-On first launch, lazy.nvim restores pinned plugins and Mason installs the configured language
-servers. Plugin versions remain pinned by `lazy-lock.json` until explicitly updated.
+Run `./setup.sh --check` to check dependencies or `./setup.sh --help` for setup options.
 
 ## Documentation
 
