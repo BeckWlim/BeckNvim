@@ -294,6 +294,46 @@ assert(
 assert(vim.api.nvim_buf_is_valid(original_buffer), 'dashboard test lost its original buffer')
 vim.api.nvim_win_set_buf(dashboard_window, original_buffer)
 vim.api.nvim_buf_delete(code_buffer, { force = true })
+local markdown_preview = require('config.syntax.markdown.preview')
+local markdown_source = vim.fn.bufadd(second_file)
+vim.fn.bufload(markdown_source)
+vim.api.nvim_set_current_buf(markdown_source)
+vim.bo.filetype = 'markdown'
+vim.wo.number = true
+vim.wo.relativenumber = true
+local source_lines_before = vim.api.nvim_buf_get_lines(markdown_source, 0, -1, false)
+markdown_preview.setup()
+markdown_preview.open(markdown_source)
+local generated_buffer = vim.api.nvim_get_current_buf()
+local homepage_buffer
+local function open_homepage_command(command)
+  if command ~= 'Dashboard' then return original_command(command) end
+  assert(vim.api.nvim_get_current_buf() == markdown_source and vim.bo.modifiable,
+    'Dashboard was invoked from the non-modifiable preview')
+  homepage_buffer = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_set_current_buf(homepage_buffer)
+  dashboard.attach(homepage_buffer, dashboard_window, projects)
+end
+vim.cmd = open_homepage_command
+dashboard.open()
+vim.cmd = original_command
+assert(not vim.api.nvim_buf_is_valid(generated_buffer), 'Homepage retained the generated preview session')
+assert(not vim.wo.number and not vim.wo.relativenumber, 'Homepage displayed the Markdown number gutter')
+assert(vim.deep_equal(window_state.resolve(dashboard_window, { 'number', 'relativenumber' }),
+  { number = true, relativenumber = true }), 'Homepage captured missing preview line numbers as editor intent')
+assert(vim.wait(200, function() return not vim.bo[homepage_buffer].modifiable end, 5))
+local homepage_text = table.concat(vim.api.nvim_buf_get_lines(homepage_buffer, 0, -1, false), '\n')
+assert(homepage_text:find(first_root, 1, true), 'Homepage lost the Markdown source project context')
+vim.api.nvim_set_current_buf(markdown_source)
+assert(vim.wait(200, function() return vim.b.markdown_preview_source == markdown_source end, 5),
+  'Revisiting the file from the homepage did not restore the Markdown rendered preference')
+assert(vim.wo.number and vim.wo.relativenumber, 'Returning from the homepage lost editor line numbers')
+assert(vim.deep_equal(vim.api.nvim_buf_get_lines(markdown_source, 0, -1, false), source_lines_before),
+  'Homepage transition changed Markdown source text')
+markdown_preview.toggle()
+vim.api.nvim_del_augroup_by_name('markdown_default_preview')
+vim.api.nvim_set_current_buf(original_buffer)
+vim.api.nvim_buf_delete(markdown_source, { force = true })
 vim.api.nvim_set_current_buf(original_buffer)
 vim.go.number = original_global_number
 vim.go.relativenumber = original_global_relativenumber

@@ -12,7 +12,7 @@ system while keeping native Neovim and plugin behavior wherever practical.
 - Diffview-based history review with bounded asynchronous loading and safe state transitions.
 - LSP completion, diagnostics, type information, and language-aware navigation.
 - Tree-sitter highlighting, folding, syntax context, scope visualization, and structural selection.
-- Readable Markdown rendering with responsive tables, semantic-color Mermaid diagrams, and stable native editing behavior.
+- Markdown prose, responsive tables, and semantic-color Mermaid diagrams rendered by default, with pinned headings and source editing in the same pane.
 - Integrated terminal, translation, proxy management, and project diagnostics.
 
 ## Main Modules

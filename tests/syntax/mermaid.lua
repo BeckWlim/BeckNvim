@@ -1,4 +1,4 @@
--- Focused inline rendering, fallback, and process-budget tests for Mermaid.
+-- Focused projection, fallback, and process-budget tests for Mermaid.
 local markdown_features = require('config.syntax.markdown_features')
 local mermaid = require('config.syntax.mermaid')
 
@@ -8,25 +8,9 @@ local original = {
   guicursor = vim.o.guicursor,
   max_concurrent = mermaid.max_concurrent,
   feature_request_render = markdown_features.request_render,
-  request_context = package.loaded['render-markdown.request.context'],
   start_process = mermaid.start_process,
   timeout = mermaid.timeout_ms,
   width_ratio = mermaid.width_ratio,
-}
-
-package.loaded['render-markdown.request.context'] = {
-  get = function(buffer)
-    return {
-      win = 0,
-      view = {
-        query = function(_, root, parsed_query, callback)
-          for capture_id, node in parsed_query:iter_captures(root, buffer, 0, -1) do
-            callback(capture_id, node)
-          end
-        end,
-      },
-    }
-  end,
 }
 
 local refreshes = 0
@@ -57,10 +41,10 @@ local buffer, context = fixture({
   '```',
 })
 
-local fitted_lines = mermaid.fit_lines({
+local fitted_lines = assert(mermaid.fit_lines({
   '    ABCD',
   '    你好',
-}, 4)
+}, 4))
 assert(
   vim.deep_equal(fitted_lines, { 'ABCD', '你好' }),
   'Mermaid output was not validated and left-aligned'
@@ -184,151 +168,34 @@ assert(vim.wait(100, function()
   return refreshes == 1
 end, 1), 'Completed Mermaid rendering did not use the shared refresh pipeline')
 
-assert(#mermaid.parse(context) == 0, 'Mermaid leaked plugin-managed render marks')
-local marks = mermaid.stage(buffer, 0)
-assert(#marks == 4, 'Inactive Mermaid output lost its label, fence, or source rows')
-local inactive_label = marks[1]
-assert(
-  inactive_label.row == 1
-    and inactive_label.options.priority == 201
-    and inactive_label.options.virt_text_pos == 'overlay'
-    and inactive_label.options.virt_text[1][1] == '󰙅 '
-    and inactive_label.options.virt_text[1][2] == 'RenderMarkdownMermaidIcon'
-    and inactive_label.options.virt_text[2][1] == 'mermaid'
-    and inactive_label.options.virt_text[2][2] == 'RenderMarkdownMermaidLabel',
-  'Inactive Mermaid fence did not keep its table-style icon label'
-)
-assert(
-  marks[2].row == 4
-    and marks[2].options.conceal_lines == ''
-    and marks[2].options.priority == 201,
-  'Successful Mermaid rendering did not hide its closing fence'
-)
+local source_tick = vim.api.nvim_buf_get_changedtick(buffer)
+local blocks = mermaid.project(context)
+assert(#blocks == 1 and blocks[1].start_row == 1 and blocks[1].end_row == 5,
+  'Mermaid projection lost its complete source range')
+assert(#blocks[1].rows == 4 and blocks[1].rows[1].chunks[1][1] == '󰙅 ',
+  'Mermaid projection lost its label or real rendered rows')
 local rendered_lines = {}
-for mark_index = 3, #marks do
-  local mark = marks[mark_index]
-  assert(
-    mark.row == mark_index - 1
-      and mark.options.conceal_lines == nil
-      and mark.options.virt_text_pos == 'overlay',
-    'Mermaid output is not a persistent source-backed overlay'
-  )
-  local primary = table.concat(vim.tbl_map(function(chunk)
-    return chunk[1]
-  end, mark.options.virt_text)):gsub('%s+$', '')
-  rendered_lines[#rendered_lines + 1] = primary
-  for _, virtual_line in ipairs(mark.options.virt_lines or {}) do
-    rendered_lines[#rendered_lines + 1] = table.concat(vim.tbl_map(function(chunk)
-      return chunk[1]
-    end, virtual_line))
-  end
-end
-local rendered_text = table.concat(rendered_lines, '\n')
-assert(
-  rendered_text == '┌─►\n│ A │\n└───┘',
-  'Mermaid output was changed before inline display'
-)
 local semantic_highlights = {}
-for mark_index = 3, #marks do
-  local options = marks[mark_index].options
-  for _, chunks in ipairs(vim.list_extend(
-    { options.virt_text },
-    options.virt_lines or {}
-  )) do
-    for _, chunk in ipairs(chunks) do
-      semantic_highlights[chunk[2]] = true
-    end
+for index, row in ipairs(blocks[1].rows) do
+  local parts = {}
+  for _, chunk in ipairs(row.chunks) do
+    parts[#parts + 1] = chunk[1]
+    semantic_highlights[chunk[2]] = true
+  end
+  if index > 1 then
+    rendered_lines[#rendered_lines + 1] = table.concat(parts)
+    assert(row.source_row >= 2 and row.source_row < 4, 'Diagram row lost its source position')
   end
 end
-assert(
-  semantic_highlights.RenderMarkdownMermaidNode
-    and semantic_highlights.RenderMarkdownMermaidEdge
-    and semantic_highlights.RenderMarkdownMermaidArrow
-    and semantic_highlights.RenderMarkdownMermaidContentLabel,
-  'Inline Mermaid rendering flattened semantic color chunks'
-)
-assert(
-  #mermaid.parse(context) == 0
-    and #mermaid.stage(buffer, 0) == 4
-    and #process_requests == 1,
-  'Cached Mermaid output started a duplicate process'
-)
-
-mermaid.render({ buf = buffer, win = 0 })
-local feature_namespace = vim.api.nvim_get_namespaces().markdown_features
-assert(
-  feature_namespace
-    and #vim.api.nvim_buf_get_extmarks(
-      buffer,
-      feature_namespace,
-      0,
-      -1,
-      {}
-    ) == 4,
-  'Mermaid output did not use the shared persistent Markdown extmark pipeline'
-)
-
-local function has_highlight(chunks, expected)
-  for _, chunk in ipairs(chunks or {}) do
-    local highlights = type(chunk[2]) == 'table' and chunk[2] or { chunk[2] }
-    if vim.tbl_contains(highlights, expected) then
-      return true
-    end
-  end
-  return false
-end
-
-vim.api.nvim_win_set_cursor(0, { 3, 2 })
-mermaid.render({ buf = buffer, win = 0 })
-assert(refreshes == 1, 'Moving in Mermaid source requested a redundant full refresh')
-marks = mermaid.stage(buffer, 0)
-assert(#marks == 4, 'Active Mermaid lost its persistent icon tag')
-local label = marks[1]
-assert(
-  label.row == 1
-    and label.options.priority == 201
-    and label.options.virt_text_pos == 'overlay'
-    and label.options.virt_text[1][1] == '󰙅 '
-    and label.options.virt_text[1][2] == 'RenderMarkdownMermaidIcon'
-    and label.options.virt_text[2][1] == 'mermaid'
-    and label.options.virt_text[2][2] == 'RenderMarkdownMermaidLabel',
-  'Active Mermaid fence did not keep its dedicated icon tag'
-)
-local rendered_cursor = false
-local rendered_cursor_line = false
-for mark_index = 3, #marks do
-  local options = marks[mark_index].options
-  rendered_cursor = rendered_cursor
-    or has_highlight(options.virt_text, 'Cursor')
-  rendered_cursor_line = rendered_cursor_line
-    or has_highlight(options.virt_text, 'CursorLine')
-  for _, virtual_line in ipairs(options.virt_lines or {}) do
-    rendered_cursor = rendered_cursor
-      or has_highlight(virtual_line, 'Cursor')
-    rendered_cursor_line = rendered_cursor_line
-      or has_highlight(virtual_line, 'CursorLine')
-  end
-end
-assert(rendered_cursor, 'Mermaid cursor did not follow the rendered diagram')
-assert(rendered_cursor_line, 'Mermaid cursor row did not receive CursorLine styling')
-assert(
-  vim.o.guicursor:find('RenderMarkdownMermaidHiddenCursor', 1, true),
-  'Mermaid render did not hide the native source cursor'
-)
-
-vim.api.nvim_win_set_cursor(0, { 1, 0 })
-mermaid.render({ buf = buffer, win = 0 })
-assert(refreshes == 1, 'Leaving Mermaid source requested a redundant full refresh')
-assert(
-  vim.o.guicursor == original.guicursor,
-  'Leaving Mermaid source did not restore the native cursor'
-)
-
+assert(table.concat(rendered_lines, '\n') == '┌─►\n│ A │\n└───┘', 'Mermaid projection changed diagram content')
+assert(semantic_highlights.RenderMarkdownMermaidNode and semantic_highlights.RenderMarkdownMermaidEdge
+  and semantic_highlights.RenderMarkdownMermaidArrow and semantic_highlights.RenderMarkdownMermaidContentLabel,
+  'Mermaid projection flattened semantic colors')
+assert(#mermaid.project(context) == 1 and #process_requests == 1, 'Cached projection restarted the renderer')
+assert(source_tick == vim.api.nvim_buf_get_changedtick(buffer) and vim.o.guicursor == original.guicursor,
+  'Mermaid projection changed source text or the native cursor')
 mermaid.detach(buffer)
-assert(
-  #vim.api.nvim_buf_get_extmarks(buffer, feature_namespace, 0, -1, {}) == 0,
-  'Mermaid teardown did not clear its shared Markdown feature marks'
-)
+assert(#mermaid.stage(buffer) == 0, 'Mermaid detach retained its rendered output')
 
 refreshes = 0
 process_requests = {}
@@ -352,7 +219,7 @@ process_requests[2].callback({ code = 0, stdout = 'plain fallback' })
 assert(vim.wait(100, function()
   return refreshes == 1
 end, 1), 'Mermaid plain fallback did not settle through the shared pipeline')
-assert(#mermaid.stage(buffer, 0) == 4, 'Mermaid plain fallback was not rendered')
+assert(#mermaid.stage(buffer) == 1, 'Mermaid plain fallback was not rendered')
 
 mermaid.detach(buffer)
 refreshes = 0
@@ -415,6 +282,5 @@ mermaid.start_process = original.start_process
 mermaid.timeout_ms = original.timeout
 mermaid.width_ratio = original.width_ratio
 markdown_features.request_render = original.feature_request_render
-package.loaded['render-markdown.request.context'] = original.request_context
 vim.o.guicursor = original.guicursor
 vim.api.nvim_set_current_buf(original.buffer)

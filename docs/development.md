@@ -20,3 +20,11 @@ XDG_CACHE_HOME=/tmp/nvim-test-cache XDG_STATE_HOME=/tmp/nvim-test-state \
 
 The test runner includes the binding audit. Exercise Diffview lifecycle changes against a disposable
 or read-only Git repository.
+
+With plugins, Markdown parsers, and Termaid installed, verify Markdown modes, screen colors, source
+navigation, and input responsiveness during multiple diagram completions and resizing in an embedded
+Neovim UI. The check retains normal prompt behavior so blocking errors remain visible:
+
+```bash
+nvim --headless -u NONE -i NONE -l tests/syntax/markdown/installed.lua
+```

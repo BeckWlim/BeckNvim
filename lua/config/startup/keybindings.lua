@@ -94,7 +94,9 @@ local function map_editing_aids()
 
   map('<F3>', '<cmd>NvimTreeToggle<CR>', 'Toggle file tree')
   map('<Space>h', require('config.ui.dashboard').open, 'Open dashboard')
-  map('<Space>mp', '<cmd>RenderMarkdown toggle<CR>', 'Toggle markdown preview')
+  map('<Space>mp', function()
+    require('config.syntax.markdown').toggle()
+  end, 'Toggle Markdown rendered view and source')
   map('<Space>t', require('config.translation').open, 'Open translation query')
 end
 

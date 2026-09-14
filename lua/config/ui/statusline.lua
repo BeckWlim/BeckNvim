@@ -1,15 +1,24 @@
 local M = {}
 M.project_icons = require('config.project').provider_icons
 
+local function file_buffer()
+  local current_buffer = vim.api.nvim_get_current_buf()
+  local source_buffer = vim.b[current_buffer].markdown_preview_source
+  if type(source_buffer) == 'number' and vim.api.nvim_buf_is_valid(source_buffer) then
+    return source_buffer
+  end
+  return current_buffer
+end
+
 function M.project_name()
-  local bufnr = vim.api.nvim_get_current_buf()
+  local bufnr = file_buffer()
   local project = require('config.project')
   local root = project.for_buffer(bufnr)
   return project.name(root)
 end
 
 function M.project_identity()
-  local bufnr = vim.api.nvim_get_current_buf()
+  local bufnr = file_buffer()
   local project = require('config.project')
   local root = project.for_buffer(bufnr)
   local provider = project.repository_provider(root)
@@ -18,7 +27,7 @@ function M.project_identity()
 end
 
 function M.project_relative_path()
-  local bufnr = vim.api.nvim_get_current_buf()
+  local bufnr = file_buffer()
   local relative_path = require('config.project').relative_path(bufnr)
   local status_path = relative_path
   if vim.bo[bufnr].modified then

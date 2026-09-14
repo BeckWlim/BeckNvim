@@ -19,8 +19,8 @@ lua/
 │   ├── lsp/                      init.lua (servers), completion.lua, type_information.lua,
 │   │                             diagnostics.lua, detail_window.lua
 │   ├── syntax/                   treesitter.lua (parser bootstrap), treesitter_context.lua,
-│   │                             markdown.lua, markdown_features.lua, mermaid.lua, visuals.lua,
-│   │                             highlights.lua, folds.lua
+│   │                             markdown.lua, markdown/{table,preview}.lua, markdown_features.lua,
+│   │                             mermaid.lua, visuals.lua, highlights.lua, folds.lua
 │   ├── type_hierarchy/           Recursive class and implementation pickers
 │   ├── translation/              Translation query UI and backend providers
 │   ├── python/                   Python environment and hierarchy indexing
@@ -66,8 +66,11 @@ lua/
 | `config/lsp/diagnostics.lua` | Diagnostic float and document diagnostic picker wiring |
 | `config/lsp/detail_window.lua` | Shared focus, same-key close, and copy behavior for detail windows |
 | `config/syntax/` | Parser installation and highlighting bootstrap (`treesitter.lua`), identifier selection and navigation (`selection.lua`), Treesitter pinned context, scope and rainbow visuals, highlight policy, and folds |
-| `config/syntax/mermaid.lua` | Automatic Mermaid-fence discovery, bounded Termaid jobs, validated semantic-style output, and inline render marks |
-| `config/syntax/markdown_features.lua` | Reusable Markdown feature lifecycle, semantic extmarks, refresh coalescing, and logical cursor parking |
+| `config/syntax/mermaid.lua` | Mermaid discovery, bounded Termaid jobs, validated semantic output, and preview rows |
+| `config/syntax/markdown.lua` | Markdown feature assembly and preview command |
+| `config/syntax/markdown/table.lua` | Table parsing, independent cell wrapping, semantic rows, and source-byte maps |
+| `config/syntax/markdown/preview.lua` | Preview pane lifecycle, real display lines, refreshes, and navigation to source |
+| `config/syntax/markdown_features.lua` | Shared source-range projection contract, source-position mapping, and refresh subscriptions |
 | `config/type_hierarchy/` | Recursive class and implementation pickers: `init.lua` dispatches by filetype, `python.lua` owns the indexed AST paths and Python source parsing, `lsp.lua` owns the live-request paths, `core.lua` owns shared picker plumbing and walk bookkeeping |
 | `config/translation/` | Translation query window (`init.lua`) plus backend construction and response parsing (`providers.lua`) |
 | `config/python/environment.lua` | Python interpreter and environment resolution |
@@ -116,144 +119,92 @@ float all consume this definition directly. Telescope explicitly disables its bu
 
 ## Markdown Rendering
 
-`render-markdown.nvim` owns ordinary Markdown presentation. Its public `win_options` adapter enables
-word-aware soft rows in the rendered state, with break indentation, a visible continuation marker,
-and smooth scrolling; it never inserts wrapping newlines into the source. The raw state restores the
-global no-wrap policy so the option cannot leak into a later code buffer in the same window.
-Normal and Visual modes keep the rendered presentation by default; the existing `<Space>mp` command
-remains the only explicit whole-presentation toggle.
+`render-markdown.nvim` owns ordinary presentation in the rendered buffer. Native window
+wrapping handles prose; tables and Mermaid never change source-window options or conceal long source
+lines beneath replacement overlays. Markdown files open rendered by default in their existing pane.
+The `<Space>mp` command switches that pane between a read-only rendered buffer and its editable
+source, without creating or closing windows. Explicitly choosing source keeps it visible until the
+next toggle. Headings, lists, links, tables, and diagrams share the rendered state, including the row
+under the cursor. Source mode exposes Markdown punctuation throughout the document. The prose
+renderer uses its supported `ignore` callback to skip editable files while retaining presentation in
+read-only Markdown detail panels. Each contiguous run of copied prose becomes a separate Tree-sitter
+parse region in the preview, so generated table cells and diagram labels cannot be reinterpreted as
+Markdown syntax. Refreshes rebuild those regions when replacement rows change.
 
-Pipe tables extend the plugin through its supported custom-handler boundary while retaining the
-plugin's parser, redraw, conceal, and teardown lifecycle. The built-in pipe-table pass is disabled so
-the adapter can measure each column's maximum visible content width. If all columns fit, the table
-stays intrinsic and compact; otherwise a water-fill allocation caps short columns at their required
-width and redistributes the remaining split capacity evenly among columns that still overflow. Body
-cells reuse those widths for cell-local virtual continuation rows. Link destinations are removed
-before measuring their visible labels. A centered header, one separator, one closing rule, faint
-dashed spacing between body records, and whitespace column gaps avoid vertical-grid reconstruction.
-The block is anchored at the Markdown source indentation. It may use the complete remaining width
-through an 80-column threshold, so narrow views such as 27-column splits sacrifice no cell capacity.
-Rendered rows and their virtual continuations remain anchored to their corresponding source rows;
-the table never collapses into one multi-screen virtual block that traps smooth viewport scrolling.
-Above that threshold, its responsive cap grows toward 80% of the split and reserves approximately
-20% as external whitespace on the right in wide views. Allocation then excludes one left and two
-right inner-margin cells, keeping the final column away from the rule edge without forcing a compact
-table to fill its cap.
-Inline-code delimiters are concealed like ordinary rendered Markdown, while the cell adapter carries
-their span metadata through wrapping and renders each resulting fragment with a distinct key-like
-background and the resolved `@markup.raw.markdown_inline` purple foreground.
-Every header, delimiter, and body source row owns a stable semantic overlay and continuation
-extmark, including the row under the cursor. The source remains the buffer truth, so normal-mode
-motions traverse its original columns, while a window-column overlay keeps the table preview fixed
-on screen. Each overlay is padded through the raw line's display width; this masks the source without
-concealing it or changing cursor semantics. Between input keys the hidden native cursor is parked at
-the start of its source row, preventing Neovim's redraw from horizontally scrolling surrounding
-content to reveal an off-screen raw byte column. The key listener restores the logical source
-position immediately before mapped input is processed, and `CursorMoved` captures the resulting
-native position before parking again. In normal mode, Tree-sitter cell byte ranges map the raw
-cursor column through the same link, code, whitespace, UTF-8, and word-wrap transformation used by
-the preview. The matching wrapped cell fragment receives the shared `CursorLine` background, and a
-`Cursor`-styled proxy marks the corresponding rendered character. The native terminal cursor is
-hidden with a blend-only cursor group while that proxy is active in Normal or Visual mode, then
-restored on delimiter rows, other modes, buffer changes, disable, or teardown. The saved logical
-cursor remains the source position while its visible proxy can move between preview continuations.
-Characterwise and blockwise Visual modes use the same source-span mapping to apply Neovim's
-`Visual` background only to the corresponding rendered characters; linewise mode deliberately
-covers each selected rendered row. All three retain a proxy at the moving selection end.
-The table therefore stays rendered and exposes the selection while motions, operators, searches,
-and yank remain native buffer operations.
+`config.syntax.markdown` assembles feature providers. `config.syntax.markdown_features` defines their
+shared projection contract: a provider returns non-overlapping source ranges and replacement rows,
+each with highlighted text chunks and a source position. Optional byte spans map table characters
+back to the original cell, including concealed links, inline code, UTF-8, and wrapped continuations.
+The compositor preserves ordinary source lines between those ranges. Providers do not mutate the
+source buffer, create windows, or manage cursor state.
 
-The adapter handles input, `CursorMoved`, and `ModeChanged` synchronously while the cursor or
-selection is in a table. It fixes the resting view at `leftcol=0`; operator-pending motions and
-Visual-mode yanks still run against the restored native source range, then return to the parked
-rendered state. Parsed widths and immutable wrapped rows
-are cached per window. Horizontal movement in one source row rebuilds and reconciles only that row's
-overlay and continuation extmarks; full layout work remains limited to source-row, mode, text, or
-window-geometry changes. The plugin's later scheduled render reuses the same cache and reasserts the
-viewport-specific no-wrap policy before returning, so it cannot briefly restore raw soft-wrap rows
-while a table is visible. The complete
-decoration set is still reconciled by semantic extmark key plus structural equality whenever a full
-render is required.
+`config.syntax.markdown.preview` owns the pane, its scratch buffer, refresh subscriptions, semantic
+highlights, and source navigation. A shared current-row extmark places the editor's `CursorLine`
+background above table and diagram backgrounds while preserving semantic foreground colors.
+The generated buffer uses manual folds so source fold callbacks cannot run against replaced rows.
+Its displayed rows retain the editor's absolute and relative line-number preferences.
+It has no shortcut winbar. The existing `config.syntax.treesitter_context` adapter resolves section
+ancestors in the source document and maps their headings into preview coordinates, so the native
+pinned-context window and `<Space>cc` work across generated tables and diagrams.
+Every replacement row is an actual buffer line, so cursor movement,
+selection, yank, and mouse scrolling in the preview use native Neovim behavior. There are no hidden
+source rows reserving extra height, virtual continuation blocks, cursor parking, or wheel-motion
+fallbacks. `Enter`, `q`, `<C-q>`, and `<Space>mp` return to the corresponding source position in the
+same pane. The source window's options and view are restored when leaving the rendered view.
+`i` uses the same source-position transition and enters Insert mode, including from wrapped table
+cells and diagram rows. Editing stays in the source buffer; yanking from the rendered view copies
+displayed text.
+`<Space>h` retires the preview through its mapped source transition before opening the dashboard.
+The dashboard therefore captures the file's project context and editor options from the source
+buffer; revisiting the file restores its rendered preference.
 
-Raw source and rendered cell wrapping can otherwise occupy different screen-line counts: Neovim
-still reserves wrapped screen rows for a concealed or overlaid source line, which appears as empty
-space below the preview. While a parsed table intersects the window's actual viewport, the adapter
-disables window soft wrapping so those phantom rows cannot corrupt the table display, including when
-the cursor is in nearby prose. The parser's off-screen lookahead does not affect this decision, so
-ordinary prose wrapping returns as soon as every table leaves the viewport. Horizontal motion over a
-long source line may create a nonzero
-window offset; the plugin normally clears rendering in that state, so the adapter preserves its
-table extmarks while either the normal-mode cursor or a visual selection intersects an enabled
-table. It refreshes the active fragment when applicable and reasserts the no-wrap policy. Insert
-mode, leaving the table, disabling rendering, and teardown still follow the plugin's normal clear
-lifecycle. The `󰈙 table` label independently overlays the blank source line immediately before the
-table, so it adds no vertical margin. Tables without that predecessor retain a fixed virtual-line
-fallback. Because Neovim does not populate the number column for virtual lines, each source-backed
-render group carries its original row and reproduces the window's absolute or relative number in the
-gutter; continuation and decorative lines remain unnumbered. The source and virtual rows share the
-subdued background of a fenced `text` block, a separate `󰈙 table` label precedes the header, and the
-two rules use a foreground dimmer than ordinary text.
+Source edits, diagram completions, and window resizing coalesce into a refresh after navigation has
+been idle for 120 ms. Completed background renders therefore do not interrupt continuous movement
+or scrolling. The current source position is retained
+through a source extmark, including edits above the selection; rebuilds restore the corresponding
+preview position. Each session caches unchanged table projections by source revision and layout.
+Refreshes replace only the changed row interval and preserve surrounding semantic marks; prose
+parsing follows Neovim's visible-range requests. Refreshes stop the preview highlighter before
+replacing lines and restart it after
+rebuilding parse regions. This prevents synchronous redraws from consuming stale highlight iterators
+when independently completed Mermaid diagrams change row positions.
+Returning to source unsubscribes pending refreshes, retires feature jobs, and deletes
+the rendered scratch buffer. A closed session rejects scheduled work even if a new preview opens for the
+same source. Preview construction is limited to 10,000 source lines and one MiB. Missing Markdown
+parsers fall back to a source-only preview.
 
-## Markdown Feature Pipeline and Mermaid
+## Markdown Table Feature
 
-`config.syntax.markdown` is the assembly point for configuration-owned Markdown features, while
-`config.syntax.markdown_features` owns their reusable render pipeline. The custom handler dispatches
-the renderer's parse, attach, clear, and render lifecycle to the table feature and to
-`config.syntax.mermaid`. Both stage stable semantic rows into the same
-`markdown_features` extmark namespace and use the owner's common apply, incremental-update, and
-feature-clear operations. The same owner parks logical source positions and arbitrates the global
-native-cursor style, so moving directly between feature types cannot stack or prematurely restore
-cursor definitions. Asynchronous features request a coalesced refresh through the shared pipeline;
-they do not call plugin internals or construct another window. This dispatch boundary is reusable
-for another Markdown feature without adding a parallel renderer lifecycle.
+`config.syntax.markdown.table` owns table parsing, column measurement, cell wrapping, and source-byte
+mapping. It does not participate in prose wrapping. If all columns fit, a table stays intrinsic and
+compact; otherwise width allocation caps short columns at their required width and redistributes
+remaining capacity among columns that overflow. Every continuation is emitted as a real preview row.
+Labels, centered headers, separators, subtle inter-row rules, and inline-code colors retain the
+existing table presentation. One left and two right inner-margin cells keep text away from edges.
 
-Mermaid fences are attempted automatically as they enter the rendered Markdown view. The Mermaid
-adapter sends only visible, bounded source to the external `termaid` command and requests its
-versioned `styled-json` contract. Termaid returns compact text chunks tagged with stable semantic
-roles; the adapter validates the complete schema, control characters, chunk count, row count, and
-display width before mapping those roles onto a fixed configuration-owned Monokai palette. Node
-geometry and labels share a high-contrast warm color, while edge paths, arrowheads, and edge labels
-share a distinct cyan. Subgraph, status, and section colors retain the Markdown block's neutral
-background instead of importing a competing canvas plane. An older Termaid that rejects the
-format option is detected per executable and retried once through the plain-text path. Malformed
-styled output also gets one bounded plain retry. The same source-backed strategy used by tables
-distributes output over
-the diagram's real content rows: every row gets an overlay and additional rendered rows remain
-attached as local virtual continuations. Content rows are never concealed, so the completed diagram
-stays stable with the Normal-mode cursor inside or outside its range. A dedicated palette
-distinguishes the diagram from ordinary code. Built-in code rendering is disabled only for the `mermaid`
-language, allowing the adapter's `󰙅 mermaid` label to own the opening fence without a competing or
-duplicate header; successful rendering also conceals the closing fence. Other code languages retain
-the plugin's ordinary treatment. While the Normal-mode cursor is inside a successfully rendered
-diagram, one
-stable rendered row for the corresponding source row gains `CursorLine` styling, a cursor proxy maps
-the source column proportionally onto that row, and the native cursor is hidden. Termaid's styled
-rows do not contain source-position metadata, so this mapping deliberately avoids pretending that
-individual diagram cells are editable objects. Mermaid reuses the shared source-cursor parking
-operation used by tables, preventing a long raw line from shifting the rendered viewport. Visual
-mode keeps the diagram rendered while selection, operators, and yank continue to address the source;
-Insert mode exposes native text for editing.
-The shared input listener leaves ordinary mouse-wheel scrolling native. If Neovim reports no cursor
-or viewport movement for a wheel tick at a source row with virtual continuations, it releases the
-parked proxy and applies one source-row motion in the requested direction. This narrow fallback
-prevents wheel scrolling from becoming trapped inside a tall rendered table or diagram.
-Missing executables, oversized input, startup errors, failed renders, and timeouts return no marks
-and therefore leave the source as ordinary Markdown text.
+Tables can use the complete available width through 80 columns. In wider panes, their cap grows
+with the view toward 80 percent of its width. Source indentation and display-cell widths determine
+layout; UTF-8 byte offsets are retained separately for navigation. Enter on a rendered table
+character therefore returns to its original cell rather than to a guessed display column.
 
-Per-buffer generations reject stale callbacks after edits or width changes. Each buffer attempts at
-most eight Mermaid blocks, runs no more than two Termaid processes concurrently, and gives every job
-an eight-second timeout. Output is capped at one MiB, 4,096 fitted rows, and 65,536 styled chunks.
-Buffer teardown cancels active processes. Termaid retains ownership of diagram parsing, semantic
-roles, label wrapping, layout, compaction, optional vertical reflow, and Unicode/ASCII generation;
-Neovim owns only validation, highlight mapping, and interaction layering. Mermaid budgets 85 percent
-of the narrowest usable text width so the canvas occupies close to 80 percent of the complete window
-after its gutter and Termaid's discrete layout steps. Window width changes cause a new
-width-bounded render. The adapter requests Termaid's strict reflow mode and validates every returned
-display row. Termaid searches label widths for at most six iterations before one optional vertical
-fallback, keeping the complete fit to at most eight render attempts while choosing a canvas close to
-the requested limit. Common Termaid padding is removed to keep the result left-aligned. A renderer
-failure, height-budget failure, or residual width overflow leaves the Mermaid fence as raw Markdown
-instead of splitting an already-routed canvas and corrupting its connectors.
+## Markdown Mermaid Feature
+
+`config.syntax.mermaid` owns fence discovery, bounded Termaid jobs, output validation, and semantic
+color mapping. It emits the same replacement-row contract as tables. The preview label maps to the
+opening fence; diagram rows map proportionally to source content rows because Termaid's output does
+not carry source-byte metadata. Native preview navigation never changes diagram layout.
+
+Each source generation attempts at most eight diagrams, runs no more than two jobs concurrently,
+and gives every job an eight-second timeout. Output is capped at one MiB, 4,096 fitted rows, and
+65,536 styled chunks. Edits, width changes, and preview teardown retire jobs and reject stale results.
+Completed jobs request a coalesced refresh through the shared feature layer.
+
+The adapter requests Termaid's strict-width reflow mode and its versioned `styled-json` contract.
+It budgets 85 percent of the preview's usable width. Termaid owns graph layout and label wrapping;
+Neovim validates returned display widths and maps styles to the existing semantic palette. Older
+executables that reject styled output, and malformed styled responses, receive one bounded plain
+fallback. Missing executables, failed renders, and oversized diagrams leave their original fences
+visible in the preview. No rendered diagram is split after routing its connectors.
 
 ## Project Definition Search
 
@@ -733,6 +684,9 @@ Project-root authority belongs to `config/project.lua`. Git repository roots out
 roots; LSP roots outrank `.venv`, language manifest, and build-file fallbacks. Consumers must use
 this shared policy instead of maintaining their own marker order. Language-server startup markers
 remain with `config/lsp/init.lua`. Mason installation coverage is maintained in the same LSP module.
+The statusline resolves Markdown previews to their source buffer before requesting the project
+identity and project-relative file path. Modified and read-only indicators also follow that source,
+so changing between rendered and editable views preserves the file's footer identity.
 Explicit project activation also passes through `config.project.activate`, which updates the current
 window-local directory and publishes one authoritative, tab-owned root generation; closing the tab
 tears down that retained state with it. UI consumers subscribe to the transition instead of inferring

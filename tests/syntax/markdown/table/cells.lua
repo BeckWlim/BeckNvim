@@ -1,5 +1,5 @@
--- Focused cell allocation and wrapping tests for config.syntax.markdown.
-local markdown = require('config.syntax.markdown')
+-- Focused cell allocation and wrapping tests for config.syntax.markdown.table.
+local markdown = require('config.syntax.markdown.table')
 
 local allocated_widths, gap_width = markdown.allocate_widths(80, 3)
 assert(gap_width == 2, 'Markdown table columns lost their restrained whitespace gap')

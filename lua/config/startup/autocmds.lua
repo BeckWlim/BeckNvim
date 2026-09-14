@@ -1,6 +1,7 @@
 local M = {}
 
 function M.setup()
+  require('config.syntax.markdown').setup()
   local external_change_group = vim.api.nvim_create_augroup(
     'reload_external_file_changes',
     { clear = true }

@@ -179,10 +179,6 @@ local function apply()
   end
   vim.api.nvim_set_hl(0, 'CurrentCodeScope', { bg = current_scope_background })
   vim.api.nvim_set_hl(0, 'CursorLine', { bg = cursor_line_background })
-  vim.api.nvim_set_hl(0, 'RenderMarkdownTableHiddenCursor', {
-    blend = 100,
-    fg = editor_foreground,
-  })
   vim.api.nvim_set_hl(0, 'TypeInformationSection', {
     fg = '#A6E22E',
     bold = true,
@@ -317,10 +313,6 @@ local function apply()
   vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidLabel', {
     bg = markdown_block_background,
     fg = markdown_mermaid_colors.label,
-  })
-  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidHiddenCursor', {
-    blend = 100,
-    fg = editor_foreground,
   })
   vim.api.nvim_set_hl(0, '@markup.table.markdown', {
     bg = markdown_block_background,

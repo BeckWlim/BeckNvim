@@ -55,10 +55,6 @@ local markdown_table_code = vim.api.nvim_get_hl(0, {
   name = 'RenderMarkdownTableCode',
   link = false,
 })
-local markdown_table_hidden_cursor = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownTableHiddenCursor',
-  link = false,
-})
 local markdown_table_source = vim.api.nvim_get_hl(0, {
   name = '@markup.table.markdown',
   link = false,
@@ -89,10 +85,6 @@ local markdown_mermaid_edge = vim.api.nvim_get_hl(0, {
 })
 local markdown_mermaid_edge_label = vim.api.nvim_get_hl(0, {
   name = 'RenderMarkdownMermaidEdgeLabel',
-  link = false,
-})
-local markdown_mermaid_hidden_cursor = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidHiddenCursor',
   link = false,
 })
 local markdown_mermaid_icon = vim.api.nvim_get_hl(0, {
@@ -259,10 +251,6 @@ assert(
   'Markdown table body or inline-code key mark uses the wrong semantic color'
 )
 assert(
-  markdown_table_hidden_cursor.blend == 100,
-  'Markdown table cursor proxy does not hide the native terminal cursor'
-)
-assert(
   markdown_table_icon.bg == color_column.bg
     and markdown_table_icon.fg == tonumber('89E051', 16)
     and markdown_table_icon.bold
@@ -279,10 +267,6 @@ assert(
     and markdown_mermaid_label.bg == color_column.bg
     and markdown_mermaid_label.fg == tonumber('A6A69C', 16),
   'Mermaid content or icon tag lost its dedicated palette'
-)
-assert(
-  markdown_mermaid_hidden_cursor.blend == 100,
-  'Mermaid cursor proxy does not hide the native source cursor'
 )
 assert(
   markdown_mermaid_node.bg == color_column.bg

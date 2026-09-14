@@ -1,4 +1,5 @@
 local M = {
+  name = 'mermaid',
   command = 'termaid',
   max_blocks = 8,
   max_concurrent = 2,
@@ -12,7 +13,6 @@ local M = {
 local markdown_features = require('config.syntax.markdown_features')
 
 local states_by_buffer = {}
-local attached_buffers = {}
 local block_query
 local block_query_resolved = false
 local styled_support_by_executable = {}
@@ -295,18 +295,17 @@ end
 
 local function state_for(buffer, width)
   local changedtick = vim.api.nvim_buf_get_changedtick(buffer)
-  local state = states_by_buffer[buffer]
-  if state and state.changedtick == changedtick and state.width == width then
-    return state
+  local current_state = states_by_buffer[buffer]
+  if current_state and current_state.changedtick == changedtick and current_state.width == width then
+    return current_state
   end
-  local generation = state and state.generation or 0
-  if state then
-    retire_state(state)
-    generation = state.generation
+  if current_state then
+    retire_state(current_state)
   end
-  state = new_state(changedtick, width, generation + 1)
-  states_by_buffer[buffer] = state
-  return state
+  local generation = current_state and current_state.generation or 0
+  local next_state = new_state(changedtick, width, generation + 1)
+  states_by_buffer[buffer] = next_state
+  return next_state
 end
 
 ---@return string?
@@ -468,210 +467,6 @@ local function line_chunks(line)
   return { { line == '' and ' ' or line, style_highlights.default } }
 end
 
-local function line_text(line)
-  return type(line) == 'table' and line.text or line
-end
-
-local function distributed_lines(lines, source_count)
-  local groups = {}
-  local next_line = 1
-  for source_index = 1, source_count do
-    local last_line = #lines >= source_count
-        and math.floor(source_index * #lines / source_count)
-      or math.min(source_index, #lines)
-    local group = {}
-    while next_line <= last_line do
-      group[#group + 1] = lines[next_line]
-      next_line = next_line + 1
-    end
-    groups[source_index] = group
-  end
-  return groups
-end
-
-local function group_cursor(buffer, block, group, source_row, source_column)
-  if source_row < block.content_start or source_row >= block.content_end then
-    return nil
-  end
-  local source_index = source_row - block.content_start + 1
-  local source_line = vim.api.nvim_buf_get_lines(
-    buffer,
-    source_row,
-    source_row + 1,
-    false
-  )[1] or ''
-  local source_prefix = source_line:sub(1, source_column)
-  local source_width = math.max(vim.fn.strdisplaywidth(source_line), 1)
-  local source_offset = vim.fn.strdisplaywidth(source_prefix)
-  local line_index = math.max(1, math.ceil(#group / 2))
-  local line_width = math.max(
-    vim.fn.strdisplaywidth(line_text(group[line_index]) or ''),
-    1
-  )
-  return {
-    column = math.floor(
-      math.min(source_offset / source_width, 1) * (line_width - 1)
-    ),
-    line = line_index,
-    source_index = source_index,
-  }
-end
-
-local function render_marks(buffer, block, lines, cursor)
-  local source_count = block.content_end - block.content_start
-  if source_count <= 0 then
-    return {}
-  end
-  local label_chunks = markdown_features.pad_overlay_chunks({
-    { '󰙅 ', 'RenderMarkdownMermaidIcon' },
-    { 'mermaid', 'RenderMarkdownMermaidLabel' },
-  }, string.rep(' ', block.width), 'RenderMarkdownMermaidLabel')
-  local marks = {
-    {
-      key = ('mermaid:%d:label'):format(block.block_start),
-      options = {
-        priority = 201,
-        strict = false,
-        virt_text = label_chunks,
-        virt_text_pos = 'overlay',
-      },
-      row = block.block_start,
-    },
-    {
-      key = ('mermaid:%d:closing-fence'):format(block.block_start),
-      options = {
-        conceal_lines = '',
-        priority = 201,
-        strict = false,
-      },
-      row = block.block_end - 1,
-    },
-  }
-  local groups = distributed_lines(lines, source_count)
-  local target = cursor and group_cursor(
-    buffer,
-    block,
-    groups[cursor.row - block.content_start + 1] or {},
-    cursor.row,
-    cursor.column
-  ) or nil
-  for source_index, group in ipairs(groups) do
-    local source_row = block.content_start + source_index - 1
-    local source_line = vim.api.nvim_buf_get_lines(
-      buffer,
-      source_row,
-      source_row + 1,
-      false
-    )[1] or ''
-    local primary_chunks = markdown_features.pad_overlay_chunks(
-      line_chunks(group[1] or ''),
-      source_line,
-      'RenderMarkdownMermaid'
-    )
-    if target and target.source_index == source_index and target.line == 1 then
-      primary_chunks = markdown_features.highlighted_chunks(
-        primary_chunks,
-        'CursorLine'
-      )
-      primary_chunks = markdown_features.cursor_proxy_chunks(
-        primary_chunks,
-        target.column
-      )
-    end
-    local options = {
-      priority = 200,
-      strict = false,
-      virt_text = primary_chunks,
-      virt_text_pos = 'overlay',
-    }
-    if #group > 1 then
-      options.virt_lines = {}
-      for line_index = 2, #group do
-        local chunks = line_chunks(group[line_index])
-        if target
-            and target.source_index == source_index
-            and target.line == line_index then
-          chunks = markdown_features.highlighted_chunks(chunks, 'CursorLine')
-          chunks = markdown_features.cursor_proxy_chunks(
-            chunks,
-            target.column
-          )
-        end
-        options.virt_lines[#options.virt_lines + 1] = chunks
-      end
-    end
-    marks[#marks + 1] = {
-      key = ('mermaid:%d:row:%d'):format(block.block_start, source_row),
-      options = options,
-      row = source_row,
-    }
-  end
-  return marks
-end
-
-local function current_window(window)
-  if not window or window == 0 then
-    return vim.api.nvim_get_current_win()
-  end
-  return window
-end
-
-local function interaction_mode(mode)
-  if mode:sub(1, 1) == 'n' then
-    return 'n'
-  end
-  if mode == 'v' or mode == 'V' or mode == '\22' then
-    return mode
-  end
-  return nil
-end
-
-local function active_interaction(buffer, window, state)
-  local resolved_window = current_window(window)
-  local mode = interaction_mode(vim.api.nvim_get_mode().mode)
-  if vim.api.nvim_get_current_win() ~= resolved_window
-      or not mode
-      or not vim.api.nvim_win_is_valid(resolved_window)
-      or vim.api.nvim_win_get_buf(resolved_window) ~= buffer then
-    return nil
-  end
-  local position = vim.api.nvim_win_get_cursor(resolved_window)
-  local actual_cursor = { column = position[2], row = position[1] - 1 }
-  local interaction = markdown_features.parked_interaction(
-    'mermaid',
-    buffer,
-    resolved_window
-  )
-  if interaction
-      and (interaction.cursor.row ~= actual_cursor.row
-        or interaction.mode ~= mode) then
-    markdown_features.release_cursor(
-      'mermaid',
-      buffer,
-      resolved_window,
-      false
-    )
-    interaction = nil
-  end
-  if not interaction then
-    interaction = { cursor = actual_cursor, mode = mode }
-    if mode ~= 'n' then
-      local anchor = vim.fn.getpos('v')
-      interaction.anchor = { column = anchor[3] - 1, row = anchor[2] - 1 }
-    end
-  end
-  for _, block in ipairs(state.blocks) do
-    local result = state.results[block.key]
-    if result
-        and result.status == 'rendered'
-        and interaction.cursor.row >= block.content_start
-        and interaction.cursor.row < block.content_end then
-      return interaction, block
-    end
-  end
-  return nil
-end
-
 local function enqueue(state, block)
   if state.results[block.key] or state.jobs[block.key] or state.known[block.key] then
     return
@@ -684,129 +479,61 @@ local function enqueue(state, block)
   state.queue[#state.queue + 1] = block
 end
 
----@param context render.md.handler.Context
----@return render.md.Mark[]
 function M.parse(context)
   local parsed_query = query()
-  if not parsed_query then
-    return {}
-  end
-  local width = content_width(context.buf)
+  if not parsed_query then return {} end
+  local width = context.width and math.max(1, math.floor(context.width * M.width_ratio))
+    or content_width(context.buf)
   local state = state_for(context.buf, width)
-  local render_context = require('render-markdown.request.context').get(context.buf)
   local blocks = {}
-  render_context.view:query(context.root, parsed_query, function(_, node)
+  for _, node in parsed_query:iter_captures(context.root, context.buf, 0, -1) do
     local block = block_from_node(context.buf, node, width)
     if block then
       blocks[#blocks + 1] = block
       enqueue(state, block)
     end
-  end)
+  end
   state.blocks = blocks
   pump(context.buf, state)
   return {}
 end
 
-function M.clear(context)
-  markdown_features.release_cursor('mermaid', context.buf, context.win, true)
-  markdown_features.clear('mermaid', context.buf)
-end
-
-function M.stage(buffer, window)
+function M.stage(buffer)
   local state = states_by_buffer[buffer]
-  if not state then
-    return {}, nil
-  end
-  local resolved_window = current_window(window)
-  local interaction, active_block = active_interaction(
-    buffer,
-    resolved_window,
-    state
-  )
-  local staged_extmarks = {}
+  if not state then return {} end
+  local blocks = {}
   for _, block in ipairs(state.blocks) do
     local result = state.results[block.key]
     if result and result.status == 'rendered' then
-      vim.list_extend(staged_extmarks, render_marks(
-        buffer,
-        block,
-        result.lines,
-        active_block == block
-          and interaction.mode == 'n'
-          and interaction.cursor
-          or nil
-      ))
+      local rows = { {
+        chunks = { { '󰙅 ', 'RenderMarkdownMermaidIcon' }, { 'mermaid', 'RenderMarkdownMermaidLabel' } },
+        source_row = block.block_start,
+      } }
+      local source_count = block.content_end - block.content_start
+      for index, line in ipairs(result.lines) do
+        rows[#rows + 1] = {
+          chunks = line_chunks(line),
+          source_row = block.content_start + math.min(source_count - 1,
+            math.floor((index - 1) * source_count / #result.lines)),
+        }
+      end
+      blocks[#blocks + 1] = { start_row = block.block_start, end_row = block.block_end, rows = rows }
     end
   end
-  return staged_extmarks, interaction
+  return blocks
 end
 
-function M.render(context)
-  local window = current_window(context.win)
-  local staged_extmarks, interaction = M.stage(context.buf, window)
-  markdown_features.apply(
-    'mermaid',
-    context.buf,
-    staged_extmarks
-  )
-  if interaction then
-    markdown_features.park_cursor(
-      'mermaid',
-      context.buf,
-      window,
-      interaction,
-      'RenderMarkdownMermaidHiddenCursor'
-    )
-    vim.api.nvim_win_call(window, function()
-      local view = vim.fn.winsaveview()
-      if view.leftcol > 0 then
-        view.leftcol = 0
-        vim.fn.winrestview(view)
-      end
-    end)
-  else
-    markdown_features.release_cursor('mermaid', context.buf, window, true)
-  end
+function M.project(context)
+  M.parse(context)
+  return M.stage(context.buf)
 end
 
 function M.detach(buffer)
-  if vim.api.nvim_buf_is_valid(buffer) then
-    for _, window in ipairs(vim.fn.win_findbuf(buffer)) do
-      markdown_features.release_cursor('mermaid', buffer, window, true)
-    end
-    markdown_features.clear('mermaid', buffer)
-  end
   local state = states_by_buffer[buffer]
   if state then
     retire_state(state)
     states_by_buffer[buffer] = nil
   end
-  attached_buffers[buffer] = nil
-end
-
-function M.attach(context)
-  if attached_buffers[context.buf] then
-    return
-  end
-  attached_buffers[context.buf] = true
-  vim.api.nvim_create_autocmd({ 'BufLeave', 'WinLeave' }, {
-    buffer = context.buf,
-    callback = function()
-      markdown_features.release_cursor(
-        'mermaid',
-        context.buf,
-        vim.api.nvim_get_current_win(),
-        true
-      )
-    end,
-  })
-  vim.api.nvim_create_autocmd('BufWipeout', {
-    buffer = context.buf,
-    once = true,
-    callback = function()
-      M.detach(context.buf)
-    end,
-  })
 end
 
 return M

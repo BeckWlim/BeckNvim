@@ -880,6 +880,9 @@ function M.options()
 end
 
 function M.open()
+  if vim.b.markdown_preview_source then
+    require('config.syntax.markdown.preview').leave()
+  end
   local current_buffer = vim.api.nvim_get_current_buf()
   local current_window = vim.api.nvim_get_current_win()
   requested_context = context_from_buffer(current_buffer)

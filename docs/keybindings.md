@@ -41,9 +41,20 @@ already active.
 | `<Space>cc` | Walk outward through syntax context |
 | `<Space>vj` / `<Space>vl` | Select the identifier at the cursor; repeat to move to the previous/next identifier |
 | `gx` | Open a local path or URI; GitHub records prefer the editor detail float |
-| `<Space>mp` | Toggle inline Markdown presentation |
+| `<Space>mp` | Switch the current pane between rendered Markdown and editable source |
 | `<Space>t` | Open Chinese/English translation |
 | `:Proxy` | Inspect or change the session HTTP proxy |
+
+Markdown files open with prose, tables, and diagrams rendered by default. Source mode shows all
+Markdown punctuation for editing. `Enter` returns to the source position beneath the cursor
+in the same pane; `i` returns there and enters Insert mode immediately. `q`, `<C-q>`, or `<Space>mp`
+also returns to source; `<Space>mp` renders it again.
+Movement, selection, scrolling,
+and copying displayed text use normal Neovim behavior. Tables and diagrams refresh after source edits
+and preview resizing, applying background updates after navigation pauses briefly. Pinned section
+titles and `<Space>cc` also work in the rendered view.
+Rendered rows keep your editor line-number settings, and `<Space>h` opens the dashboard from either
+Markdown mode.
 
 ## Editing
 

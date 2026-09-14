@@ -304,10 +304,74 @@ function M.prioritize(context_ranges, context_lines, line_budget, is_structural_
   return prioritized_ranges, prioritized_lines
 end
 
+local function markdown_preview_sections(window)
+  if not vim.b[vim.api.nvim_win_get_buf(window)].markdown_preview_source then return end
+  local preview = require('config.syntax.markdown.preview')
+  local source, position = preview.source_location(window)
+  if not source or not position then return end
+  local parser_ok, parser = pcall(vim.treesitter.get_parser, source, 'markdown')
+  if not parser_ok then return {} end
+  local tree = parser:parse()[1]
+  if not tree then return {} end
+  local node = tree:root():named_descendant_for_range(
+    position[1] - 1, position[2], position[1] - 1, position[2])
+  local sections = {}
+  while node do
+    if node:type() == 'section' then
+      local heading = node:named_child(0)
+      if heading and (heading:type() == 'atx_heading' or heading:type() == 'setext_heading') then
+        local source_row = heading:range()
+        local displayed_position = preview.display_position(window, { source_row + 1, 0 })
+        if displayed_position then
+          local row = displayed_position[1] - 1
+          table.insert(sections, 1, {
+            range = { row, 0, row + 1, 0 },
+            text = vim.api.nvim_buf_get_lines(source, source_row, source_row + 1, false)[1],
+          })
+        end
+      end
+    end
+    node = node:parent()
+  end
+  return sections
+end
+
+function M.preview_context(window)
+  local sections = markdown_preview_sections(window)
+  if not sections then return end
+  local top_row = vim.fn.line('w0', window) - 1
+  local cursor_row = vim.api.nvim_win_get_cursor(window)[1] - 1
+  local budget = math.max(0, math.min(context_line_budget, cursor_row - top_row))
+  local ranges, lines = {}, {}
+  for _, section in ipairs(sections) do
+    if section.range[1] < top_row + #ranges then
+      ranges[#ranges + 1] = section.range
+      lines[#lines + 1] = section.text
+    end
+  end
+  while #ranges > budget do
+    table.remove(ranges, 1)
+    table.remove(lines, 1)
+  end
+  return ranges, lines
+end
+
 function M.go_to_nearest_context()
   local source_window = vim.api.nvim_get_current_win()
   local source_buffer = vim.api.nvim_win_get_buf(source_window)
   local source_cursor = vim.api.nvim_win_get_cursor(source_window)
+  local preview_sections = markdown_preview_sections(source_window)
+  if preview_sections then
+    for index = #preview_sections, 1, -1 do
+      local range = preview_sections[index].range
+      if range[1] < source_cursor[1] - 1 then
+        vim.cmd([[normal! m']])
+        vim.api.nvim_win_set_cursor(source_window, { range[1] + 1, range[2] })
+        return
+      end
+    end
+    return
+  end
   local cursor_row = source_cursor[1] - 1
   local cursor_column = source_cursor[2]
   local cursor_range = { cursor_row, cursor_column, cursor_row, cursor_column + 1 }
@@ -568,6 +632,8 @@ function M.setup()
   local context_provider = require('treesitter-context.context')
   local get_context = context_provider.get
   context_provider.get = function(window)
+    local preview_ranges, preview_lines = M.preview_context(window or vim.api.nvim_get_current_win())
+    if preview_ranges then return preview_ranges, preview_lines end
     local context_ranges, context_lines = get_context(window)
     if not context_ranges or not context_lines then
       return context_ranges, context_lines

@@ -47,24 +47,18 @@ return {
     },
     opts = {
       debounce = 1,
-      custom_handlers = {
-        markdown = require('config.syntax.markdown').handler,
-      },
+      ignore = function(buffer)
+        return vim.bo[buffer].buftype == '' and vim.b[buffer].markdown_preview_source == nil
+      end,
+      anti_conceal = { enabled = false },
       file_types = { 'markdown' },
-      on = {
-        attach = require('config.syntax.markdown').attach,
-        clear = require('config.syntax.markdown').clear,
-        render = require('config.syntax.markdown').render,
-      },
-      code = {
-        disable = { 'mermaid' },
-      },
       pipe_table = {
         enabled = false,
       },
       preset = 'lazy',
       render_modes = { 'n', 'c', 't', 'v', 'V', '\22' },
       win_options = {
+        concealcursor = { default = '', rendered = 'nvic' },
         breakindent = { default = false, rendered = true },
         breakindentopt = {
           default = '',
