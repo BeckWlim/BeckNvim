@@ -6,16 +6,31 @@ system while keeping native Neovim and plugin behavior wherever practical.
 
 ## Highlights
 
-- Project dashboard, recent-project state, file browsing, and project-root synchronization.
-- Fast file, text, symbol, definition, reference, and type-hierarchy search.
-- Unified file, symbol, repository, branch, commit, issue, and pull-request inspection.
-- Diffview-based history review with bounded asynchronous loading and safe state transitions.
-- LSP completion, diagnostics, type information, and language-aware navigation.
-- Tree-sitter highlighting, folding, syntax context, scope visualization limited to half the active view, and structural selection. Syntax and preview context load asynchronously; large files skip whole-file scope and rainbow decoration.
-- Project-wide [theme switching](themes/README.md) with live preview, saved selection, light/dark palettes, and personal theme files. Monokai remains the default; VS Code, Darcula, TokyoNight, Catppuccin, Gruvbox, and a softer Paper Light palette are included choices.
-- Telescope panes and margins blend into the editor background and close together with `<C-q>` in every mode; source previews stay read-only. Pinned context uses a subtle grey background filter.
-- Markdown prose, responsive tables, and Mermaid diagrams with subdued theme colors, distinct connector and label colors, and width-aware spacing rendered by default, with native Enter navigation, pinned headings, and source editing in the same pane. Table and diagram headers include distinctly colored icons and labels; Mermaid diagrams use a solid rectangular fill matching the tables. [Mermaid settings](docs/architecture.md#markdown-mermaid-feature) include optional middle arrowheads and numbered references for labels that cannot fit.
-- Integrated terminal, translation, proxy management, and project diagnostics.
+- **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
+- **Git review:** search remote branches, inspect commits, detach HEAD for deeper review, and read pull requests in floating dialogs.
+- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, with source editing in place.
+- **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
+
+## See it in action
+
+**Symbol search:** use `<Space>fw` to explore functions and types across Mooncake.
+
+![Project-wide symbol search and source previews in Mooncake](examples/media/search.gif)
+
+**Git review:** search a remote branch, review a detached commit, and open a pull request in a float.
+
+![Mooncake remote branch search, detached commit review, and PR dialog](examples/media/git.gif)
+
+**Markdown:** a complex Mermaid diagram reflows as the pane narrows, with source editing in place.
+
+![Complex Mermaid rendering at different pane widths and source editing](examples/media/markdown.gif)
+
+**Homepage and themes:** browse recent projects and files, then preview light and dark palettes.
+
+![Project homepage navigation with live light and dark themes](examples/media/themes.gif)
+
+Regenerate these demos with `bash scripts/record-demos.sh`.
+See [Recording the highlights](examples/README.md) for setup and individual scenes.
 
 ## Main Modules
 
