@@ -70,9 +70,17 @@ assert(#cursor_marks == 1 and cursor_marks[1][2] == target_row - 1
 vim.wo[window].conceallevel = 3
 vim.wo[window].concealcursor = 'nvic'
 vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'xt', false)
+assert(vim.api.nvim_get_current_win() == window and vim.api.nvim_get_current_buf() == preview_buffer,
+  'Enter unexpectedly switched the rendered table to source mode')
+assert(vim.api.nvim_win_get_cursor(window)[1] == target_row + 1,
+  'Enter lost its native next-line movement in the preview')
+assert(vim.api.nvim_buf_get_changedtick(source) == source_tick and not vim.bo[preview_buffer].modifiable,
+  'Enter changed the source or made the preview editable')
+vim.api.nvim_win_set_cursor(window, { target_row, target_column })
+vim.api.nvim_feedkeys('q', 'xt', false)
 assert(vim.api.nvim_get_current_win() == window and vim.api.nvim_get_current_buf() == source,
-  'Enter did not restore source in the same pane')
-assert(vim.deep_equal(vim.api.nvim_win_get_cursor(window), source_target), 'Enter lost its source byte position')
+  'q did not restore source in the same pane')
+assert(vim.deep_equal(vim.api.nvim_win_get_cursor(window), source_target), 'q lost its source byte position')
 assert(vim.wo[window].number and vim.wo[window].winbar == 'source window' and vim.wo[window].wrap,
   'Returning to source did not restore window options')
 assert(vim.wo[window].conceallevel == 0 and vim.wo[window].concealcursor == original_options.concealcursor,

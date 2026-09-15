@@ -149,7 +149,8 @@ pinned-context window and `<Space>cc` work across generated tables and diagrams.
 Every replacement row is an actual buffer line, so cursor movement,
 selection, yank, and mouse scrolling in the preview use native Neovim behavior. There are no hidden
 source rows reserving extra height, virtual continuation blocks, cursor parking, or wheel-motion
-fallbacks. `Enter`, `q`, `<C-q>`, and `<Space>mp` return to the corresponding source position in the
+fallbacks. `Enter` keeps its native next-line movement in the rendered buffer.
+`q`, `<C-q>`, and `<Space>mp` return to the corresponding source position in the
 same pane. The source window's options and view are restored when leaving the rendered view.
 `i` uses the same source-position transition and enters Insert mode, including from wrapped table
 cells and diagram rows. Editing stays in the source buffer; yanking from the rendered view copies
@@ -184,8 +185,8 @@ existing table presentation. One left and two right inner-margin cells keep text
 
 Tables can use the complete available width through 80 columns. In wider panes, their cap grows
 with the view toward 80 percent of its width. Source indentation and display-cell widths determine
-layout; UTF-8 byte offsets are retained separately for navigation. Enter on a rendered table
-character therefore returns to its original cell rather than to a guessed display column.
+layout; UTF-8 byte offsets are retained separately for navigation. Switching to source from a rendered
+table character therefore returns to its original cell rather than to a guessed display column.
 
 ## Markdown Mermaid Feature
 
@@ -200,8 +201,37 @@ and gives every job an eight-second timeout. Output is capped at one MiB, 4,096 
 Completed jobs request a coalesced refresh through the shared feature layer.
 
 The adapter requests Termaid's strict-width reflow mode and its versioned `styled-json` contract.
-It budgets 85 percent of the preview's usable width. Termaid owns graph layout and label wrapping;
-Neovim validates returned display widths and maps styles to the existing semantic palette. Older
+It budgets 85 percent of the preview's usable width and computes initial spacing before launching:
+one gap cell per 40 budgeted columns, clamped to 1–4, horizontal padding capped at 2, and no empty
+padding rows inside nodes. Termaid's default grid shares height within each row and width within
+each column. Additional same-layer size matching is capped and best effort; unrelated layers keep
+their content-based heights and widths. Neovim does not request diagram-wide uniform node sizes.
+Resizing recalculates the spacing and width budget.
+During fitting, node boxes and connection layout take priority over transition sentences.
+Termaid wraps labels into clear space within the existing width budget and bounds return
+corridors independently of sentence length. Labels try existing diagram space before extending
+the right edge, and return labels prefer the outside margin. Labels that still cannot fit use
+numbered references such as `[1]`, with their complete text listed below the diagram. References
+follow source edge order; entries include endpoint names when a reference needs a less direct
+position or cannot be placed safely.
+Set `require('config.syntax.mermaid').arrow_position = 'middle'` to request arrowheads on clear
+middle segments; `'end'` is the default. Short routes retain endpoint heads when needed.
+Changing this setting invalidates cached diagrams on the next render and cancels stale jobs.
+Termaid owns graph layout, label wrapping, and best-effort crossing avoidance. It reserves an outer return
+lane when needed, so node boxes may start to the right of a return line and its label; the lane
+counts toward the same width budget. Unrelated crossing lines use a small `x`, while connected
+branches retain junction characters such as `├` and `┬`. Diagrams use the editor's normal text cells and font size.
+Sibling edge labels may share a row when their text fits without collision. Sequence participant
+boxes share the header row height, with capped width matching; fitted scope headings wrap to the
+measured frame interior instead of the participant-label limit.
+Neovim validates returned display widths and maps styles through `config.syntax.highlights`.
+Mermaid accents derive from the active theme's syntax colors, mixed with neutral grey to reduce
+saturation. Connections share one accent hue, with quieter lines and brighter, bold arrowheads
+(muted cyan in the default theme). Connection and node labels share the editor foreground
+(grey-white by default), separating readable text from routing lines. Node borders use a subdued
+String accent. Scope borders use dark grey and scope headings use plain grey hint text, including sequence
+`par`, `opt`, and branch headings. All roles share the existing code-block background. Theme reloads
+recalculate accents; explicit bold and italic labels retain their formatting. Older
 executables that reject styled output, and malformed styled responses, receive one bounded plain
 fallback. Missing executables, failed renders, and oversized diagrams leave their original fences
 visible in the preview. No rendered diagram is split after routing its connectors.

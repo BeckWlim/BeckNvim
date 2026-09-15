@@ -261,7 +261,6 @@ function M.open(source)
   local close_preview = function() close(session) end
   require('config.ui.float').bind_close({ buffer = buffer, close = close_preview, description = 'Return to Markdown source' })
   vim.keymap.set({ 'n', 'x' }, '<C-q>', close_preview, { buffer = buffer, silent = true })
-  vim.keymap.set('n', '<CR>', function() jump_to_source(session) end, { buffer = buffer, desc = 'Go to Markdown source' })
   vim.keymap.set('n', 'i', function()
     if not live(session) then return end
     jump_to_source(session)

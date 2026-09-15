@@ -133,7 +133,7 @@ run_termaid_case() (
   local GIT_HTTP_LOW_SPEED_LIMIT=''
   local GIT_HTTP_LOW_SPEED_TIME=''
   case "${scenario}" in
-    compatible) expected_installs=0 ;;
+    compatible|missing-uniform) expected_installs=0 ;;
     incompatible|missing|broken) ;;
     custom-timeout) GIT_HTTP_LOW_SPEED_TIME=120 ;;
     explicit-ref) BECKNVIM_TERMAID_REF='v1.2.3'; expected_ref='v1.2.3'; expected_refresh=' --refresh' ;;
@@ -142,8 +142,9 @@ run_termaid_case() (
     [[ "$*" == '--help' ]] || die 'unexpected termaid arguments'
     case "${scenario}" in
       incompatible|custom-timeout) printf 'old help\n' ;;
+      missing-uniform) printf 'styled-json --strict-width --fit-mode --max-height\n' ;;
       missing) return 127 ;;
-      *) printf 'styled-json --strict-width --fit-mode --max-height\n' ;;
+      *) printf 'styled-json --strict-width --fit-mode --max-height --uniform-nodes\n' ;;
     esac
     [[ "${scenario}" != 'broken' ]]
   }
@@ -165,7 +166,7 @@ run_termaid_case() (
     || die "unexpected Termaid/uv installation: ${scenario}"
   printf 'PASS: Termaid %s\n' "${scenario}"
 )
-for scenario in compatible incompatible missing broken explicit-ref custom-timeout; do
+for scenario in compatible incompatible missing broken missing-uniform explicit-ref custom-timeout; do
   run_termaid_case "${scenario}"
 done
 

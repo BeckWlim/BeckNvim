@@ -45,31 +45,49 @@ local markdown_table_colors = {
   label = '#A6A69C',
 }
 
-local markdown_mermaid_colors = {
-  active = '#A6E22E',
-  arrow = '#66D9EF',
-  critical = '#F92672',
-  done = '#8F908A',
-  edge = '#66D9EF',
-  edge_label = '#66D9EF',
-  foreground = '#B9DCE5',
-  icon = '#AE81FF',
-  label = '#A6A69C',
-  milestone = '#FD971F',
-  node = '#E6DB74',
-  node_label = '#E6DB74',
-  subgraph = '#AE81FF',
-  sections = {
-    '#F92672',
-    '#66D9EF',
-    '#A6E22E',
-    '#E6DB74',
-    '#AE81FF',
-    '#FD971F',
-    '#FFB3D1',
-    '#89E051',
-  },
-}
+-- Derive restrained semantic accents from the active theme (Monokai by
+-- default). Enclosing ranges stay neutral so dense diagrams remain readable.
+local function mermaid_accent(group, fallback, strength)
+  local highlight = vim.api.nvim_get_hl(0, { name = group, link = false })
+  local accent = highlight.fg or fallback
+  local neutral = 0x8F908A
+  local blended = 0
+  for _, divisor in ipairs({ 65536, 256, 1 }) do
+    local accent_channel = math.floor(accent / divisor) % 256
+    local neutral_channel = math.floor(neutral / divisor) % 256
+    blended = blended + math.floor(neutral_channel + (accent_channel - neutral_channel) * strength + 0.5) * divisor
+  end
+  return blended
+end
+
+local function mermaid_palette(editor_foreground)
+  return {
+    active = mermaid_accent('Function', 0xA6E22E, 0.55),
+    arrow = mermaid_accent('Type', 0x66D9EF, 0.65),
+    critical = mermaid_accent('Statement', 0xF92672, 0.65),
+    done = '#8F908A',
+    edge = mermaid_accent('Type', 0x66D9EF, 0.30),
+    edge_label = editor_foreground,
+    foreground = editor_foreground,
+    icon = mermaid_accent('Number', 0xAE81FF, 0.45),
+    label = '#A6A69C',
+    milestone = mermaid_accent('Type', 0xFD971F, 0.55),
+    node = mermaid_accent('String', 0xE6DB74, 0.45),
+    node_label = editor_foreground,
+    subgraph = '#666666',
+    subgraph_label = '#A6A6A6',
+    sections = {
+      mermaid_accent('Statement', 0xF92672, 0.45),
+      mermaid_accent('Type', 0x66D9EF, 0.45),
+      mermaid_accent('Function', 0xA6E22E, 0.45),
+      mermaid_accent('String', 0xE6DB74, 0.45),
+      mermaid_accent('Number', 0xAE81FF, 0.45),
+      mermaid_accent('Type', 0xFD971F, 0.45),
+      mermaid_accent('Special', 0xFFB3D1, 0.45),
+      mermaid_accent('Constant', 0x89E051, 0.45),
+    },
+  }
+end
 
 local function history_ui_palette(editor_background, editor_foreground)
   return {
@@ -120,6 +138,7 @@ local function apply()
   local inline_code_foreground = inline_code_highlight.fg or 0xAE81FF
   local markdown_block_background = code_block_highlight.bg or cursor_line_background
   local history_colors = history_ui_palette(editor_background, editor_foreground)
+  local markdown_mermaid_colors = mermaid_palette(editor_foreground)
   vim.api.nvim_set_hl(0, 'NormalFloat', {
     bg = editor_background,
     fg = editor_foreground,
@@ -268,17 +287,20 @@ local function apply()
   vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidEdgeLabel', {
     bg = markdown_block_background,
     fg = markdown_mermaid_colors.edge_label,
-    italic = true,
   })
   vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidItalicLabel', {
     bg = markdown_block_background,
     fg = markdown_mermaid_colors.node_label,
     italic = true,
   })
-  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidContentLabel', {
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidBoldLabel', {
     bg = markdown_block_background,
     fg = markdown_mermaid_colors.node_label,
     bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidContentLabel', {
+    bg = markdown_block_background,
+    fg = markdown_mermaid_colors.node_label,
   })
   vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidMilestone', {
     bg = markdown_block_background,
@@ -295,8 +317,7 @@ local function apply()
   })
   vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidSubgraphLabel', {
     bg = markdown_block_background,
-    fg = markdown_mermaid_colors.subgraph,
-    bold = true,
+    fg = markdown_mermaid_colors.subgraph_label,
   })
   for index, foreground in ipairs(markdown_mermaid_colors.sections) do
     vim.api.nvim_set_hl(0, 'RenderMarkdownMermaidSection' .. index, {

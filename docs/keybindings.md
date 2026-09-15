@@ -46,9 +46,9 @@ already active.
 | `:Proxy` | Inspect or change the session HTTP proxy |
 
 Markdown files open with prose, tables, and diagrams rendered by default. Source mode shows all
-Markdown punctuation for editing. `Enter` returns to the source position beneath the cursor
-in the same pane; `i` returns there and enters Insert mode immediately. `q`, `<C-q>`, or `<Space>mp`
-also returns to source; `<Space>mp` renders it again.
+Markdown punctuation for editing. `Enter` moves to the next line while keeping the preview rendered.
+`i` returns to the source position beneath the cursor and enters Insert mode immediately.
+`q`, `<C-q>`, or `<Space>mp` returns to source in the same pane; `<Space>mp` renders it again.
 Movement, selection, scrolling,
 and copying displayed text use normal Neovim behavior. Tables and diagrams refresh after source edits
 and preview resizing, applying background updates after navigation pauses briefly. Pinned section

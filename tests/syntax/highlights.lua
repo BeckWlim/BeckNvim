@@ -258,37 +258,36 @@ assert(
     and markdown_table_label.fg == tonumber('A6A69C', 16),
   'Markdown table label does not match the fenced-text identity'
 )
-assert(
-  markdown_mermaid.bg == color_column.bg
-    and markdown_mermaid.fg == tonumber('B9DCE5', 16)
-    and markdown_mermaid_icon.bg == color_column.bg
-    and markdown_mermaid_icon.fg == tonumber('AE81FF', 16)
-    and markdown_mermaid_icon.bold
-    and markdown_mermaid_label.bg == color_column.bg
-    and markdown_mermaid_label.fg == tonumber('A6A69C', 16),
-  'Mermaid content or icon tag lost its dedicated palette'
-)
-assert(
-  markdown_mermaid_node.bg == color_column.bg
-    and markdown_mermaid_node.fg == tonumber('E6DB74', 16)
-    and markdown_mermaid_edge.bg == color_column.bg
-    and markdown_mermaid_edge.fg == tonumber('66D9EF', 16)
-    and markdown_mermaid_arrow.bg == color_column.bg
-    and markdown_mermaid_arrow.fg == tonumber('66D9EF', 16)
-    and markdown_mermaid_arrow.bold
-    and markdown_mermaid_edge_label.bg == color_column.bg
-    and markdown_mermaid_edge_label.fg == tonumber('66D9EF', 16)
-    and markdown_mermaid_edge_label.italic
-    and markdown_mermaid_content_label.bg == color_column.bg
-    and markdown_mermaid_content_label.fg == tonumber('E6DB74', 16)
-    and markdown_mermaid_content_label.bold
-    and markdown_mermaid_italic_label.bg == color_column.bg
-    and markdown_mermaid_italic_label.fg == tonumber('E6DB74', 16)
-    and markdown_mermaid_italic_label.italic
-    and markdown_mermaid_subgraph.bg == color_column.bg
-    and markdown_mermaid_subgraph.fg == tonumber('AE81FF', 16),
-  'Mermaid semantic roles do not use the shared Monokai palette and block plane'
-)
+local markdown_mermaid_scope_label = vim.api.nvim_get_hl(0, {
+  name = 'RenderMarkdownMermaidSubgraphLabel', link = false,
+})
+for _, role in ipairs({
+  markdown_mermaid, markdown_mermaid_icon, markdown_mermaid_label,
+  markdown_mermaid_node, markdown_mermaid_edge, markdown_mermaid_arrow,
+  markdown_mermaid_edge_label, markdown_mermaid_content_label,
+  markdown_mermaid_italic_label, markdown_mermaid_subgraph, markdown_mermaid_scope_label,
+}) do
+  assert(role.bg == color_column.bg, 'Mermaid roles must share the code block background')
+end
+assert(markdown_mermaid.fg == normal_highlight.fg, 'Mermaid text lost the editor foreground')
+assert(markdown_mermaid_content_label.fg == normal_highlight.fg and not markdown_mermaid_content_label.bold,
+  'Node labels must remain readable without blanket emphasis')
+assert(markdown_mermaid_italic_label.italic, 'Explicit italic labels lost their styling')
+assert(markdown_mermaid_arrow.bold, 'Arrowheads lost emphasis')
+assert(markdown_mermaid_edge_label.fg == markdown_mermaid_content_label.fg
+  and markdown_mermaid_edge_label.fg ~= markdown_mermaid_arrow.fg,
+  'Connection labels must share readable node text instead of the connector accent')
+assert(vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidBoldLabel', link = false }).bold,
+  'Explicit bold labels must retain emphasis')
+assert(markdown_mermaid_edge.fg ~= markdown_mermaid_arrow.fg
+  and markdown_mermaid_edge_label.fg ~= markdown_mermaid_edge.fg
+  and markdown_mermaid_node.fg ~= markdown_mermaid_edge.fg,
+  'Diagram roles need distinct, restrained semantic accents')
+assert(markdown_mermaid_scope_label.fg == 0xA6A6A6 and not markdown_mermaid_scope_label.bold,
+  'Scope headings must be quiet grey hint text')
+assert(markdown_mermaid_subgraph.fg == 0x666666,
+  'Large scope borders must stay quieter than their headings')
+assert(not markdown_mermaid_edge_label.italic, 'Ordinary message labels need plain text')
 assert(
   translation_float.bg == normal_highlight.bg and translation_float.fg == normal_highlight.fg,
   'translation surface does not share the editor base palette'
@@ -415,3 +414,28 @@ assert(
     and treesitter_context_preview_separator.sp == treesitter_context_bottom.sp,
   'Search preview context does not share the declaration background and lower boundary'
 )
+
+-- Semantic colors must follow a theme reload, while scope hints stay neutral.
+local saved_string_highlight = vim.api.nvim_get_hl(0, { name = 'String', link = false })
+local saved_type_highlight = vim.api.nvim_get_hl(0, { name = 'Type', link = false })
+vim.api.nvim_set_hl(0, 'String', { fg = 0xFF0000 })
+vim.api.nvim_set_hl(0, 'Type', { fg = 0x66D9EF })
+vim.api.nvim_set_hl(0, 'Normal', { fg = 0xECECEC, bg = normal_highlight.bg })
+vim.api.nvim_exec_autocmds('ColorScheme', {})
+local refreshed_edge_label = vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidEdgeLabel', link = false })
+local refreshed_edge = vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidEdge', link = false })
+local refreshed_arrow = vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidArrow', link = false })
+assert(refreshed_edge_label.fg == 0xECECEC
+  and refreshed_edge_label.fg ~= refreshed_edge.fg
+  and refreshed_edge_label.fg ~= refreshed_arrow.fg,
+  'Theme reload merged connection text with the connector accent')
+local refreshed_mermaid_node = vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidNode', link = false })
+assert(refreshed_mermaid_node.fg ~= markdown_mermaid_node.fg,
+  'Mermaid node accents did not follow the active theme')
+local red_channel = math.floor(refreshed_mermaid_node.fg / 65536)
+local green_channel = math.floor(refreshed_mermaid_node.fg / 256) % 256
+assert(red_channel < 255 and green_channel > 0, 'Mermaid accents must reduce theme saturation')
+vim.api.nvim_set_hl(0, 'String', saved_string_highlight)
+vim.api.nvim_set_hl(0, 'Type', saved_type_highlight)
+vim.api.nvim_set_hl(0, 'Normal', normal_highlight)
+vim.api.nvim_exec_autocmds('ColorScheme', {})

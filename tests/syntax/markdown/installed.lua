@@ -19,7 +19,7 @@ local function check()
       string.rep('Ordinary prose wraps independently. ', 5), '',
       '| Key | Description |', '| --- | --- |',
       '| Enter | **literal cell** ' .. string.rep('long cell content ', 100) .. '|', '',
-      '```mermaid', 'graph LR', '  A[Source] --> B[Preview]', '```', '',
+      '```mermaid', 'graph LR', '  A[Source] -->|render| B[Preview]', '```', '',
       'Source navigation remains native.',
     })
     vim.g.preview_test_source = vim.api.nvim_get_current_buf()
@@ -75,8 +75,18 @@ local function check()
     local feature_namespace = vim.api.nvim_get_namespaces().markdown_preview
     local feature_marks = vim.api.nvim_buf_get_extmarks(buffer, feature_namespace, 0, -1, { details = true })
     local checked = {}
+    local connection_colors = {}
     for _, mark in ipairs(feature_marks) do
       local group = mark[4].hl_group
+      if group == 'RenderMarkdownMermaidEdge' or group == 'RenderMarkdownMermaidArrow'
+          or group == 'RenderMarkdownMermaidEdgeLabel' then
+        connection_colors[group] = vim.api.nvim_get_hl(0, { name = group, link = false }).fg
+        if group == 'RenderMarkdownMermaidEdgeLabel' then
+          local label_text = vim.api.nvim_buf_get_text(buffer, mark[2], mark[3],
+            mark[4].end_row, mark[4].end_col, {})
+          assert(table.concat(label_text):find('render', 1, true), 'Connection label lost its semantic span')
+        end
+      end
       local feature = group == 'RenderMarkdownTableCell' and 'table'
         or group == 'RenderMarkdownMermaidLabel' and 'mermaid' or nil
       if feature and not checked[feature] then
@@ -98,6 +108,11 @@ local function check()
       end
     end
     assert(checked.table and checked.mermaid, 'Missing semantic table or Mermaid rows')
+    assert(connection_colors.RenderMarkdownMermaidEdge and connection_colors.RenderMarkdownMermaidArrow
+      and connection_colors.RenderMarkdownMermaidEdgeLabel == vim.api.nvim_get_hl(0, { name = 'Normal' }).fg
+      and connection_colors.RenderMarkdownMermaidEdgeLabel ~= connection_colors.RenderMarkdownMermaidEdge
+      and connection_colors.RenderMarkdownMermaidEdgeLabel ~= connection_colors.RenderMarkdownMermaidArrow,
+      'Rendered connection labels do not separate text from connector colors')
     local messages = vim.api.nvim_exec2('messages', { output = true }).output
     assert(not messages:find('stack traceback', 1, true), messages)
     vim.cmd('normal! gg')
@@ -134,12 +149,32 @@ local function check()
   ]])
   vim.wait(200)
   evaluate([[
+    local preview_buffer = vim.api.nvim_get_current_buf()
+    local source_tick = vim.api.nvim_buf_get_changedtick(vim.g.preview_test_source)
+    local rendered_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+    local diagram_row
+    for index, line in ipairs(rendered_lines) do
+      if line:find('󰙅 mermaid', 1, true) then diagram_row = index; break end
+    end
+    assert(diagram_row, 'Rendered Mermaid fixture is missing')
+    for _, row in ipairs({ 1, diagram_row }) do
+      vim.api.nvim_win_set_cursor(0, { row, 0 })
+      vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'xt', false)
+      assert(vim.api.nvim_get_current_buf() == preview_buffer and not vim.bo.modifiable,
+        'Enter unexpectedly left the rendered Markdown preview')
+      assert(vim.api.nvim_win_get_cursor(0)[1] == row + 1, 'Enter lost native next-line movement')
+    end
     vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(0), 0 })
     vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'xt', false)
+    assert(vim.api.nvim_get_current_buf() == preview_buffer,
+      'Enter at the end of the preview switched to source mode')
+    assert(vim.api.nvim_buf_get_changedtick(vim.g.preview_test_source) == source_tick,
+      'Preview navigation modified the source')
+    vim.api.nvim_feedkeys(vim.keycode('<Space>mp'), 'xt', false)
     assert(vim.api.nvim_get_current_buf() == vim.g.preview_test_source)
     assert(require('config.ui.statusline').project_relative_path() == 'docs/production/report.md [+]',
       'Switching to source changed the footer identity')
-    assert(vim.api.nvim_win_get_cursor(0)[1] == 17, 'Enter lost the mapped source position')
+    assert(vim.api.nvim_win_get_cursor(0)[1] == 17, 'Source toggle lost the mapped source position')
     assert(vim.wo.conceallevel == 0 and vim.wo.foldmethod == 'expr', 'Source options were not restored')
     vim.api.nvim_feedkeys(vim.keycode('<Space>mp'), 'xt', false)
     assert(vim.b.markdown_preview_source == vim.g.preview_test_source)
@@ -203,7 +238,15 @@ local function check()
     if step == 20 then vim.rpcrequest(child, 'nvim_ui_try_resize', 120, 36) end
     vim.wait(100)
   end
-  vim.wait(250)
+  assert(vim.wait(10000, function()
+    return evaluate([[
+      local count = 0
+      for _, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+        if line:find('󰙅 mermaid', 1, true) then count = count + 1 end
+      end
+      return count == 7
+    ]])
+  end, 100), 'Seven diagrams did not settle within ten seconds')
   evaluate([[
     local diagrams = 0
     for _, line in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do

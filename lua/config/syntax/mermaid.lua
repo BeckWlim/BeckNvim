@@ -9,6 +9,7 @@ local M = {
   max_source_bytes = 256 * 1024,
   timeout_ms = 8000,
   width_ratio = 0.85,
+  arrow_position = 'end',
 }
 local markdown_features = require('config.syntax.markdown_features')
 
@@ -20,7 +21,7 @@ local styled_support_by_executable = {}
 local style_highlights = {
   active = 'RenderMarkdownMermaidActive',
   arrow = 'RenderMarkdownMermaidArrow',
-  bold_label = 'RenderMarkdownMermaidContentLabel',
+  bold_label = 'RenderMarkdownMermaidBoldLabel',
   crit = 'RenderMarkdownMermaidCritical',
   default = 'RenderMarkdownMermaid',
   done = 'RenderMarkdownMermaidDone',
@@ -281,6 +282,7 @@ end
 local function new_state(changedtick, width, generation)
   return {
     active = 0,
+    arrow_position = M.arrow_position == 'middle' and 'middle' or 'end',
     blocks = {},
     changedtick = changedtick,
     generation = generation,
@@ -295,8 +297,10 @@ end
 
 local function state_for(buffer, width)
   local changedtick = vim.api.nvim_buf_get_changedtick(buffer)
+  local arrow_position = M.arrow_position == 'middle' and 'middle' or 'end'
   local current_state = states_by_buffer[buffer]
-  if current_state and current_state.changedtick == changedtick and current_state.width == width then
+  if current_state and current_state.changedtick == changedtick and current_state.width == width
+      and current_state.arrow_position == arrow_position then
     return current_state
   end
   if current_state then
@@ -385,6 +389,10 @@ local function finish_request(buffer, state, request, completed_process)
 end
 
 launch_request = function(buffer, state, request)
+  -- Spend narrow-view space on labels first. Wider views can afford more
+  -- separation. Termaid's default grid aligns rows/columns and caps extra
+  -- same-layer matching; keep node heights local to their content rows.
+  local gap = math.max(1, math.min(4, math.floor(request.block.width / 40)))
   local command = {
     request.executable,
     '--width',
@@ -394,9 +402,18 @@ launch_request = function(buffer, state, request)
     'reflow',
     '--max-height',
     tostring(M.max_rendered_lines),
+    '--gap',
+    tostring(gap),
+    '--padding-x',
+    tostring(math.min(gap, 2)),
+    '--padding-y',
+    '0',
   }
   if request.styled then
     vim.list_extend(command, { '--format', 'styled-json' })
+  end
+  if state.arrow_position == 'middle' then
+    vim.list_extend(command, { '--arrow-position', 'middle' })
   end
   local started, process = pcall(M.start_process, command, {
     stdin = request.block.source,

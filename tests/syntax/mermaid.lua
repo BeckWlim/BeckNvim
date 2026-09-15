@@ -3,6 +3,7 @@ local markdown_features = require('config.syntax.markdown_features')
 local mermaid = require('config.syntax.mermaid')
 
 local original = {
+  arrow_position = mermaid.arrow_position,
   buffer = vim.api.nvim_get_current_buf(),
   find_executable = mermaid.find_executable,
   guicursor = vim.o.guicursor,
@@ -149,10 +150,21 @@ assert(
     and render_request.command[6] == 'reflow'
     and render_request.command[7] == '--max-height'
     and tonumber(render_request.command[8]) == mermaid.max_rendered_lines
-    and render_request.command[9] == '--format'
-    and render_request.command[10] == 'styled-json',
+    and render_request.command[15] == '--format'
+    and render_request.command[16] == 'styled-json',
   'Mermaid renderer did not request strict bounded semantic output'
 )
+assert(
+  render_request.command[9] == '--gap'
+    and render_request.command[11] == '--padding-x'
+    and render_request.command[13] == '--padding-y'
+    and render_request.command[14] == '0',
+  'Mermaid renderer did not receive explicit spacing parameters'
+)
+assert(not vim.tbl_contains(render_request.command, '--uniform-nodes'),
+  'Mermaid overrode row/column sizing with diagram-wide uniform boxes')
+assert(not vim.tbl_contains(render_request.command, '--arrow-position'),
+  'Mermaid changed the default endpoint arrow placement')
 assert(
   render_request.options.stdin == 'graph LR\n  A --> B'
     and render_request.options.text == true
@@ -253,6 +265,42 @@ vim.wait(20)
 assert(refreshes == 1, 'A stale Mermaid callback requested another render')
 
 mermaid.detach(buffer)
+process_requests = {}
+for _, view in ipairs({
+  { width = 48, gap = '1', padding = '1' },
+  { width = 100, gap = '2', padding = '2' },
+  { width = 160, gap = '3', padding = '2' },
+  { width = 240, gap = '4', padding = '2' },
+}) do
+  mermaid.parse({ buf = buffer, root = changed_tree:root(), width = view.width })
+  local resized_request = process_requests[#process_requests]
+  assert(tonumber(resized_request.command[3]) == math.floor(view.width * 0.85)
+      and resized_request.command[10] == view.gap
+      and resized_request.command[12] == view.padding,
+    'Mermaid resize did not recalculate its width and spacing budget')
+end
+assert(#process_requests == 4, 'Mermaid resize reused a render with stale dimensions')
+
+local position_context = { buf = buffer, root = changed_tree:root(), width = 240 }
+mermaid.arrow_position = 'middle'
+mermaid.parse(position_context)
+assert(#process_requests == 5, 'Changing arrow placement reused the previous diagram')
+local middle_request = process_requests[5]
+assert(middle_request.command[#middle_request.command - 1] == '--arrow-position'
+    and middle_request.command[#middle_request.command] == 'middle',
+  'Mermaid did not forward the middle arrow placement choice')
+mermaid.parse(position_context)
+assert(#process_requests == 5, 'Unchanged arrow placement bypassed the render cache')
+mermaid.arrow_position = 'end'
+mermaid.parse(position_context)
+assert(#process_requests == 6
+    and not vim.tbl_contains(process_requests[6].command, '--arrow-position'),
+  'Returning to endpoint arrows retained the middle placement option')
+middle_request.callback({ code = 0, stdout = 'stale middle arrows' })
+vim.wait(20)
+assert(refreshes == 1, 'A stale arrow-placement callback requested a render')
+
+mermaid.detach(buffer)
 vim.api.nvim_buf_delete(buffer, { force = true })
 
 local budget_buffer, budget_context = fixture({
@@ -281,6 +329,17 @@ mermaid.max_concurrent = original.max_concurrent
 mermaid.start_process = original.start_process
 mermaid.timeout_ms = original.timeout
 mermaid.width_ratio = original.width_ratio
+mermaid.arrow_position = original.arrow_position
 markdown_features.request_render = original.feature_request_render
 vim.o.guicursor = original.guicursor
 vim.api.nvim_set_current_buf(original.buffer)
+
+local decoded_scope_roles = assert(mermaid.decode_styled_output(styled_output({ {
+  { text = '[par]', style = 'subgraph_label' },
+  { text = '│', style = 'subgraph' },
+  { text = 'strong', style = 'bold_label' },
+} }), 20))
+assert(decoded_scope_roles[1].chunks[1][2] == 'RenderMarkdownMermaidSubgraphLabel'
+  and decoded_scope_roles[1].chunks[2][2] == 'RenderMarkdownMermaidSubgraph'
+  and decoded_scope_roles[1].chunks[3][2] == 'RenderMarkdownMermaidBoldLabel',
+  'Scope hints and explicit bold labels lost their separate semantic roles')
