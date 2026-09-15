@@ -8,6 +8,14 @@ vim.api.nvim_buf_set_lines(buffer, 0, -1, false, source_lines)
 local tree = assert(vim.treesitter.get_parser(buffer, 'markdown'):parse()[1])
 local blocks = markdown_table.project({ buf = buffer, root = tree:root(), width = 27 })
 assert(#blocks == 1 and blocks[1].start_row == 0 and blocks[1].end_row == 3, 'Table projection lost its source range')
+local feature_rows = blocks[1].rows
+local chunks_width = require('config.syntax.markdown_features').chunks_width
+assert(chunks_width(feature_rows[1].chunks) == chunks_width(feature_rows[#feature_rows].chunks),
+  'Table title does not span the full table background')
+assert(feature_rows[1].chunks[1][2] == 'RenderMarkdownTableIcon'
+    and feature_rows[1].chunks[2][2] == 'RenderMarkdownTableLabel'
+    and feature_rows[1].chunks[#feature_rows[1].chunks][2] == 'RenderMarkdownTableLabel',
+  'Table title or its padding lost semantic highlights')
 local continuations = 0
 local styled_code = false
 local mapped_tail = false

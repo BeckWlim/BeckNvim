@@ -29,7 +29,7 @@ local function context_winhighlight(current_winhighlight)
   return table.concat(retained_mappings, ',')
 end
 
-local function update_context_winbar(preview_window, preview_buffer, target_line)
+local function update_context_winbar(preview_window, preview_buffer, target_line, is_current)
   if not vim.api.nvim_win_is_valid(preview_window)
     or not vim.api.nvim_buf_is_valid(preview_buffer)
     or vim.api.nvim_win_get_buf(preview_window) ~= preview_buffer
@@ -44,18 +44,26 @@ local function update_context_winbar(preview_window, preview_buffer, target_line
     false
   )[1] or ''
   local first_nonblank_byte = source_line:find('%S') or 1
-  local context_labels = require('config.syntax.treesitter_context').structural_context_labels(
+  local changedtick = vim.api.nvim_buf_get_changedtick(preview_buffer)
+  vim.wo[preview_window].winbar = ''
+  require('config.syntax.treesitter_context').enclosing_structure_async(
     preview_buffer,
     target_line - 1,
-    first_nonblank_byte - 1
-  )
-  vim.wo[preview_window].winbar = context_winbar(context_labels)
-  vim.wo[preview_window].winhighlight = context_winhighlight(
-    vim.wo[preview_window].winhighlight
+    first_nonblank_byte - 1,
+    function(structure)
+      if not is_current() or not vim.api.nvim_win_is_valid(preview_window)
+          or not vim.api.nvim_buf_is_loaded(preview_buffer)
+          or vim.api.nvim_win_get_buf(preview_window) ~= preview_buffer
+          or vim.api.nvim_buf_get_changedtick(preview_buffer) ~= changedtick then return end
+      local context_labels = structure and vim.split(structure.label, ' › ', { plain = true }) or {}
+      vim.wo[preview_window].winbar = context_winbar(context_labels)
+      vim.wo[preview_window].winhighlight = context_winhighlight(vim.wo[preview_window].winhighlight)
+    end
   )
 end
 
-local function show_entry(previewer, preview_buffer, entry)
+local function show_entry(previewer, preview_buffer, entry, is_current)
+  if not is_current() then return end
   local preview_window = previewer.state.winid
   if not preview_window
     or not entry.lnum
@@ -90,7 +98,7 @@ local function show_entry(previewer, preview_buffer, entry)
   vim.api.nvim_win_call(preview_window, function()
     vim.cmd('normal! zz')
   end)
-  update_context_winbar(preview_window, preview_buffer, middle_line)
+  update_context_winbar(preview_window, preview_buffer, middle_line, is_current)
 end
 
 function M.new(options)
@@ -100,6 +108,13 @@ function M.new(options)
   local from_entry = require('telescope.from_entry')
   local Path = require('plenary.path')
   local working_directory = preview_options.cwd or vim.uv.cwd()
+  local current_request
+  local function begin_request()
+    local request = {}
+    current_request = request
+    return function() return current_request == request end
+  end
+  local function teardown() current_request = nil end
 
   if preview_options.source_buffer then
     local source_buffer = preview_options.source_buffer
@@ -107,6 +122,7 @@ function M.new(options)
       or vim.api.nvim_buf_get_name(source_buffer)
     return previewers.new_buffer_previewer({
       title = 'Source Preview',
+      teardown = teardown,
       dyn_title = function()
         return Path:new(source_filename):normalize(working_directory)
       end,
@@ -114,6 +130,7 @@ function M.new(options)
         return ('git-history-symbols://%d/%s'):format(source_buffer, source_filename)
       end,
       define_preview = function(previewer, entry)
+        local is_current = begin_request()
         if not vim.api.nvim_buf_is_valid(source_buffer) then
           return
         end
@@ -132,7 +149,7 @@ function M.new(options)
           vim.b[preview_buffer].git_history_source_changedtick = source_changedtick
         end
         vim.schedule(function()
-          show_entry(previewer, preview_buffer, entry)
+          show_entry(previewer, preview_buffer, entry, is_current)
         end)
       end,
     })
@@ -140,6 +157,7 @@ function M.new(options)
 
   return previewers.new_buffer_previewer({
     title = 'Source Preview',
+    teardown = teardown,
     dyn_title = function(_, entry)
       return Path:new(from_entry.path(entry, false, false)):normalize(working_directory)
     end,
@@ -147,6 +165,7 @@ function M.new(options)
       return from_entry.path(entry, false, false)
     end,
     define_preview = function(previewer, entry)
+      local is_current = begin_request()
       local entry_path = from_entry.path(entry, true, false)
       if not entry_path or entry_path == '' then
         return
@@ -159,7 +178,7 @@ function M.new(options)
         file_encoding = preview_options.file_encoding,
         callback = function(preview_buffer)
           vim.schedule(function()
-            show_entry(previewer, preview_buffer, entry)
+            show_entry(previewer, preview_buffer, entry, is_current)
           end)
         end,
       })

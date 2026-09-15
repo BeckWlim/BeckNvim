@@ -1,147 +1,43 @@
 local M = {}
+local palette = require('config.ui.palette')
+local overrides
+local refresh_pending = false
 
-local completion_kind_colors = {
-  Function = '#A6E22E',
-  Method = '#A6E22E',
-  Class = '#A6E22E',
-  Interface = '#A6E22E',
-  Struct = '#A6E22E',
-  Variable = '#66D9EF',
-  Module = '#66D9EF',
-  Property = '#66D9EF',
-  Keyword = '#F92672',
-  Field = '#F92672',
-  Operator = '#F92672',
-  Snippet = '#AE81FF',
-  Constant = '#AE81FF',
-  Enum = '#AE81FF',
-  EnumMember = '#AE81FF',
-  Unit = '#E6DB74',
-  Value = '#E6DB74',
-  Color = '#E6DB74',
-  Folder = '#E6DB74',
-  Text = '#F8F8F2',
-  File = '#F8F8F2',
-  Reference = '#F8F8F2',
+local completion_kind_roles = {
+  Function = 'func', Method = 'func', Class = 'type', Interface = 'type', Struct = 'type',
+  Variable = 'type', Module = 'type', Property = 'type', Keyword = 'keyword', Field = 'keyword',
+  Operator = 'keyword', Snippet = 'constant', Constant = 'constant', Enum = 'constant',
+  EnumMember = 'constant', Unit = 'string', Value = 'string', Color = 'string', Folder = 'string',
 }
-
-local context_colors = {
-  background = '#3A3D32',
-  border = '#A6E22E',
-  foreground = '#F8F8F2',
-  muted_foreground = '#A6A69C',
-}
-
-local cursor_line_background = '#3A3D3F'
-
-local markdown_heading_four_colors = {
-  background = '#363139',
-  foreground = '#F8F8F2',
-  accent = '#FFB3D1',
-}
-
-local markdown_table_colors = {
-  icon = '#89E051',
-  label = '#A6A69C',
-}
-
--- Derive restrained semantic accents from the active theme (Monokai by
--- default). Enclosing ranges stay neutral so dense diagrams remain readable.
-local function mermaid_accent(group, fallback, strength)
-  local highlight = vim.api.nvim_get_hl(0, { name = group, link = false })
-  local accent = highlight.fg or fallback
-  local neutral = 0x8F908A
-  local blended = 0
-  for _, divisor in ipairs({ 65536, 256, 1 }) do
-    local accent_channel = math.floor(accent / divisor) % 256
-    local neutral_channel = math.floor(neutral / divisor) % 256
-    blended = blended + math.floor(neutral_channel + (accent_channel - neutral_channel) * strength + 0.5) * divisor
-  end
-  return blended
-end
-
-local function mermaid_palette(editor_foreground)
-  return {
-    active = mermaid_accent('Function', 0xA6E22E, 0.55),
-    arrow = mermaid_accent('Type', 0x66D9EF, 0.65),
-    critical = mermaid_accent('Statement', 0xF92672, 0.65),
-    done = '#8F908A',
-    edge = mermaid_accent('Type', 0x66D9EF, 0.30),
-    edge_label = editor_foreground,
-    foreground = editor_foreground,
-    icon = mermaid_accent('Number', 0xAE81FF, 0.45),
-    label = '#A6A69C',
-    milestone = mermaid_accent('Type', 0xFD971F, 0.55),
-    node = mermaid_accent('String', 0xE6DB74, 0.45),
-    node_label = editor_foreground,
-    subgraph = '#666666',
-    subgraph_label = '#A6A6A6',
-    sections = {
-      mermaid_accent('Statement', 0xF92672, 0.45),
-      mermaid_accent('Type', 0x66D9EF, 0.45),
-      mermaid_accent('Function', 0xA6E22E, 0.45),
-      mermaid_accent('String', 0xE6DB74, 0.45),
-      mermaid_accent('Number', 0xAE81FF, 0.45),
-      mermaid_accent('Type', 0xFD971F, 0.45),
-      mermaid_accent('Special', 0xFFB3D1, 0.45),
-      mermaid_accent('Constant', 0x89E051, 0.45),
-    },
-  }
-end
-
-local function history_ui_palette(editor_background, editor_foreground)
-  return {
-    added = '#A6E22E',
-    added_background = '#29362D',
-    background = editor_background,
-    border = '#666666',
-    changed = '#E6DB74',
-    changed_background = '#34352B',
-    deleted = '#F92672',
-    deleted_background = '#382A2F',
-    focus = '#FFFFFF',
-    foreground = editor_foreground,
-    hash = '#AE81FF',
-    information = '#66D9EF',
-    muted = '#8F908A',
-    selected = cursor_line_background,
-    selected_foreground = editor_foreground,
-    title = editor_foreground,
-  }
-end
-
-local rainbow_delimiter_colors = {
-  RainbowDelimiterBase = '#B7B9C0',
-  RainbowDelimiterRed = '#D23A78',
-  RainbowDelimiterYellow = '#CFC46D',
-  RainbowDelimiterBlue = '#62B4CA',
-  RainbowDelimiterOrange = '#DA8438',
-  RainbowDelimiterGreen = '#8AC44C',
-  RainbowDelimiterViolet = '#9479D1',
-  RainbowDelimiterCyan = '#73C9CF',
-}
-
-local current_scope_background = require('config.syntax.visuals').current_scope_color()
 
 local function apply()
-  local normal_highlight = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
-  local code_block_highlight = vim.api.nvim_get_hl(0, {
-    name = 'ColorColumn',
-    link = false,
-  })
-  local inline_code_highlight = vim.api.nvim_get_hl(0, {
-    name = '@markup.raw.markdown_inline',
-    link = false,
-  })
-  local editor_background = normal_highlight.bg or 0x272822
-  local editor_foreground = normal_highlight.fg or 0xF8F8F2
-  local inline_code_foreground = inline_code_highlight.fg or 0xAE81FF
-  local markdown_block_background = code_block_highlight.bg or cursor_line_background
-  local history_colors = history_ui_palette(editor_background, editor_foreground)
-  local markdown_mermaid_colors = mermaid_palette(editor_foreground)
+  local colors = palette.resolve()
+  local editor_background = colors.background
+  local editor_foreground = colors.foreground
+  local cursor_line_background = colors.selection
+  local markdown_block_background = colors.block
+  local inline_code_foreground = colors.inline_code
+  local history_colors = colors.history
+  local markdown_mermaid_colors = colors.mermaid
+  local context_colors = colors.context
+  local markdown_heading_four_colors = colors.heading
+  local markdown_table_colors = colors.table
+  local rainbow_delimiter_colors = colors.rainbow
+  local current_scope_background = colors.scope
+  -- Preserve each inactive window's mapped foreground (including Telescope
+  -- borders) while sharing the editor's backing surface.
+  vim.api.nvim_set_hl(0, 'NormalNC', { bg = editor_background })
   vim.api.nvim_set_hl(0, 'NormalFloat', {
     bg = editor_background,
     fg = editor_foreground,
+  })
+  vim.api.nvim_set_hl(0, 'StatusLine', {
+    bg = colors.statusline.background,
+    fg = colors.statusline.foreground,
+  })
+  vim.api.nvim_set_hl(0, 'StatusLineNC', {
+    bg = colors.statusline.inactive_background,
+    fg = colors.statusline.inactive_foreground,
   })
   for _, group_name in ipairs({ 'FloatBorder', 'FloatTitle', 'FloatFooter' }) do
     vim.api.nvim_set_hl(0, group_name, {
@@ -199,24 +95,24 @@ local function apply()
   vim.api.nvim_set_hl(0, 'CurrentCodeScope', { bg = current_scope_background })
   vim.api.nvim_set_hl(0, 'CursorLine', { bg = cursor_line_background })
   vim.api.nvim_set_hl(0, 'TypeInformationSection', {
-    fg = '#A6E22E',
+    fg = colors.syntax.func,
     bold = true,
   })
-  vim.api.nvim_set_hl(0, 'TypeInformationSeparator', { fg = '#49483E' })
+  vim.api.nvim_set_hl(0, 'TypeInformationSeparator', { fg = colors.border })
   vim.api.nvim_set_hl(0, 'TypeInformationIndex', {
-    fg = '#AE81FF',
+    fg = colors.syntax.constant,
     bold = true,
   })
   vim.api.nvim_set_hl(0, 'TypeInformationLocation', {
-    fg = '#66D9EF',
+    fg = colors.syntax.type,
     underline = true,
   })
-  vim.api.nvim_set_hl(0, 'DashboardFile', { fg = '#66D9EF' })
+  vim.api.nvim_set_hl(0, 'DashboardFile', { fg = colors.syntax.type })
   vim.api.nvim_set_hl(0, 'TypeInformationHint', {
-    fg = '#75715E',
+    fg = colors.muted,
     italic = true,
   })
-  vim.api.nvim_set_hl(0, 'TypeInformationPreview', { bg = '#2B2C26' })
+  vim.api.nvim_set_hl(0, 'TypeInformationPreview', { bg = colors.scope })
   vim.api.nvim_set_hl(0, 'TypeInformationCursorLine', { bg = cursor_line_background })
   vim.api.nvim_set_hl(0, 'RenderMarkdownH4', {
     fg = markdown_heading_four_colors.accent,
@@ -229,11 +125,11 @@ local function apply()
   })
   vim.api.nvim_set_hl(0, 'RenderMarkdownTableRule', {
     bg = markdown_block_background,
-    fg = '#49483E',
+    fg = colors.border,
   })
   vim.api.nvim_set_hl(0, 'RenderMarkdownTableRowRule', {
     bg = markdown_block_background,
-    fg = '#3E3D32',
+    fg = colors.table.rule,
   })
   vim.api.nvim_set_hl(0, 'RenderMarkdownTableHeader', {
     bg = markdown_block_background,
@@ -343,11 +239,11 @@ local function apply()
     fg = editor_foreground,
   })
   vim.api.nvim_set_hl(0, 'TranslationSeparator', {
-    fg = '#49483E',
+    fg = colors.border,
     bg = editor_background,
   })
   vim.api.nvim_set_hl(0, 'TranslationSection', {
-    fg = '#66D9EF',
+    fg = colors.syntax.type,
     bg = editor_background,
     bold = true,
   })
@@ -361,12 +257,12 @@ local function apply()
     bg = editor_background,
   })
   vim.api.nvim_set_hl(0, 'TranslationNotification', {
-    fg = '#75715E',
+    fg = colors.muted,
     bg = editor_background,
     italic = true,
   })
   vim.api.nvim_set_hl(0, 'TranslationError', {
-    fg = '#F92672',
+    fg = colors.history.deleted,
     bg = editor_background,
     bold = true,
   })
@@ -402,13 +298,18 @@ local function apply()
     'TelescopePromptBorder',
     'TelescopeResultsBorder',
     'TelescopePreviewBorder',
-    'DiffviewWinSeparator',
   }) do
     vim.api.nvim_set_hl(0, group_name, {
-      bg = history_colors.background,
+      -- Telescope's border windows include the corner and margin cells.
+      -- Contrast the edge glyph while keeping its backing cell on the editor base.
+      bg = editor_background,
       fg = history_colors.border,
     })
   end
+  vim.api.nvim_set_hl(0, 'DiffviewWinSeparator', {
+    bg = history_colors.background,
+    fg = history_colors.border,
+  })
   for _, group_name in ipairs({
     'TelescopeTitle',
     'TelescopePromptTitle',
@@ -506,8 +407,17 @@ local function apply()
     fg = history_colors.muted,
   })
 
-  for kind, color in pairs(completion_kind_colors) do
-    vim.api.nvim_set_hl(0, 'CmpItemKind' .. kind, { fg = color })
+  for kind, role in pairs(completion_kind_roles) do
+    vim.api.nvim_set_hl(0, 'CmpItemKind' .. kind, { fg = colors.syntax[role] })
+  end
+  for _, kind in ipairs({ 'Text', 'File', 'Reference' }) do
+    vim.api.nvim_set_hl(0, 'CmpItemKind' .. kind, { fg = editor_foreground })
+  end
+  if overrides then
+    local custom_groups = type(overrides) == 'function' and overrides(colors) or overrides
+    for name, definition in pairs(custom_groups) do
+      vim.api.nvim_set_hl(0, name, definition)
+    end
   end
 end
 
@@ -515,12 +425,90 @@ function M.apply()
   apply()
 end
 
-function M.setup()
+-- Optional theme-file palettes replace the base schema in the existing owner.
+-- The active native colorscheme remains the reload target for :colorscheme.
+function M.load_palette(colors)
+  for _, role in ipairs({ 'background', 'foreground', 'red', 'green', 'yellow', 'blue', 'purple', 'orange' }) do
+    assert(type(colors[role]) == 'number' and colors[role] >= 0 and colors[role] <= 0xFFFFFF
+      and colors[role] % 1 == 0, 'Invalid theme palette color: ' .. role)
+  end
+  vim.cmd('highlight clear')
+  local muted = palette.blend(colors.background, colors.foreground, 0.65)
+  local selection = palette.blend(colors.background, colors.foreground, 0.12)
+  local definitions = {
+    Normal = { fg = colors.foreground, bg = colors.background },
+    NormalNC = { link = 'Normal' },
+    CursorLine = { bg = selection },
+    CursorColumn = { link = 'CursorLine' },
+    ColorColumn = { bg = palette.blend(colors.background, colors.foreground, 0.06) },
+    Visual = { bg = selection },
+    Search = { fg = colors.background, bg = colors.yellow },
+    IncSearch = { fg = colors.background, bg = colors.orange, bold = true },
+    CurSearch = { link = 'IncSearch' },
+    LineNr = { fg = muted }, CursorLineNr = { fg = colors.foreground, bold = true },
+    SignColumn = { bg = colors.background }, FoldColumn = { fg = muted },
+    Folded = { fg = muted, bg = selection },
+    NonText = { fg = muted }, EndOfBuffer = { fg = colors.background },
+    WinSeparator = { fg = muted }, Whitespace = { fg = muted },
+    Comment = { fg = muted, italic = true },
+    Constant = { fg = colors.purple }, String = { fg = colors.yellow },
+    Character = { link = 'String' }, Number = { link = 'Constant' }, Boolean = { link = 'Constant' },
+    Float = { link = 'Constant' }, Identifier = { fg = colors.blue },
+    Function = { fg = colors.green }, Statement = { fg = colors.red },
+    Operator = { fg = colors.red }, PreProc = { fg = colors.green },
+    Type = { fg = colors.blue }, Special = { fg = colors.orange },
+    Delimiter = { fg = colors.foreground }, Underlined = { fg = colors.blue, underline = true },
+    Title = { fg = colors.foreground, bold = true },
+    Directory = { fg = colors.blue }, MoreMsg = { fg = colors.green },
+    Question = { fg = colors.green }, WarningMsg = { fg = colors.yellow },
+    ErrorMsg = { fg = colors.red }, Error = { fg = colors.red },
+    Todo = { fg = colors.orange, bold = true },
+    MatchParen = { bg = selection, bold = true, underline = true },
+    StatusLine = { fg = colors.foreground, bg = selection },
+    StatusLineNC = { fg = muted, bg = colors.background },
+    TabLine = { fg = muted, bg = colors.background },
+    TabLineSel = { fg = colors.foreground, bg = selection, bold = true },
+    TabLineFill = { bg = colors.background },
+    DiagnosticError = { fg = colors.red }, DiagnosticWarn = { fg = colors.yellow },
+    DiagnosticInfo = { fg = colors.blue }, DiagnosticHint = { fg = colors.purple },
+    DiagnosticOk = { fg = colors.green },
+    Added = { fg = colors.green }, Changed = { fg = colors.yellow }, Removed = { fg = colors.red },
+    DiffAdd = { bg = palette.blend(colors.background, colors.green, 0.12) },
+    DiffChange = { bg = palette.blend(colors.background, colors.yellow, 0.12) },
+    DiffDelete = { bg = palette.blend(colors.background, colors.red, 0.12) },
+    DiffText = { bg = palette.blend(colors.background, colors.yellow, 0.25) },
+  }
+  for group, definition in pairs(definitions) do vim.api.nvim_set_hl(0, group, definition) end
+  for index, color in ipairs({
+    colors.background, colors.red, colors.green, colors.yellow,
+    colors.blue, colors.purple, colors.blue, colors.foreground,
+    muted, colors.red, colors.green, colors.yellow,
+    colors.blue, colors.purple, colors.blue, colors.foreground,
+  }) do
+    vim.g['terminal_color_' .. (index - 1)] = string.format('#%06x', color)
+  end
+  M.apply()
+end
+
+function M.setup(options)
+  if options then overrides = options.overrides end
   local group = vim.api.nvim_create_augroup('user_interface_highlights', { clear = true })
   vim.api.nvim_create_autocmd('ColorScheme', {
     group = group,
     pattern = '*',
     callback = M.apply,
+  })
+  vim.api.nvim_create_autocmd('User', {
+    group = group,
+    pattern = 'LazyLoad',
+    callback = function()
+      if refresh_pending then return end
+      refresh_pending = true
+      vim.schedule(function()
+        refresh_pending = false
+        M.apply()
+      end)
+    end,
   })
   M.apply()
 end

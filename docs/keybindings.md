@@ -44,6 +44,8 @@ already active.
 | `<Space>mp` | Switch the current pane between rendered Markdown and editable source |
 | `<Space>t` | Open Chinese/English translation |
 | `:Proxy` | Inspect or change the session HTTP proxy |
+| `:Theme` | Preview bundled and personal themes; Enter saves, `<C-q>` cancels in every mode |
+| `:Theme {name}` | Apply a theme immediately and save it for the next startup |
 
 Markdown files open with prose, tables, and diagrams rendered by default. Source mode shows all
 Markdown punctuation for editing. `Enter` moves to the next line while keeping the preview rendered.

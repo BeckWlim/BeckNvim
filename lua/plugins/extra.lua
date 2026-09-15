@@ -33,6 +33,7 @@ return {
       open_mapping = [[<C-t>]],
       start_in_insert = true,
       direction = 'horizontal',
+      shade_terminals = false,
       on_open = function(terminal)
         require('config.ui.terminal').setup_buffer(terminal.bufnr)
       end,
@@ -42,6 +43,7 @@ return {
     'MeanderingProgrammer/render-markdown.nvim',
     ft = { 'markdown' },
     dependencies = {
+      'BeckWlim/termaid',
       'nvim-treesitter/nvim-treesitter',
       'nvim-tree/nvim-web-devicons',
     },

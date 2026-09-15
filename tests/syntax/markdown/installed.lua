@@ -10,7 +10,18 @@ local function evaluate(source)
   return vim.rpcrequest(child, 'nvim_exec_lua', source, {})
 end
 local function check()
+  evaluate([[
+    local highlights = assert(vim.treesitter.query.get('markdown', 'highlights'))
+    assert(vim.list_contains(highlights.captures, 'markup.table.markdown'),
+      'Relocated Markdown table query was not loaded during startup')
+    assert(vim.list_contains(highlights.captures, 'markup.heading'),
+      'Custom Markdown query replaced the standard highlights')
+    local plugin = assert(require('lazy.core.config').plugins.termaid, 'Termaid is not managed by lazy.nvim')
+    assert(require('config.syntax.mermaid').find_executable() == plugin.dir .. '/.venv/bin/termaid',
+      'Markdown renderer is not using the managed Termaid build')
+  ]])
   vim.rpcrequest(child, 'nvim_ui_attach', 120, 36, { rgb = true })
+  evaluate([[vim.api.nvim__inspect_cell(1, 0, 0)]])
   vim.rpcrequest(child, 'nvim_set_var', 'preview_test_project', project_directory)
   evaluate([[
     vim.cmd('enew!')
@@ -34,6 +45,8 @@ local function check()
         and table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'):find('󰙅 mermaid', 1, true) ~= nil
     ]])
   end, 100), 'Real Mermaid render did not complete')
+  assert(evaluate([[return require('lazy.core.config').plugins.termaid._.loaded ~= nil]]),
+    'Markdown rendering left its Termaid dependency unloaded in lazy.nvim')
   vim.wait(100)
   assert(not vim.rpcrequest(child, 'nvim_get_mode').blocking, 'Preview opened a blocking prompt')
   evaluate([[
@@ -113,6 +126,73 @@ local function check()
       and connection_colors.RenderMarkdownMermaidEdgeLabel ~= connection_colors.RenderMarkdownMermaidEdge
       and connection_colors.RenderMarkdownMermaidEdgeLabel ~= connection_colors.RenderMarkdownMermaidArrow,
       'Rendered connection labels do not separate text from connector colors')
+    local theme_buffer_tick = vim.api.nvim_buf_get_changedtick(buffer)
+    local theme_cursor = vim.api.nvim_win_get_cursor(0)
+    local theme_window = vim.api.nvim_get_current_win()
+    for _, name in ipairs({ 'morning', 'monokai' }) do
+      vim.api.nvim_cmd({ cmd = 'colorscheme', args = { name } }, {})
+      vim.wait(30)
+      assert(vim.api.nvim_get_current_buf() == buffer and vim.api.nvim_buf_get_changedtick(buffer) == theme_buffer_tick,
+        'Theme switch rebuilt rendered Markdown content')
+      assert(vim.deep_equal(theme_cursor, vim.api.nvim_win_get_cursor(0))
+        and theme_window == vim.api.nvim_get_current_win(), 'Theme switch changed preview navigation')
+      assert(vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidEdgeLabel' }).fg
+        == vim.api.nvim_get_hl(0, { name = 'Normal' }).fg, 'Rendered Mermaid labels kept the old theme')
+      local palette = require('config.ui.palette').resolve()
+      local icon_colors = {
+        RenderMarkdownTableIcon = palette.table.icon,
+        RenderMarkdownTableLabel = palette.table.label,
+        RenderMarkdownMermaidIcon = palette.mermaid.icon,
+        RenderMarkdownMermaidLabel = palette.mermaid.label,
+      }
+      local checked_icons = {}
+      for _, mark in ipairs(feature_marks) do
+        local icon_color = icon_colors[mark[4].hl_group]
+        if icon_color then
+          local row, column = mark[2] + 1, mark[3]
+          vim.api.nvim_win_set_cursor(0, { row, column })
+          vim.cmd('normal! zz')
+          vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+          vim.api.nvim_exec_autocmds('CursorMoved', { buffer = buffer })
+          vim.cmd('redraw!')
+          local position = vim.fn.screenpos(0, row, column + 1)
+          local cell = vim.api.nvim__inspect_cell(1, position.row - 1, position.col - 1)
+          assert(cell[2].foreground == icon_color, 'Rendered icon lost its semantic accent')
+          assert(cell[2].background == palette.block, 'Rendered icon left the filled header')
+          checked_icons[mark[4].hl_group] = true
+        end
+      end
+      assert(checked_icons.RenderMarkdownTableIcon and checked_icons.RenderMarkdownTableLabel
+          and checked_icons.RenderMarkdownMermaidIcon and checked_icons.RenderMarkdownMermaidLabel,
+        'Missing rendered table or Mermaid icon and label')
+      local diagram_rows = {}
+      for _, mark in ipairs(feature_marks) do
+        local group = mark[4].hl_group or ''
+        if group:find('RenderMarkdownMermaid', 1, true) == 1 then
+          diagram_rows[mark[2] + 1] = true
+        end
+      end
+      local diagram_width
+      for row in pairs(diagram_rows) do
+        local line = vim.api.nvim_buf_get_lines(buffer, row - 1, row, false)[1]
+        local width = vim.fn.strdisplaywidth(line)
+        diagram_width = diagram_width or width
+        assert(width == diagram_width, 'Mermaid title or canvas has an uneven right edge')
+        vim.api.nvim_win_set_cursor(0, { row, 0 })
+        vim.cmd('normal! zz')
+        vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+        vim.api.nvim_exec_autocmds('CursorMoved', { buffer = buffer })
+        vim.cmd('redraw!')
+        local position = vim.fn.screenpos(0, row, 1)
+        for column = 0, width - 1 do
+          local cell = vim.api.nvim__inspect_cell(1, position.row - 1, position.col - 1 + column)
+          assert(cell[2].background == palette.block,
+            'Mermaid rectangle contains a gap or differs from the table background')
+        end
+      end
+      assert(diagram_width and diagram_width > 0, 'Missing rendered Mermaid canvas')
+      vim.api.nvim_win_set_cursor(0, theme_cursor)
+    end
     local messages = vim.api.nvim_exec2('messages', { output = true }).output
     assert(not messages:find('stack traceback', 1, true), messages)
     vim.cmd('normal! gg')
@@ -205,6 +285,46 @@ local function check()
     local messages = vim.api.nvim_exec2('messages', { output = true }).output
     assert(not messages:find('E21:', 1, true), messages)
   ]])
+  -- Editing column guides must not leave stripes beyond fenced code blocks.
+  vim.rpcrequest(child, 'nvim_ui_try_resize', 200, 40)
+  evaluate([[
+    vim.cmd('enew!')
+    vim.wo.colorcolumn = '80,160'
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, {
+      '# Code sample', '', '```lua', 'local value = 1', 'print(value)', '```', '', 'End prose',
+    })
+    vim.g.code_test_source = vim.api.nvim_get_current_buf()
+    vim.bo.filetype = 'markdown'
+  ]])
+  assert(vim.wait(2000, function()
+    return evaluate([[return vim.b.markdown_preview_source == vim.g.code_test_source]])
+  end, 20), 'Code fixture did not open rendered')
+  vim.wait(100)
+  for _, name in ipairs({ 'morning', 'monokai' }) do
+    vim.rpcrequest(child, 'nvim_exec_lua', [[
+      vim.api.nvim_cmd({ cmd = 'colorscheme', args = { ... } }, {})
+      vim.api.nvim_win_set_cursor(0, { 8, 0 })
+      vim.cmd('redraw!')
+    ]], { name })
+    vim.wait(50)
+    evaluate([[
+      assert(vim.wo.colorcolumn == '', 'Code preview retained editing column guides')
+      local background = vim.api.nvim_get_hl(0, { name = 'Normal', link = false }).bg
+      for _, line in ipairs({ 3, 4, 5 }) do
+        local position = vim.fn.screenpos(0, line, 1)
+        for column = 40, 199 do
+          local cell = vim.api.nvim__inspect_cell(1, position.row - 1, column)
+          assert(cell[2].background == nil or cell[2].background == background,
+            'Fenced code leaves a colored strip at screen column ' .. (column + 1))
+        end
+      end
+    ]])
+  end
+  evaluate([[
+    require('config.syntax.markdown.preview').toggle()
+    assert(vim.wo.colorcolumn == '80,160', 'Returning to source lost column guides')
+  ]])
+  vim.rpcrequest(child, 'nvim_ui_try_resize', 120, 36)
   -- Several independently completing diagrams repeatedly move Markdown parse
   -- regions. Keep exercising actual input while those replacements arrive.
   evaluate([[

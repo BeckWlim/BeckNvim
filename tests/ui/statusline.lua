@@ -23,6 +23,14 @@ package.loaded['config.ui.statusline'] = nil
 local statusline = require('config.ui.statusline')
 statusline.setup()
 assert(lualine_options, 'statusline did not configure lualine')
+local theme = lualine_options.options.theme()
+local statusline_colors = require('config.ui.palette').resolve().statusline
+assert(theme.normal.c.bg == string.format('#%06x', statusline_colors.background),
+  'Statusline does not use its shared subtle background')
+assert(theme.inactive.c.bg == string.format('#%06x', statusline_colors.inactive_background),
+  'Inactive statusline lost its weaker contrast')
+assert(theme.normal.a.bg == theme.normal.c.bg, 'Mode section introduces a stronger background block')
+assert(theme.normal.c.fg:match('^#%x%x%x%x%x%x$'), 'Lualine requires RGB strings, not terminal color indices')
 local project_component = lualine_options.sections.lualine_c[1]
 assert(type(project_component[1]) == 'function', 'project statusline component is not dynamic')
 assert(statusline.project_icons.git == '', 'generic Git project icon is not repository-shaped')

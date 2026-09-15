@@ -3,9 +3,12 @@ local M = {}
 local scope_namespace = vim.api.nvim_create_namespace('current_syntax_scope')
 local scope_ranges_by_buffer = {}
 local pending_refreshes = {}
+local refresh_generations = {}
+local parsed_changedticks = {}
 local max_scope_file_size_bytes = 1024 * 1024
 local max_scope_line_count = 5000
 M.maximum_highlighted_scope_lines = 120
+M.maximum_highlighted_scope_ratio = 0.5
 
 local rainbow_highlight_groups = {
   'RainbowDelimiterBase',
@@ -17,8 +20,6 @@ local rainbow_highlight_groups = {
   'RainbowDelimiterViolet',
   'RainbowDelimiterCyan',
 }
-
-local current_scope_background = '#2B2C26'
 
 function M.should_highlight_scope(buffer_number)
   return not vim.startswith(vim.api.nvim_buf_get_name(buffer_number), 'diffview://')
@@ -100,13 +101,8 @@ local function buffer_is_small_enough(buffer_number)
     return false
   end
 
-  local buffer_name = vim.api.nvim_buf_get_name(buffer_number)
-  if buffer_name == '' then
-    return true
-  end
-
-  local file_statistics = vim.uv.fs_stat(buffer_name)
-  return not file_statistics or file_statistics.size <= max_scope_file_size_bytes
+  return vim.api.nvim_buf_get_offset(buffer_number, vim.api.nvim_buf_line_count(buffer_number))
+    <= max_scope_file_size_bytes
 end
 
 local function buffer_content_range(buffer_number)
@@ -206,7 +202,8 @@ local function highlight_current_scope(buffer_number)
     return
   end
 
-  if not M.should_highlight_scope(buffer_number) then
+  if not M.should_highlight_scope(buffer_number)
+      or parsed_changedticks[buffer_number] ~= vim.api.nvim_buf_get_changedtick(buffer_number) then
     vim.api.nvim_buf_clear_namespace(buffer_number, scope_namespace, 0, -1)
     return
   end
@@ -249,7 +246,7 @@ local function highlight_current_scope(buffer_number)
   end
 end
 
-local function refresh_scope_ranges(buffer_number)
+local function refresh_scope_ranges(buffer_number, generation)
   scope_ranges_by_buffer[buffer_number] = {}
   if not vim.api.nvim_buf_is_valid(buffer_number) then
     return
@@ -265,16 +262,27 @@ local function refresh_scope_ranges(buffer_number)
     return
   end
 
-  local parse_succeeded = pcall(function()
-    parser:parse()
+  local changedtick = vim.api.nvim_buf_get_changedtick(buffer_number)
+  pcall(function()
+    parser:parse(nil, function(parse_error)
+      vim.schedule(function()
+        if parse_error or refresh_generations[buffer_number] ~= generation
+            or not vim.api.nvim_buf_is_loaded(buffer_number)
+            or vim.api.nvim_buf_get_changedtick(buffer_number) ~= changedtick then
+          return
+        end
+        scope_ranges_by_buffer[buffer_number] = collect_scope_ranges(buffer_number, parser)
+        parsed_changedticks[buffer_number] = changedtick
+        highlight_current_scope(buffer_number)
+      end)
+    end)
   end)
-  if parse_succeeded then
-    scope_ranges_by_buffer[buffer_number] = collect_scope_ranges(buffer_number, parser)
-  end
-  highlight_current_scope(buffer_number)
 end
 
 local function schedule_scope_refresh(buffer_number)
+  refresh_generations[buffer_number] = {}
+  parsed_changedticks[buffer_number] = nil
+  highlight_current_scope(buffer_number)
   if pending_refreshes[buffer_number] then
     return
   end
@@ -282,26 +290,32 @@ local function schedule_scope_refresh(buffer_number)
   pending_refreshes[buffer_number] = true
   vim.defer_fn(function()
     pending_refreshes[buffer_number] = nil
-    refresh_scope_ranges(buffer_number)
+    local generation = refresh_generations[buffer_number]
+    if generation then refresh_scope_ranges(buffer_number, generation) end
   end, 80)
 end
 
 function M.rainbow_config()
   return {
     highlight = vim.deepcopy(rainbow_highlight_groups),
+    -- Rainbow's whole-tree query is synchronous; keep large files on native
+    -- Tree-sitter's asynchronous viewport highlighter.
+    condition = buffer_is_small_enough,
   }
 end
 
 function M.current_scope_color()
-  return current_scope_background
+  return vim.api.nvim_get_hl(0, { name = 'CurrentCodeScope', link = false }).bg
 end
 
-function M.scope_is_highlightable(scope_range)
+function M.scope_is_highlightable(scope_range, window_height)
   local scope_line_count = scope_range.end_row - scope_range.start_row
   if scope_range.end_column > 0 then
     scope_line_count = scope_line_count + 1
   end
+  local view_height = window_height or vim.api.nvim_win_get_height(0)
   return scope_line_count <= M.maximum_highlighted_scope_lines
+    and scope_line_count <= math.floor(view_height * M.maximum_highlighted_scope_ratio)
 end
 
 function M.scope_segments(scope_range, cursor_row)
@@ -389,11 +403,19 @@ function M.setup_scopes()
       highlight_current_scope(event.buf)
     end,
   })
+  vim.api.nvim_create_autocmd({ 'WinEnter', 'WinResized' }, {
+    group = group,
+    callback = function()
+      highlight_current_scope(vim.api.nvim_get_current_buf())
+    end,
+  })
   vim.api.nvim_create_autocmd('BufDelete', {
     group = group,
     callback = function(event)
       scope_ranges_by_buffer[event.buf] = nil
       pending_refreshes[event.buf] = nil
+      refresh_generations[event.buf] = nil
+      parsed_changedticks[event.buf] = nil
     end,
   })
   schedule_scope_refresh(vim.api.nvim_get_current_buf())

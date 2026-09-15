@@ -6,6 +6,76 @@ local preview_focused_preview_width = 0.65
 local results_focused_preview_height = 0.36
 local preview_focused_preview_height = 0.58
 
+local function unlock_preview(buffer)
+  if vim.api.nvim_buf_is_valid(buffer) and vim.b[buffer].telescope_preview_modifiable ~= nil then
+    vim.bo[buffer].modifiable = vim.b[buffer].telescope_preview_modifiable
+    vim.b[buffer].telescope_preview_modifiable = nil
+  end
+end
+
+local function bind_pane(buffer, prompt_buffer, picker, is_preview)
+  if not buffer or not vim.api.nvim_buf_is_valid(buffer) then return end
+  local function close_picker()
+    if picker.ctrl_q_action then picker.ctrl_q_action()
+    else require('telescope.actions').close(prompt_buffer) end
+  end
+  vim.keymap.set({ 'n', 'i', 'x', 's', 'o', 't' }, '<C-q>', close_picker,
+    { buffer = buffer, silent = true, nowait = true, desc = 'Close Telescope' })
+  vim.keymap.set('c', '<C-q>', function()
+    vim.schedule(function()
+      if require('telescope.state').get_status(prompt_buffer).picker == picker then close_picker() end
+    end)
+    return '<C-c>'
+  end, { buffer = buffer, expr = true, desc = 'Close Telescope' })
+  vim.keymap.set('n', 'q', '<Nop>', { buffer = buffer, silent = true })
+  for _, key in ipairs({ '<Esc>', 'ZZ', 'ZQ' }) do
+    vim.keymap.set('n', key, '<Nop>', { buffer = buffer, silent = true })
+  end
+  vim.keymap.set('i', '<C-c>', '<Nop>', { buffer = buffer, silent = true })
+  if not vim.b[buffer].telescope_quit_guard then
+    vim.b[buffer].telescope_quit_guard = true
+    vim.api.nvim_create_autocmd('QuitPre', {
+      buffer = buffer,
+      command = 'throw "Use Ctrl-Q to close the whole Telescope picker"',
+    })
+  end
+  if is_preview then
+    -- These scratch buffers belong to an asynchronous renderer. 'readonly'
+    -- warns on its next write (including moving the result selection).
+    for _, key in ipairs({ 'i', 'I', 'a', 'A', 'o', 'O', 'R', 'gR', 'gi', 'gI' }) do
+      vim.keymap.set('n', key, '<Nop>', { buffer = buffer, silent = true })
+    end
+    if not vim.b[buffer].telescope_preview_guard then
+      vim.b[buffer].telescope_preview_guard = true
+      vim.api.nvim_create_autocmd('InsertEnter', {
+        buffer = buffer,
+        callback = function()
+          vim.schedule(function()
+            if vim.api.nvim_get_current_buf() == buffer then vim.cmd('stopinsert') end
+          end)
+        end,
+      })
+      vim.api.nvim_create_autocmd('WinLeave', {
+        buffer = buffer, callback = function() unlock_preview(buffer) end,
+      })
+    end
+  end
+end
+
+local function bind_open_pickers()
+  local state = require('telescope.state')
+  for _, prompt_buffer in ipairs(state.get_existing_prompt_bufnrs()) do
+    local picker = state.get_status(prompt_buffer).picker
+    if picker then
+      bind_pane(prompt_buffer, prompt_buffer, picker, false)
+      bind_pane(picker.results_bufnr, prompt_buffer, picker, true)
+      local previewer = picker.previewer
+      local preview_buffer = previewer and previewer.state and previewer.state.bufnr
+      bind_pane(preview_buffer, prompt_buffer, picker, true)
+    end
+  end
+end
+
 local function set_current_window_without_autocommands(window)
   vim.cmd(('noautocmd call nvim_set_current_win(%d)'):format(window))
 end
@@ -50,6 +120,11 @@ function M.focus_preview(prompt_buffer)
     return
   end
   local preview_buffer = vim.api.nvim_win_get_buf(focused_preview_window)
+  bind_pane(preview_buffer, prompt_buffer, picker, true)
+  if vim.b[preview_buffer].telescope_preview_modifiable == nil then
+    vim.b[preview_buffer].telescope_preview_modifiable = vim.bo[preview_buffer].modifiable
+  end
+  vim.bo[preview_buffer].modifiable = false
   vim.wo[focused_preview_window].cursorline = true
   vim.wo[focused_preview_window].cursorlineopt = 'line'
   vim.keymap.set('n', '<Tab>', function()
@@ -57,6 +132,7 @@ function M.focus_preview(prompt_buffer)
     if not active_prompt_window or not vim.api.nvim_win_is_valid(active_prompt_window) then
       return
     end
+    unlock_preview(preview_buffer)
     resize_for_focus(picker, false)
     local resized_prompt_window = picker.prompt_win
     if not resized_prompt_window or not vim.api.nvim_win_is_valid(resized_prompt_window) then
@@ -72,9 +148,6 @@ function M.focus_preview(prompt_buffer)
     silent = true,
     desc = 'Return to Telescope results',
   })
-  local function close_picker()
-    require('telescope.actions').close(prompt_buffer)
-  end
   vim.keymap.set('n', '<CR>', function()
     if picker.preview_enter_action then
       picker.preview_enter_action(prompt_buffer)
@@ -86,19 +159,6 @@ function M.focus_preview(prompt_buffer)
     silent = true,
     desc = 'Jump to selected Telescope result',
   })
-  float.bind_close({
-    buffer = preview_buffer,
-    close = close_picker,
-    description = 'Close Telescope',
-  })
-  if picker.close_preview_with_ctrl_q then
-    vim.keymap.set('n', float.input_close_key, picker.ctrl_q_action or close_picker, {
-      buffer = preview_buffer,
-      nowait = true,
-      silent = true,
-      desc = 'Close Telescope',
-    })
-  end
 
   -- Telescope normally closes when its prompt loses focus. Suppressing these
   -- two focus-transition events keeps the picker alive while inspecting its
@@ -107,11 +167,93 @@ function M.focus_preview(prompt_buffer)
   vim.cmd('stopinsert')
 end
 
+-- File-backed project themes reuse Telescope's layout, preview buffer, focus
+-- transitions, and close actions. The theme owner controls commit and rollback.
+function M.theme_picker(options)
+  local actions = require('telescope.actions')
+  local action_state = require('telescope.actions.state')
+  local source_buffer = vim.api.nvim_get_current_buf()
+  local source_lines = vim.api.nvim_buf_get_lines(source_buffer, 0, -1, false)
+  local source_filetype = vim.bo[source_buffer].filetype
+  local closed = false
+  local function close_session()
+    if closed then return end
+    closed = true
+    options.close()
+  end
+  local previewer = require('telescope.previewers').new_buffer_previewer({
+    title = 'Theme preview',
+    define_preview = function(self, entry)
+      if closed then return end
+      local failure = options.preview(entry.value)
+      local lines = failure and { 'Theme unavailable', '', failure } or source_lines
+      local was_modifiable = vim.bo[self.state.bufnr].modifiable
+      vim.bo[self.state.bufnr].modifiable = true
+      vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+      vim.bo[self.state.bufnr].modifiable = was_modifiable
+      if not failure then
+        require('telescope.previewers.utils').highlighter(self.state.bufnr, source_filetype)
+      end
+    end,
+    teardown = close_session,
+  })
+  require('telescope.pickers').new({}, {
+    prompt_title = 'Theme',
+    finder = require('telescope.finders').new_table({ results = options.names }),
+    sorter = require('telescope.config').values.generic_sorter({}),
+    previewer = previewer,
+    attach_mappings = function(prompt_buffer, map)
+      local picker = action_state.get_current_picker(prompt_buffer)
+      local function confirm()
+        local entry = action_state.get_selected_entry()
+        if entry and options.confirm(entry.value) then actions.close(prompt_buffer) end
+      end
+      actions.select_default:replace(confirm)
+      local function cancel() actions.close(prompt_buffer) end
+      map('i', '<C-q>', cancel)
+      map('n', '<C-q>', cancel)
+      picker.close_preview_with_ctrl_q = true
+      picker.preview_enter_action = confirm
+      vim.api.nvim_create_autocmd('BufWipeout', {
+        buffer = prompt_buffer, once = true, callback = close_session,
+      })
+      return true
+    end,
+  }):find()
+end
+
 function M.setup()
   local telescope = require('telescope')
   local actions = require('telescope.actions')
   local workspace_symbols = require('config.search.workspace_symbols')
   local contextual_previewer = require('config.search.grep_preview').new
+  local pane_group = vim.api.nvim_create_augroup('telescope_pane_policy', { clear = true })
+  vim.api.nvim_create_autocmd('User', {
+    group = pane_group,
+    pattern = { 'TelescopeFindPre', 'TelescopePreviewerLoaded' },
+    callback = function() vim.schedule(bind_open_pickers) end,
+  })
+  vim.api.nvim_create_autocmd('WinClosed', {
+    group = pane_group,
+    callback = function(event)
+      local closed_window = tonumber(event.match)
+      local state = package.loaded['telescope.state']
+      if not state then return end
+      for _, prompt_buffer in ipairs(state.get_existing_prompt_bufnrs()) do
+        local picker = state.get_status(prompt_buffer).picker
+        local previewer = picker and picker.previewer
+        local preview_window = previewer and previewer.state and previewer.state.winid
+        if picker and (closed_window == picker.prompt_win or closed_window == picker.results_win
+            or closed_window == preview_window) then
+          vim.schedule(function()
+            if state.get_status(prompt_buffer).picker == picker then
+              require('telescope.actions').close(prompt_buffer)
+            end
+          end)
+        end
+      end
+    end,
+  })
   telescope.setup({
     defaults = {
       grep_previewer = contextual_previewer,
@@ -138,11 +280,13 @@ function M.setup()
       mappings = {
         i = {
           [float.input_close_key] = actions.close,
+          ['<C-c>'] = false,
           ['<Tab>'] = M.focus_preview,
         },
         n = {
-          [float.input_close_key] = false,
-          [float.normal_close_key] = actions.close,
+          [float.input_close_key] = actions.close,
+          [float.normal_close_key] = false,
+          ['<Esc>'] = false,
           ['<Tab>'] = M.focus_preview,
         },
       },

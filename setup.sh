@@ -13,7 +13,6 @@ readonly BECKNVIM_MINIMUM_NVIM_VERSION='0.12.0'
 readonly BECKNVIM_NVIM_VERSION='0.12.2'
 readonly BECKNVIM_MINIMUM_TREE_SITTER_VERSION='0.26.1'
 readonly BECKNVIM_TREE_SITTER_VERSION='0.26.11'
-readonly BECKNVIM_TERMAID_REPOSITORY='https://github.com/BeckWlim/termaid.git'
 
 BECKNVIM_MODE='install'
 BECKNVIM_INSTALL_SYSTEM=1
@@ -33,9 +32,6 @@ Options:
   --skip-system     Do not install operating-system packages
   --skip-clipboard  Do not install X11 or Wayland clipboard providers
   -h, --help        Show this help
-
-Environment:
-  BECKNVIM_TERMAID_REF  Git branch, tag, or commit to install (default: main)
 EOF
 }
 
@@ -556,31 +552,6 @@ ensure_tree_sitter() {
   hash -r
 }
 
-ensure_termaid() {
-  local ref="${BECKNVIM_TERMAID_REF:-main}"
-  [[ "${ref}" =~ ^[A-Za-z0-9._/-]+$ ]] \
-    || die 'BECKNVIM_TERMAID_REF contains unsupported characters'
-  if [[ -z "${BECKNVIM_TERMAID_REF:-}" ]] && termaid_compatible; then
-    log "Termaid already supports the renderer: $(command -v termaid)"
-    return
-  fi
-  ensure_uv
-  local install_source="git+${BECKNVIM_TERMAID_REPOSITORY}@${ref}"
-  local python_executable
-  python_executable="$(python3 -c 'import sys; print(sys.executable)')"
-  local -a install_options=(--force --verbose --python "${python_executable}" --no-python-downloads)
-  if [[ -n "${BECKNVIM_TERMAID_REF:-}" ]]; then
-    install_options+=(--refresh)
-  fi
-  log "Installing Termaid from BeckWlim/termaid@${ref}"
-  log 'uv will report Git fetch, dependency resolution, and build progress below'
-  UV_TOOL_BIN_DIR="${BECKNVIM_USER_BIN}" \
-    GIT_HTTP_LOW_SPEED_LIMIT="${GIT_HTTP_LOW_SPEED_LIMIT:-1}" \
-    GIT_HTTP_LOW_SPEED_TIME="${GIT_HTTP_LOW_SPEED_TIME:-60}" \
-    uv tool install "${install_options[@]}" "${install_source}"
-  hash -r
-}
-
 check_command() {
   local command_name="$1"
   local feature="$2"
@@ -601,30 +572,6 @@ check_version() {
     log "${name} ${current} satisfies >= ${required}"
   else
     warn "${name} ${current:-unknown} is older than ${required} (${feature})"
-    BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
-  fi
-}
-
-termaid_compatible() {
-  local help_output
-  help_output="$(termaid --help 2>/dev/null)" || return 1
-  [[ "${help_output}" == *'styled-json'* \
-    && "${help_output}" == *'--strict-width'* \
-    && "${help_output}" == *'--fit-mode'* \
-    && "${help_output}" == *'--max-height'* ]]
-}
-
-check_termaid_contract() {
-  if ! command -v termaid >/dev/null 2>&1; then
-    warn 'missing termaid (semantic Mermaid rendering)'
-    BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
-    return
-  fi
-
-  if termaid_compatible; then
-    log "Termaid supports the BeckNvim renderer contract: $(command -v termaid)"
-  else
-    warn 'termaid does not support styled-json and strict reflow rendering'
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
   fi
 }
@@ -698,7 +645,7 @@ run_checks() {
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
   fi
 
-  check_termaid_contract
+  check_command 'uv' 'lazy.nvim Termaid builds'
   check_clipboard
 
   if [[ ${BECKNVIM_FAILURES} -gt 0 ]]; then
@@ -727,7 +674,7 @@ main() {
   ensure_python
   ensure_neovim
   ensure_tree_sitter
-  ensure_termaid
+  ensure_uv
   run_checks
 
   if [[ ":${BECKNVIM_ORIGINAL_PATH}:" != *":${BECKNVIM_USER_BIN}:"* ]]; then

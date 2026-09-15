@@ -19,6 +19,7 @@ function M.setup()
   vim.api.nvim_create_autocmd('QuitPre', {
     group = tree_group,
     callback = function()
+      if vim.b.telescope_quit_guard then return end
       if vim.fn.exists(':NvimTreeClose') == 2 then
         vim.cmd.NvimTreeClose()
       end

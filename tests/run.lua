@@ -45,6 +45,7 @@ for _, test_file in ipairs({
   'tests/ui/statusline.lua',
   'tests/ui/terminal.lua',
   'tests/ui/window_state.lua',
+  'tests/ui/theme.lua',
 }) do
   local test_chunk, load_error = loadfile(test_file)
   assert(test_chunk, load_error)

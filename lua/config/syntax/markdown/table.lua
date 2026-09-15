@@ -518,8 +518,13 @@ local function render_table(parsed_table, width)
       source_row = source_row,
     }
   end
+  local title_chunks = { { indentation .. '󰈙 ', table_highlights.icon }, { 'table', table_highlights.label } }
+  local title_padding = parsed_table.start_column + total_width - markdown_features.chunks_width(title_chunks)
+  if title_padding > 0 then
+    title_chunks[#title_chunks + 1] = { string.rep(' ', title_padding), table_highlights.label }
+  end
   rows[#rows + 1] = {
-    chunks = { { indentation .. '󰈙 ', table_highlights.icon }, { 'table', table_highlights.label } },
+    chunks = title_chunks,
     source_row = parsed_table.start_row,
   }
   for row_index, row in ipairs(parsed_table.rows) do

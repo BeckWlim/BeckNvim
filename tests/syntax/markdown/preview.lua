@@ -4,7 +4,7 @@ local features = require('config.syntax.markdown_features')
 local original_buffer = vim.api.nvim_get_current_buf()
 local original_options = {
   number = vim.wo.number, winbar = vim.wo.winbar, wrap = vim.wo.wrap,
-  relativenumber = vim.wo.relativenumber,
+  relativenumber = vim.wo.relativenumber, colorcolumn = vim.wo.colorcolumn,
   conceallevel = vim.wo.conceallevel, concealcursor = vim.wo.concealcursor,
 }
 local source = vim.api.nvim_create_buf(true, false)
@@ -23,6 +23,7 @@ vim.wo[window].wrap = true
 vim.wo[window].number = true
 vim.wo[window].relativenumber = true
 vim.wo[window].winbar = 'source window'
+vim.wo[window].colorcolumn = '80,160'
 local source_tick = vim.api.nvim_buf_get_changedtick(source)
 preview.setup()
 vim.bo[source].filetype = 'markdown'
@@ -30,6 +31,7 @@ assert(vim.wait(200, function() return vim.api.nvim_get_current_buf() ~= source 
   'Markdown did not open rendered by default')
 local preview_buffer = vim.api.nvim_get_current_buf()
 assert(vim.wo[window].winbar == '', 'Preview retained the shortcut banner')
+assert(vim.wo[window].colorcolumn == '', 'Rendered Markdown retained editing column guides')
 assert(vim.wo[window].number and vim.wo[window].relativenumber,
   'Preview hid the editor line-number settings')
 assert(vim.api.nvim_get_current_win() == window and #vim.api.nvim_list_wins() == window_count
@@ -89,6 +91,7 @@ vim.api.nvim_exec_autocmds('BufWinEnter', { buffer = source })
 vim.wait(50)
 assert(vim.api.nvim_get_current_buf() == source, 'Automatic preview overrode the explicit source selection')
 assert(not vim.api.nvim_buf_is_valid(preview_buffer), 'Source toggle retained the old preview buffer')
+assert(vim.wo[window].colorcolumn == '80,160', 'Source toggle lost its editing column guides')
 preview.toggle()
 vim.api.nvim_win_set_cursor(window, { target_row, target_column })
 vim.api.nvim_feedkeys(vim.keycode('iEDIT<Esc>'), 'xt', false)

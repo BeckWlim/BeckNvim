@@ -57,9 +57,11 @@ telescope_config.setup()
 assert(telescope_options, 'Telescope was not configured')
 local mappings = telescope_options.defaults.mappings
 assert(mappings.i['<C-q>'] == close_action, 'insert-mode <C-q> did not close Telescope')
-assert(mappings.n['<C-q>'] == false, 'normal-mode <C-q> retained a Telescope action')
+assert(mappings.n['<C-q>'] == close_action, 'normal-mode <C-q> did not close Telescope')
 assert(mappings.i.q == nil, 'insert-mode q was consumed by Telescope')
-assert(mappings.n.q == close_action, 'normal-mode q did not close Telescope')
+assert(mappings.n.q == false, 'normal-mode q still closes Telescope')
+assert(mappings.n['<Esc>'] == false and mappings.i['<C-c>'] == false,
+  'Alternate close shortcuts remain enabled')
 assert(
   mappings.i['<Tab>'] == telescope_config.focus_preview,
   'insert-mode Tab retained Telescope result selection'
@@ -112,13 +114,17 @@ local preview_close_mapping = vim.iter(vim.api.nvim_buf_get_keymap(preview_buffe
     return keymap.lhs == 'q'
   end
 )
-assert(preview_close_mapping and preview_close_mapping.callback, 'grep preview lost its close mapping')
+assert(preview_close_mapping and preview_close_mapping.rhs == '', 'grep preview still closes with q')
 local preview_ctrl_q_mapping = vim.iter(vim.api.nvim_buf_get_keymap(preview_buffer, 'n')):find(
   function(keymap)
     return keymap.lhs == '<C-Q>'
   end
 )
-assert(not preview_ctrl_q_mapping, 'focused grep preview captured the Visual Block key')
+assert(preview_ctrl_q_mapping and preview_ctrl_q_mapping.callback, 'focused grep preview lost Ctrl-Q')
+assert(not vim.bo[preview_buffer].modifiable and not vim.bo[preview_buffer].readonly,
+  'Focused preview is editable')
+local quit_ok = pcall(vim.cmd, 'q')
+assert(not quit_ok and vim.api.nvim_win_is_valid(preview_window), ':q closed an individual preview pane')
 local preview_enter_mapping = vim.iter(vim.api.nvim_buf_get_keymap(preview_buffer, 'n')):find(
   function(keymap)
     return keymap.lhs == '<CR>'
@@ -132,6 +138,7 @@ assert(
 )
 preview_tab_mapping.callback()
 assert(vim.api.nvim_get_current_win() == prompt_window, 'preview Tab did not return to results')
+assert(vim.bo[preview_buffer].modifiable, 'Returning to results did not unlock native preview rendering')
 assert(
   current_picker.layout_config.horizontal.preview_width == 0.55,
   'results and preview did not restore their balanced widths'

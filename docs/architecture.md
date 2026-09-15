@@ -10,7 +10,7 @@ lua/
 │   ├── project.lua               Project-root authority and path containment
 │   ├── startup/                  options.lua, autocmds.lua, lazy.lua, keybindings.lua
 │   ├── ui/                       window_state.lua, float.lua, folder_picker.lua, dashboard.lua,
-│   │                             statusline.lua, filetree.lua, terminal.lua
+│   │                             statusline.lua, filetree.lua, terminal.lua, theme.lua, palette.lua
 │   ├── search/                   telescope.lua, query_picker.lua, workspace_symbols.lua,
 │   │                             lsp_locations.lua, grep_preview.lua, navigation.lua
 │   ├── git/                      init.lua (workflow), diffview.lua (history UI), github.lua and
@@ -36,6 +36,8 @@ lua/
 | `config/startup/` | Editor options, global autocmds, lazy.nvim bootstrap, and the single keymap assembly |
 | `config/ui/window_state.lua` | Registered special-surface state gate for resolving editor-facing window options across UI transitions |
 | `config/ui/statusline.lua` | Explicit project identity and project-relative current-file state |
+| `config/ui/theme.lua` | Theme selection, Telescope preview/rollback, and bounded asynchronous preference persistence |
+| `config/ui/palette.lua` | Shared semantic palette resolved from the selected colorscheme, light/dark fallbacks, contrast, and background tints |
 | `config/ui/dashboard.lua` | Bounded project drawer, project-relative MRU state, and dashboard actions |
 | `config/ui/folder_picker.lua` | Reusable Telescope directory browsing, path input, completion, and adaptive sizing |
 | `config/ui/filetree.lua` | Nvim-tree mappings, authoritative root synchronization, window-switching Tab preservation, and project-boundary confirmation |
@@ -79,6 +81,54 @@ lua/
 | `config/audit/diagnostic.lua` | Diagnostic-cache inspection and project reporting |
 | `plugins/*.lua` | Plugin specifications, dependencies, conditions, and lightweight setup calls |
 
+## Project Theme System
+
+The current code-scope background is shown only when its complete source range occupies at most
+50% of the active window's height and at most 120 lines. Cursor movement, window focus, and resizing
+re-evaluate this limit, clearing the background when the scope becomes too large for the view.
+`config.syntax.visuals` owns this visibility policy; the theme supplies its color.
+Scope refresh uses Tree-sitter's asynchronous parse callback and caches ranges by buffer changedtick.
+Cursor movement uses only ready syntax; edits and buffer deletion invalidate pending completions.
+Scope and rainbow whole-tree queries are skipped above 5,000 lines or 1 MiB, measured from the
+loaded buffer. Native syntax highlighting remains enabled and uses Neovim's asynchronous parser.
+Highlight attachment is deferred and coalesced per buffer; unloading cancels a pending attachment.
+
+`config.ui.theme` is initialized by startup assembly after plugin registration, independently of
+Monokai's plugin declaration. `:Theme` uses the theme picker in `config.search.telescope`; the theme owner handles preview
+rollback and its confirmation action saves the final choice. Native `:colorscheme` changes remain
+transient. The theme picker preserves the previous background setting when cancelled.
+
+`config.ui.palette` derives one semantic schema from the active theme's `Normal`, syntax, diagnostic,
+and Git groups. Missing values have separate dark/light fallbacks. Text and selected rows are checked
+for contrast; ordinary surfaces share the editor base, and pinned context is a subtle grey tint of
+the editor background, with a weaker filter for light themes. Telescope's pane backgrounds
+and margin cells share this editor base color; border glyphs use the shared neutral edge color
+with at least 3:1 contrast. Titles and selection retain their
+own emphasis. Inactive editor windows use the same background so the picker has no contrasting
+rectangular backing. `config.syntax.highlights` remains the sole owner of project highlight
+application and optional base-palette application. It reapplies groups on `ColorScheme` and coalesces
+refreshes after lazy plugin loads. Renderers retain their named highlights, buffers, and cached data;
+changing colors does not rerun Mermaid jobs or rebuild panels. The native `StatusLine` and
+`StatusLineNC` groups use a subtle neutral filter over the editor background, with a weaker
+inactive variant. Lualine consumes these same palette roles through its public theme callback;
+all sections share the footer surface and the mode label uses bold text. ToggleTerm background
+shading is disabled.
+
+Saved name/background pairs are read asynchronously with a 4 KiB bound. A generation counter prevents
+a late startup read from overriding a newer explicit selection or preview. Confirmed choices are
+written in order through temporary files and atomic renames, coalescing queued selections. Shutdown
+allows up to 500 ms for pending writes to finish. Invalid saved choices leave the default usable.
+
+`themes/default/*.lua` contains bundled preset tables; `themes/*.lua` contains personal presets
+and takes precedence for matching names. The picker lists these files and the current selection;
+it does not expand installed plugins into every native variant. The loader validates each preset's native colorscheme and
+optional light/dark variant, then uses the existing colorscheme path. An optional eight-color palette
+is applied through the highlight owner. Personal preset files are ignored by Git; bundled files and
+plugin pins remain tracked. See [Themes](../themes/README.md) for presets, file creation, and overrides.
+Custom Tree-sitter query extensions live in `lua/config/syntax/after/queries/`. The lazy.nvim
+bootstrap registers `lua/config/syntax/after` as an additional runtime path, preserving standard
+query discovery and `; extends` behavior. The Markdown query adds the table highlight capture.
+
 ## Asynchronous I/O Policy
 
 Interactive workflows must keep child-process, filesystem, LSP, and network waits off Neovim's
@@ -113,9 +163,16 @@ Editable floats opt into
 `q` closes and `<C-q>` remains unbound for Visual Block. Read-only floats receive only normal-mode
 `q`. Window layout, rendering, and feature-specific actions remain in their owning modules.
 
-The translator, Telescope prompts and focused previews, LSP detail windows, and the project-audit
-float all consume this definition directly. Telescope explicitly disables its built-in normal-mode
-`<C-q>` quickfix action so it cannot violate the shared policy.
+The translator, LSP detail windows, and the project-audit float consume this definition directly.
+Telescope's combined panes use a separate policy in `config.search.telescope`: `<C-q>` closes the
+owning picker in every mode, including Visual and command-line mode. `q`, normal-mode Escape, and
+insert-mode Ctrl-C do not dismiss it; `:q` is rejected before a pane can close. A pane unexpectedly
+closing retires the remaining picker through Telescope's native teardown. Focused source previews
+are read-only and reject Insert/Replace mode; Tab unlocks native preview updates and returns to the
+prompt. Git pickers retain their existing layer-pop action.
+Renderer-owned scratch buffers do not set `readonly`, which would raise W10 on native result and
+preview updates. Grep/definition preview text and cursor placement precede asynchronous structural
+context; the winbar accepts a completion only for the current selection, buffer revision, and window.
 
 ## Markdown Rendering
 
@@ -125,7 +182,9 @@ lines beneath replacement overlays. Markdown files open rendered by default in t
 The `<Space>mp` command switches that pane between a read-only rendered buffer and its editable
 source, without creating or closing windows. Explicitly choosing source keeps it visible until the
 next toggle. Headings, lists, links, tables, and diagrams share the rendered state, including the row
-under the cursor. Source mode exposes Markdown punctuation throughout the document. The prose
+under the cursor. Rendered Markdown hides editing column guides and restores the source's
+`colorcolumn` setting on return, so no guide appears beside a code block.
+Source mode exposes Markdown punctuation throughout the document. The prose
 renderer uses its supported `ignore` callback to skip editable files while retaining presentation in
 read-only Markdown detail panels. Each contiguous run of copied prose becomes a separate Tree-sitter
 parse region in the preview, so generated table cells and diagram labels cannot be reinterpreted as
@@ -190,6 +249,17 @@ table character therefore returns to its original cell rather than to a guessed 
 
 ## Markdown Mermaid Feature
 
+`plugins/termaid.lua` declares `BeckWlim/termaid` on `main`. lazy.nvim installs the revision in
+`lazy-lock.json`; `:Lazy update termaid` advances it to the latest branch commit and rebuilds it.
+It is a dependency of `render-markdown.nvim`, so lazy.nvim marks it loaded when Markdown rendering
+loads. Before that, the Lazy UI can show it under Not Loaded even though its CLI is already built.
+The asynchronous shell build uses `uv` to create a private `.venv` inside the checkout and install
+that local source. `setup.sh` supplies Python and `uv`; it does not install or validate Termaid itself.
+Use `:Lazy build termaid` to retry a failed build. Restart Neovim after updating to refresh rendered
+diagrams. The renderer resolves the executable from lazy.nvim's configured plugin directory, so a
+separate Termaid on `PATH` cannot override the locked revision. An explicit
+`require('config.syntax.mermaid').command` path or alternate command name still overrides this default.
+
 `config.syntax.mermaid` owns fence discovery, bounded Termaid jobs, output validation, and semantic
 color mapping. It emits the same replacement-row contract as tables. The preview label maps to the
 opening fence; diagram rows map proportionally to source content rows because Termaid's output does
@@ -225,12 +295,16 @@ Sibling edge labels may share a row when their text fits without collision. Sequ
 boxes share the header row height, with capped width matching; fitted scope headings wrap to the
 measured frame interior instead of the participant-label limit.
 Neovim validates returned display widths and maps styles through `config.syntax.highlights`.
-Mermaid accents derive from the active theme's syntax colors, mixed with neutral grey to reduce
+Mermaid accents derive from the shared theme palette's syntax colors, mixed with secondary text to reduce
 saturation. Connections share one accent hue, with quieter lines and brighter, bold arrowheads
 (muted cyan in the default theme). Connection and node labels share the editor foreground
 (grey-white by default), separating readable text from routing lines. Node borders use a subdued
-String accent. Scope borders use dark grey and scope headings use plain grey hint text, including sequence
-`par`, `opt`, and branch headings. All roles share the existing code-block background. Theme reloads
+String accent. Scope borders and headings use the palette's border and secondary text roles, including sequence
+`par`, `opt`, and branch headings. Mermaid diagrams use the table background across a solid rectangle:
+the title, short rows, and empty rows are padded to a shared width using display-cell widths.
+Table headers likewise include their icon and label in the full-width fill. Each feature's icon
+and label share a distinct semantic accent: Function for tables and Number for Mermaid, adjusted
+for contrast without grey blending. This matches the filled headers of fenced code blocks. Theme reloads
 recalculate accents; explicit bold and italic labels retain their formatting. Older
 executables that reject styled output, and malformed styled responses, receive one bounded plain
 fallback. Missing executables, failed renders, and oversized diagrams leave their original fences
@@ -376,7 +450,7 @@ the panel contents, selected commit, and configured restored height.
 and `<C-q>` closes that detail before the history layer.
 Diffview revision buffers opt out of the editor-wide current-scope extmarks but retain the editor's
 real pinned Tree-sitter context inside the focused code pane. The pinned source lines use a shared
-restrained light-green declaration background with a distinct brighter-green lower boundary. The
+restrained grey declaration background with a contrasting grey lower boundary. The
 remaining code render is reduced to syntax
 foregrounds, one ordinary cursor-line background, and Diffview's add/change/delete backgrounds.
 Each root Git view resolves the current window through `config.ui.window_state` and captures the

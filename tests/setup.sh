@@ -7,12 +7,11 @@ readonly SETUP_TEST_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 # Load declarations only; never run the installer, sudo, or network operations.
 for function_name in dependency_available system_package_manager install_package_batch \
   install_system_packages version_at_least tree_sitter_version ensure_tree_sitter \
-  termaid_compatible ensure_termaid node_version node_compatible ensure_node python_compatible \
+  ensure_uv check_command node_version node_compatible ensure_node python_compatible \
   ensure_python ensure_pyenv system_package_installed install_python_build_packages; do
   source <(sed -n "/^${function_name}() {$/,/^}$/p" "${SETUP_TEST_ROOT}/setup.sh")
 done
 source <(sed -n '/^readonly BECKNVIM_MINIMUM_TREE_SITTER_VERSION=/p' "${SETUP_TEST_ROOT}/setup.sh")
-source <(sed -n '/^readonly BECKNVIM_TERMAID_REPOSITORY=/p' "${SETUP_TEST_ROOT}/setup.sh")
 
 source <(sed -n '/^activate_nvm_node() ($/,/^)/p' "${SETUP_TEST_ROOT}/setup.sh")
 source <(sed -n '/^readonly BECKNVIM_.*NODE.*=/p; /^readonly BECKNVIM_NVM_VERSION=/p; /^readonly BECKNVIM_.*PYTHON.*=/p' "${SETUP_TEST_ROOT}/setup.sh")
@@ -121,56 +120,21 @@ for cli_version in 0.26.1 0.26.11 0.27.0; do
   run_tree_sitter_case "${cli_version}"
 done
 
-run_termaid_case() (
-  local scenario="$1"
-  local BECKNVIM_USER_BIN='/nonexistent/becknvim-test-bin'
-  local BECKNVIM_TERMAID_REF=''
-  local uv_checks=0
-  local installs=0
-  local expected_installs=1
-  local expected_ref='main'
-  local expected_refresh=''
-  local GIT_HTTP_LOW_SPEED_LIMIT=''
-  local GIT_HTTP_LOW_SPEED_TIME=''
-  case "${scenario}" in
-    compatible|missing-uniform) expected_installs=0 ;;
-    incompatible|missing|broken) ;;
-    custom-timeout) GIT_HTTP_LOW_SPEED_TIME=120 ;;
-    explicit-ref) BECKNVIM_TERMAID_REF='v1.2.3'; expected_ref='v1.2.3'; expected_refresh=' --refresh' ;;
-  esac
-  termaid() {
-    [[ "$*" == '--help' ]] || die 'unexpected termaid arguments'
-    case "${scenario}" in
-      incompatible|custom-timeout) printf 'old help\n' ;;
-      missing-uniform) printf 'styled-json --strict-width --fit-mode --max-height\n' ;;
-      missing) return 127 ;;
-      *) printf 'styled-json --strict-width --fit-mode --max-height --uniform-nodes\n' ;;
-    esac
-    [[ "${scenario}" != 'broken' ]]
-  }
-  ensure_uv() { uv_checks=$((uv_checks + 1)); }
-  python3() { printf '/test/python3\n'; }
-  uv() {
-    [[ "$*" == "tool install --force --verbose --python /test/python3 --no-python-downloads${expected_refresh} git+${BECKNVIM_TERMAID_REPOSITORY}@${expected_ref}" ]] \
-      || die 'incorrect Termaid source or install options'
-    [[ ${GIT_HTTP_LOW_SPEED_LIMIT} -eq 1 ]] || die 'Git stall threshold missing'
-    if [[ "${scenario}" == 'custom-timeout' ]]; then
-      [[ ${GIT_HTTP_LOW_SPEED_TIME} -eq 120 ]] || die 'custom Git timeout overridden'
-    else
-      [[ ${GIT_HTTP_LOW_SPEED_TIME} -eq 60 ]] || die 'Git stall timeout missing'
-    fi
-    installs=$((installs + 1))
-  }
-  ensure_termaid
-  [[ ${uv_checks} -eq ${expected_installs} && ${installs} -eq ${expected_installs} ]] \
-    || die "unexpected Termaid/uv installation: ${scenario}"
-  printf 'PASS: Termaid %s\n' "${scenario}"
-)
-for scenario in compatible incompatible missing broken missing-uniform explicit-ref custom-timeout; do
-  run_termaid_case "${scenario}"
-done
-
 source "${SETUP_TEST_ROOT}/tests/setup_runtime.sh"
+
+(
+  uv() { printf 'uv test\n'; }
+  download() { die 'working uv triggered installation'; }
+  ensure_uv
+  BECKNVIM_FAILURES=0
+  warn() { :; }
+  check_command uv 'lazy.nvim Termaid builds'
+  [[ ${BECKNVIM_FAILURES} -eq 0 ]] || die 'working uv failed validation'
+  uv() { return 1; }
+  check_command uv 'lazy.nvim Termaid builds'
+  [[ ${BECKNVIM_FAILURES} -eq 1 ]] || die 'broken uv passed validation'
+  printf 'PASS: setup reuses uv and validates the Termaid build prerequisite\n'
+)
 
 (
   node() { return 1; }
@@ -205,7 +169,9 @@ ensure_python() { :; }
 ensure_neovim() { :; }
 ensure_tree_sitter() { :; }
 # Simulate the script changing while the installer is executing a slow step.
-ensure_termaid() { printf '\n;;;;\n' >> "$0"; }
+ensure_uv() { printf '\n;;;;\n' >> "$0"; }
+termaid() { printf 'setup unexpectedly invoked Termaid\n' >&2; exit 1; }
+uv() { printf 'setup unexpectedly built Termaid\n' >&2; exit 1; }
 run_checks() { printf 'dependency checks completed\n'; }
 nvim() { printf 'setup unexpectedly launched Neovim\n' >&2; exit 1; }
 bootstrap_plugins() { printf 'setup unexpectedly bootstrapped plugins\n' >&2; exit 1; }

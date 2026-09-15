@@ -315,23 +315,20 @@ end
 ---@return string?
 function M.find_executable()
   local configured_path = vim.fn.expand(M.command)
+  if configured_path == 'termaid' then
+    local lazy_config = package.loaded['lazy.core.config']
+    local plugin = lazy_config and lazy_config.plugins and lazy_config.plugins.termaid
+    local plugin_directory = plugin and plugin.dir
+      or vim.fs.joinpath(vim.fn.stdpath('data'), 'lazy', 'termaid')
+    local managed_path = vim.fs.joinpath(plugin_directory, '.venv', 'bin', 'termaid')
+    return vim.fn.executable(managed_path) == 1 and managed_path or nil
+  end
   if configured_path:find('/', 1, true) then
     return vim.fn.executable(configured_path) == 1 and configured_path or nil
   end
   local executable_path = vim.fn.exepath(configured_path)
   if executable_path ~= '' then
     return executable_path
-  end
-  if configured_path == 'termaid' then
-    local uv_tool_path = vim.fs.joinpath(
-      vim.uv.os_homedir(),
-      '.local',
-      'bin',
-      'termaid'
-    )
-    if vim.fn.executable(uv_tool_path) == 1 then
-      return uv_tool_path
-    end
   end
   return nil
 end
@@ -527,12 +524,23 @@ function M.stage(buffer)
         source_row = block.block_start,
       } }
       local source_count = block.content_end - block.content_start
+      local diagram_width = markdown_features.chunks_width(rows[1].chunks)
       for index, line in ipairs(result.lines) do
+        local chunks = line_chunks(line)
+        diagram_width = math.max(diagram_width, markdown_features.chunks_width(chunks))
         rows[#rows + 1] = {
-          chunks = line_chunks(line),
+          chunks = chunks,
           source_row = block.content_start + math.min(source_count - 1,
             math.floor((index - 1) * source_count / #result.lines)),
         }
+      end
+      -- Fill one rectangle for the title and diagram, retaining semantic spans.
+      for _, row in ipairs(rows) do
+        local chunks = row.chunks
+        local padding_width = diagram_width - markdown_features.chunks_width(chunks)
+        if padding_width > 0 then
+          chunks[#chunks + 1] = { string.rep(' ', padding_width), style_highlights.default }
+        end
       end
       blocks[#blocks + 1] = { start_row = block.block_start, end_row = block.block_end, rows = rows }
     end

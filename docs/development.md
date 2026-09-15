@@ -7,8 +7,8 @@ for compatible fixes and minor releases (`v0.x.0`) for features or incompatible 
 incompatible changes in the release notes. Each release uses an annotated Git tag and matching
 GitHub release notes.
 
-The README installation selects the tagged release. For development, use `git switch master`
-from a clean checkout.
+The README installation follows the repository's default branch. Release tags remain available
+for users who want a specific release.
 
 ## Validation
 
@@ -39,4 +39,8 @@ Neovim UI. The check retains normal prompt behavior so blocking errors remain vi
 
 ```bash
 nvim --headless -u NONE -i NONE -l tests/syntax/markdown/installed.lua
+nvim --headless -u NONE -i NONE -l tests/ui/theme_installed.lua
+nvim --headless -u NONE -i NONE -l tests/search/telescope_installed.lua
+nvim --headless -u NONE -i NONE -l tests/syntax/visuals_installed.lua
+nvim --headless -u NONE -i NONE -l tests/syntax/treesitter_installed.lua
 ```

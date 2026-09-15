@@ -1,441 +1,180 @@
--- Focused tests for config.syntax.highlights.
-require('config.syntax.highlights').setup()
-
-local normal_highlight = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
-local normal_float = vim.api.nvim_get_hl(0, { name = 'NormalFloat', link = false })
-local popup_menu = vim.api.nvim_get_hl(0, { name = 'Pmenu', link = false })
-local popup_menu_selection = vim.api.nvim_get_hl(0, { name = 'PmenuSel', link = false })
-local completion_match = vim.api.nvim_get_hl(0, {
-  name = 'CmpItemAbbrMatch',
-  link = false,
-})
-local tree_normal = vim.api.nvim_get_hl(0, { name = 'NvimTreeNormal', link = false })
-local tree_normal_nc = vim.api.nvim_get_hl(0, { name = 'NvimTreeNormalNC', link = false })
-local tree_sign_column = vim.api.nvim_get_hl(0, { name = 'NvimTreeSignColumn', link = false })
-local tree_end_of_buffer = vim.api.nvim_get_hl(0, {
-  name = 'NvimTreeEndOfBuffer',
-  link = false,
-})
-local cursor_line = vim.api.nvim_get_hl(0, { name = 'CursorLine', link = false })
-local color_column = vim.api.nvim_get_hl(0, { name = 'ColorColumn', link = false })
-local inline_code = vim.api.nvim_get_hl(0, {
-  name = '@markup.raw.markdown_inline',
-  link = false,
-})
-local tree_cursor_line = vim.api.nvim_get_hl(0, { name = 'NvimTreeCursorLine', link = false })
-local detail_cursor_line = vim.api.nvim_get_hl(0, {
-  name = 'TypeInformationCursorLine',
-  link = false,
-})
-local markdown_heading_four = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownH4',
-  link = false,
-})
-local markdown_heading_four_background = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownH4Bg',
-  link = false,
-})
-local markdown_table_rule = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownTableRule',
-  link = false,
-})
-local markdown_table_row_rule = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownTableRowRule',
-  link = false,
-})
-local markdown_table_header = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownTableHeader',
-  link = false,
-})
-local markdown_table_cell = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownTableCell',
-  link = false,
-})
-local markdown_table_code = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownTableCode',
-  link = false,
-})
-local markdown_table_source = vim.api.nvim_get_hl(0, {
-  name = '@markup.table.markdown',
-  link = false,
-})
-local markdown_table_icon = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownTableIcon',
-  link = false,
-})
-local markdown_table_label = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownTableLabel',
-  link = false,
-})
-local markdown_mermaid = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaid',
-  link = false,
-})
-local markdown_mermaid_arrow = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidArrow',
-  link = false,
-})
-local markdown_mermaid_content_label = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidContentLabel',
-  link = false,
-})
-local markdown_mermaid_edge = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidEdge',
-  link = false,
-})
-local markdown_mermaid_edge_label = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidEdgeLabel',
-  link = false,
-})
-local markdown_mermaid_icon = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidIcon',
-  link = false,
-})
-local markdown_mermaid_italic_label = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidItalicLabel',
-  link = false,
-})
-local markdown_mermaid_label = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidLabel',
-  link = false,
-})
-local markdown_mermaid_node = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidNode',
-  link = false,
-})
-local markdown_mermaid_subgraph = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidSubgraph',
-  link = false,
-})
-local translation_content = vim.api.nvim_get_hl(0, {
-  name = 'TranslationContent',
-  link = false,
-})
-local translation_float = vim.api.nvim_get_hl(0, {
-  name = 'TranslationFloat',
-  link = false,
-})
-local translation_notification = vim.api.nvim_get_hl(0, {
-  name = 'TranslationNotification',
-  link = false,
-})
-local translation_separator = vim.api.nvim_get_hl(0, {
-  name = 'TranslationSeparator',
-  link = false,
-})
-local telescope_normal = vim.api.nvim_get_hl(0, { name = 'TelescopeNormal', link = false })
-local diffview_normal = vim.api.nvim_get_hl(0, { name = 'DiffviewNormal', link = false })
-local telescope_border = vim.api.nvim_get_hl(0, { name = 'TelescopeBorder', link = false })
-local diffview_separator = vim.api.nvim_get_hl(0, {
-  name = 'DiffviewWinSeparator',
-  link = false,
-})
-local telescope_selection = vim.api.nvim_get_hl(0, {
-  name = 'TelescopeSelection',
-  link = false,
-})
-local telescope_selection_caret = vim.api.nvim_get_hl(0, {
-  name = 'TelescopeSelectionCaret',
-  link = false,
-})
-local telescope_matching = vim.api.nvim_get_hl(0, {
-  name = 'TelescopeMatching',
-  link = false,
-})
-local telescope_prompt_prefix = vim.api.nvim_get_hl(0, {
-  name = 'TelescopePromptPrefix',
-  link = false,
-})
-local telescope_preview_line = vim.api.nvim_get_hl(0, {
-  name = 'TelescopePreviewLine',
-  link = false,
-})
-local telescope_preview_match = vim.api.nvim_get_hl(0, {
-  name = 'TelescopePreviewMatch',
-  link = false,
-})
-local telescope_title = vim.api.nvim_get_hl(0, {
-  name = 'TelescopeResultsTitle',
-  link = false,
-})
-local diffview_title = vim.api.nvim_get_hl(0, {
-  name = 'DiffviewFilePanelTitle',
-  link = false,
-})
-local diffview_addition = vim.api.nvim_get_hl(0, {
-  name = 'DiffviewDiffAdd',
-  link = false,
-})
-local diffview_deletion = vim.api.nvim_get_hl(0, {
-  name = 'DiffviewDiffAddAsDelete',
-  link = false,
-})
-local diffview_change = vim.api.nvim_get_hl(0, {
-  name = 'DiffviewDiffChange',
-  link = false,
-})
-local treesitter_context = vim.api.nvim_get_hl(0, {
-  name = 'TreesitterContext',
-  link = false,
-})
-local treesitter_context_bottom = vim.api.nvim_get_hl(0, {
-  name = 'TreesitterContextBottom',
-  link = false,
-})
-local treesitter_context_preview = vim.api.nvim_get_hl(0, {
-  name = 'TreesitterContextPreview',
-  link = false,
-})
-local treesitter_context_preview_separator = vim.api.nvim_get_hl(0, {
-  name = 'TreesitterContextPreviewSeparator',
-  link = false,
-})
-
-assert(tree_normal.bg == normal_highlight.bg, 'file tree background differs from the editor')
-assert(
-  normal_float.bg == normal_highlight.bg and normal_float.fg == normal_highlight.fg,
-  'ordinary floating windows do not share the editor base palette'
-)
-assert(
-  popup_menu.bg == normal_highlight.bg and popup_menu.fg == normal_highlight.fg,
-  'completion menu does not share the editor base palette'
-)
-assert(
-  popup_menu_selection.bg == cursor_line.bg and popup_menu_selection.fg == normal_highlight.fg,
-  'completion selection does not share the editor focus treatment'
-)
-assert(tree_normal_nc.bg == tree_normal.bg, 'inactive file tree changes its background')
-assert(tree_sign_column.bg == tree_normal.bg, 'file tree sign column creates a background strip')
-assert(
-  tree_end_of_buffer.bg == tree_normal.bg,
-  'file tree end-of-buffer region creates a background patch'
-)
-assert(tree_cursor_line.bg == cursor_line.bg, 'file tree cursor line uses a different color')
-assert(
-  cursor_line.bg and cursor_line.underline ~= true,
-  'editor cursor line must use a background without an underline'
-)
-assert(detail_cursor_line.bg == cursor_line.bg, 'detail cursor line uses a different color')
-assert(
-  markdown_heading_four.fg == tonumber('FFB3D1', 16) and markdown_heading_four.bold,
-  'level-four Markdown heading marker lost its visible accent'
-)
-assert(
-  markdown_heading_four_background.bg == tonumber('363139', 16)
-    and markdown_heading_four_background.fg == tonumber('F8F8F2', 16)
-    and markdown_heading_four_background.bold,
-  'level-four Markdown heading text lost its high-contrast treatment'
-)
-assert(
-  markdown_table_rule.bg == color_column.bg
-    and markdown_table_rule.fg == tonumber('49483E', 16)
-    and markdown_table_rule.fg ~= normal_highlight.fg,
-  'Markdown table rules are not muted below normal text'
-)
-assert(
-  markdown_table_row_rule.bg == color_column.bg
-    and markdown_table_row_rule.fg == tonumber('3E3D32', 16)
-    and markdown_table_row_rule.fg ~= normal_highlight.fg,
-  'Markdown body-row separators are not quieter than ordinary text'
-)
-assert(
-  markdown_table_header.bg == color_column.bg
-    and markdown_table_header.fg == normal_highlight.fg
-    and markdown_table_header.bold
-    and markdown_table_cell.bg == color_column.bg
-    and markdown_table_cell.fg == normal_highlight.fg
-    and markdown_table_code.bg == cursor_line.bg
-    and markdown_table_code.bg ~= markdown_table_cell.bg
-    and markdown_table_code.fg == inline_code.fg
-    and markdown_table_source.bg == color_column.bg,
-  'Markdown table body or inline-code key mark uses the wrong semantic color'
-)
-assert(
-  markdown_table_icon.bg == color_column.bg
-    and markdown_table_icon.fg == tonumber('89E051', 16)
-    and markdown_table_icon.bold
-    and markdown_table_label.bg == color_column.bg
-    and markdown_table_label.fg == tonumber('A6A69C', 16),
-  'Markdown table label does not match the fenced-text identity'
-)
-local markdown_mermaid_scope_label = vim.api.nvim_get_hl(0, {
-  name = 'RenderMarkdownMermaidSubgraphLabel', link = false,
-})
-for _, role in ipairs({
-  markdown_mermaid, markdown_mermaid_icon, markdown_mermaid_label,
-  markdown_mermaid_node, markdown_mermaid_edge, markdown_mermaid_arrow,
-  markdown_mermaid_edge_label, markdown_mermaid_content_label,
-  markdown_mermaid_italic_label, markdown_mermaid_subgraph, markdown_mermaid_scope_label,
-}) do
-  assert(role.bg == color_column.bg, 'Mermaid roles must share the code block background')
+-- Shared palette contracts across project surfaces and real dark/light themes.
+local highlights = require('config.syntax.highlights')
+local palette = require('config.ui.palette')
+local previous_theme = vim.g.colors_name or 'default'
+local previous_background = vim.o.background
+local function hl(name)
+  return vim.api.nvim_get_hl(0, { name = name, link = false })
 end
-assert(markdown_mermaid.fg == normal_highlight.fg, 'Mermaid text lost the editor foreground')
-assert(markdown_mermaid_content_label.fg == normal_highlight.fg and not markdown_mermaid_content_label.bold,
-  'Node labels must remain readable without blanket emphasis')
-assert(markdown_mermaid_italic_label.italic, 'Explicit italic labels lost their styling')
-assert(markdown_mermaid_arrow.bold, 'Arrowheads lost emphasis')
-assert(markdown_mermaid_edge_label.fg == markdown_mermaid_content_label.fg
-  and markdown_mermaid_edge_label.fg ~= markdown_mermaid_arrow.fg,
-  'Connection labels must share readable node text instead of the connector accent')
-assert(vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidBoldLabel', link = false }).bold,
-  'Explicit bold labels must retain emphasis')
-assert(markdown_mermaid_edge.fg ~= markdown_mermaid_arrow.fg
-  and markdown_mermaid_edge_label.fg ~= markdown_mermaid_edge.fg
-  and markdown_mermaid_node.fg ~= markdown_mermaid_edge.fg,
-  'Diagram roles need distinct, restrained semantic accents')
-assert(markdown_mermaid_scope_label.fg == 0xA6A6A6 and not markdown_mermaid_scope_label.bold,
-  'Scope headings must be quiet grey hint text')
-assert(markdown_mermaid_subgraph.fg == 0x666666,
-  'Large scope borders must stay quieter than their headings')
-assert(not markdown_mermaid_edge_label.italic, 'Ordinary message labels need plain text')
-assert(
-  translation_float.bg == normal_highlight.bg and translation_float.fg == normal_highlight.fg,
-  'translation surface does not share the editor base palette'
-)
-assert(translation_content.bold, 'translation content must be visually emphasized')
-assert(translation_notification.italic, 'translation notifications must remain secondary')
-assert(
-  translation_content.fg ~= translation_notification.fg,
-  'translation content and notifications use the same foreground color'
-)
-assert(
-  translation_separator.fg ~= translation_content.fg,
-  'translation dividers compete with translated content'
-)
-assert(
-  telescope_normal.bg == normal_highlight.bg
-    and telescope_normal.fg == normal_highlight.fg
-    and diffview_normal.bg == normal_highlight.bg
-    and diffview_normal.fg == normal_highlight.fg,
-  'Telescope and Diffview do not share the editor base palette'
-)
-for _, group_name in ipairs({
-  'TelescopePromptNormal',
-  'TelescopeResultsNormal',
-  'TelescopePreviewNormal',
-}) do
-  local plane_highlight = vim.api.nvim_get_hl(0, { name = group_name, link = false })
-  assert(
-    plane_highlight.bg == telescope_normal.bg and plane_highlight.fg == telescope_normal.fg,
-    group_name .. ' left the shared neutral search plane'
-  )
+local function contrast_text(name, background)
+  local role = hl(name)
+  assert(role.fg and palette.contrast(role.fg, role.bg or background) >= 4.5,
+    name .. ' text has insufficient contrast')
 end
-for _, group_name in ipairs({
-  'TelescopePromptBorder',
-  'TelescopeResultsBorder',
-  'TelescopePreviewBorder',
-}) do
-  local edge_highlight = vim.api.nvim_get_hl(0, { name = group_name, link = false })
-  assert(
-    edge_highlight.bg == telescope_normal.bg and edge_highlight.fg == telescope_border.fg,
-    group_name .. ' left the shared grey edge treatment'
-  )
+local function check_surfaces()
+  local normal = hl('Normal')
+  local cursor = hl('CursorLine')
+  local block = hl('RenderMarkdownTableCell')
+  for _, name in ipairs({ 'StatusLine', 'StatusLineNC' }) do
+    local footer = hl(name)
+    assert(footer.bg ~= normal.bg and palette.contrast(footer.bg, normal.bg) < 1.5,
+      name .. ' must have subtle contrast with the editor')
+    contrast_text(name, normal.bg)
+  end
+  assert(palette.contrast(hl('StatusLineNC').bg, normal.bg)
+      < palette.contrast(hl('StatusLine').bg, normal.bg), 'Inactive footer is too prominent')
+  for _, name in ipairs({
+    'NormalFloat', 'Pmenu', 'NvimTreeNormal', 'NvimTreeNormalNC',
+    'TelescopeNormal', 'TelescopePromptNormal', 'TelescopeResultsNormal', 'TelescopePreviewNormal',
+    'DiffviewNormal', 'TranslationFloat', 'TranslationContent', 'TranslationDictionary',
+  }) do
+    local role = hl(name)
+    assert(role.bg == normal.bg and role.fg == normal.fg, name .. ' left the editor base plane')
+  end
+  assert(hl('NormalNC').bg == normal.bg and not hl('NormalNC').fg,
+    'Inactive windows must share the editor background and retain their own foreground')
+  for _, name in ipairs({
+    'PmenuSel', 'NvimTreeCursorLine', 'TypeInformationCursorLine', 'TelescopeSelection', 'TelescopePreviewLine',
+  }) do
+    assert(hl(name).bg == cursor.bg, name .. ' left the shared selection background')
+  end
+  assert(cursor.bg ~= normal.bg and palette.contrast(normal.fg, cursor.bg) >= 4.5,
+    'Selection does not remain visible and readable')
+  assert(hl('CurrentCodeScope').bg ~= normal.bg and hl('CurrentCodeScope').bg ~= cursor.bg,
+    'Scope and cursor backgrounds lost their hierarchy')
+  local border = hl('FloatBorder')
+  for _, name in ipairs({
+    'DiffviewWinSeparator', 'PmenuFloatBorder',
+  }) do
+    assert(hl(name).fg == border.fg and hl(name).bg == normal.bg, name .. ' lost shared border styling')
+  end
+  for _, name in ipairs({
+    'TelescopeBorder', 'TelescopePromptBorder', 'TelescopeResultsBorder', 'TelescopePreviewBorder',
+  }) do
+    assert(hl(name).fg == border.fg and hl(name).bg == normal.bg
+        and palette.contrast(hl(name).fg, normal.bg) >= 3,
+      name .. ' must contrast its edge without changing the margin background')
+  end
+  for _, name in ipairs({ 'NvimTreeSignColumn', 'NvimTreeEndOfBuffer' }) do
+    assert(hl(name).bg == normal.bg, name .. ' introduces a background strip')
+  end
+  for _, name in ipairs({
+    'TelescopeTitle', 'TelescopePromptTitle', 'TelescopeResultsTitle', 'TelescopePreviewTitle',
+    'DiffviewFilePanelTitle', 'DiffviewFilePanelRootPath',
+  }) do
+    assert(hl(name).fg == normal.fg and hl(name).bold, name .. ' lost neutral title emphasis')
+  end
+  local focus = hl('TelescopeMatching').fg
+  for _, name in ipairs({
+    'TelescopeSelectionCaret', 'TelescopePromptPrefix', 'TelescopePreviewMatch', 'CmpItemAbbrMatch',
+  }) do
+    assert(hl(name).fg == focus, name .. ' lost the shared focus foreground')
+  end
+  assert(hl('RenderMarkdownH4').bold and hl('RenderMarkdownH4Bg').bold, 'Heading emphasis was removed')
+  assert(hl('RenderMarkdownTableHeader').bold, 'Table header lost emphasis')
+  for _, name in ipairs({
+    'RenderMarkdownTableRule', 'RenderMarkdownTableRowRule', 'RenderMarkdownTableHeader',
+    'RenderMarkdownTableIcon', 'RenderMarkdownTableLabel', '@markup.table.markdown',
+    'RenderMarkdownMermaid', 'RenderMarkdownMermaidNode', 'RenderMarkdownMermaidEdge',
+    'RenderMarkdownMermaidArrow', 'RenderMarkdownMermaidContentLabel', 'RenderMarkdownMermaidEdgeLabel',
+    'RenderMarkdownMermaidSubgraph', 'RenderMarkdownMermaidSubgraphLabel',
+    'RenderMarkdownMermaidActive', 'RenderMarkdownMermaidCritical', 'RenderMarkdownMermaidDone',
+    'RenderMarkdownMermaidItalicLabel', 'RenderMarkdownMermaidBoldLabel',
+    'RenderMarkdownMermaidMilestone', 'RenderMarkdownMermaidIcon', 'RenderMarkdownMermaidLabel',
+  }) do
+    assert(hl(name).bg == block.bg, name .. ' left the code block plane')
+  end
+  for index = 1, 8 do
+    assert(hl('RenderMarkdownMermaidSection' .. index).bg == block.bg,
+      'Mermaid section lost the table background')
+  end
+  local colors = palette.resolve()
+  assert(hl('RenderMarkdownTableIcon').fg == colors.table.icon, 'Table icon lost its semantic accent')
+  assert(hl('RenderMarkdownMermaidIcon').fg == colors.mermaid.icon, 'Mermaid icon lost its semantic accent')
+  for _, feature in ipairs({ 'Table', 'Mermaid' }) do
+    local icon = hl('RenderMarkdown' .. feature .. 'Icon')
+    local label = hl('RenderMarkdown' .. feature .. 'Label')
+    assert(icon.fg == label.fg and label.fg ~= colors.muted,
+      feature .. ' icon and label do not share a distinct semantic accent')
+    contrast_text('RenderMarkdown' .. feature .. 'Label', block.bg)
+  end
+  assert(hl('RenderMarkdownTableCode').bg == cursor.bg, 'Inline code lost shared selection background')
+  for _, name in ipairs({ 'RenderMarkdownMermaidContentLabel', 'RenderMarkdownMermaidEdgeLabel' }) do
+    assert(hl(name).fg == normal.fg and not hl(name).bold and not hl(name).italic,
+      name .. ' must share plain readable text')
+    assert(hl(name).fg ~= hl('RenderMarkdownMermaidEdge').fg
+      and hl(name).fg ~= hl('RenderMarkdownMermaidArrow').fg, 'Connector and label colors merged')
+  end
+  assert(hl('RenderMarkdownMermaidArrow').bold, 'Arrowheads lost emphasis')
+  assert(hl('RenderMarkdownMermaidBoldLabel').bold, 'Explicit bold labels lost emphasis')
+  assert(hl('RenderMarkdownMermaidItalicLabel').italic, 'Explicit italic labels lost styling')
+  assert(not hl('RenderMarkdownMermaidSubgraphLabel').bold, 'Scope hints gained blanket emphasis')
+  assert(hl('TranslationContent').bold and hl('TranslationNotification').italic,
+    'Translation content and notification hierarchy changed')
+  for _, name in ipairs({ 'DiffviewDiffAdd', 'DiffviewDiffAddAsDelete', 'DiffviewDiffChange',
+    'DiffviewDiffText' }) do
+    assert(hl(name).bg and not hl(name).fg, name .. ' overrides syntax foreground')
+  end
+  assert(hl('DiffviewStatusAdded').fg == hl('DiffviewFilePanelInsertions').fg,
+    'Git additions use inconsistent colors')
+  assert(hl('DiffviewStatusDeleted').fg == hl('DiffviewFilePanelDeletions').fg,
+    'Git deletions use inconsistent colors')
+  local context = hl('TreesitterContext')
+  local boundary = hl('TreesitterContextBottom')
+  assert(context.bg ~= normal.bg and boundary.underline and boundary.sp,
+    'Pinned context lost its tint and lower boundary')
+  assert(hl('TreesitterContextPreview').bg == context.bg
+    and hl('TreesitterContextPreview').sp == boundary.sp
+    and hl('TreesitterContextPreviewSeparator').bg == context.bg,
+    'Preview context does not share the pinned context treatment')
+  for _, name in ipairs({
+    'PmenuSel', 'CmpItemAbbr', 'CmpItemMenu', 'TypeInformationHint', 'DashboardFile',
+    'TelescopeSelection', 'TranslationNotification', 'TranslationError',
+    'RenderMarkdownTableCode', 'RenderMarkdownTableLabel', 'RenderMarkdownH4Bg',
+    'RenderMarkdownMermaidEdgeLabel', 'RenderMarkdownMermaidSubgraphLabel',
+    'TreesitterContext', 'TreesitterContextLineNumber',
+  }) do
+    contrast_text(name, normal.bg)
+  end
 end
-assert(
-  telescope_border.fg == diffview_separator.fg,
-  'Telescope borders and Diffview separators use different colors'
-)
-assert(
-  telescope_border.fg == tonumber('666666', 16)
-    and telescope_title.fg == normal_highlight.fg,
-  'Git/search edge or title left the neutral editor palette'
-)
-assert(
-  telescope_selection.bg == cursor_line.bg
-    and telescope_selection.fg == normal_highlight.fg
-    and telescope_selection.bg ~= telescope_normal.bg,
-  'Search selection lost the editor cursor-line treatment'
-)
-assert(
-  telescope_selection_caret.fg == telescope_matching.fg
-    and telescope_matching.fg == telescope_prompt_prefix.fg
-    and telescope_matching.fg == telescope_preview_match.fg
-    and telescope_matching.fg == completion_match.fg
-    and telescope_matching.fg == tonumber('FFFFFF', 16),
-  'Search/completion matches, prompt, and selection caret do not share the neutral focus accent'
-)
-assert(
-  telescope_preview_line.bg == telescope_selection.bg
-    and telescope_preview_line.fg == telescope_selection.fg,
-  'Search preview targets do not reuse the shared selection treatment'
-)
-assert(
-  telescope_title.fg == diffview_title.fg,
-  'Telescope and Diffview headings use different neutral emphasis colors'
-)
-for _, group_name in ipairs({
-  'DiffviewFilePanelFileName',
-  'DiffviewFilePanelPath',
-  'DiffviewFilePanelCounter',
-  'DiffviewHash',
-}) do
-  local footer_highlight = vim.api.nvim_get_hl(0, { name = group_name, link = false })
-  assert(
-    footer_highlight.bg == normal_highlight.bg,
-    group_name .. ' does not share the editor and search background'
-  )
+highlights.setup()
+for _, name in ipairs({ 'habamax', 'morning', 'habamax' }) do
+  vim.api.nvim_cmd({ cmd = 'colorscheme', args = { name } }, {})
+  check_surfaces()
+  local first_apply = vim.api.nvim_get_hl(0, {})
+  highlights.apply()
+  assert(vim.deep_equal(first_apply, vim.api.nvim_get_hl(0, {})), 'Palette application drifts on repeat')
 end
-for group_name, expected_color in pairs({
-  DiffviewFilePanelCounter = '66D9EF',
-  DiffviewFilePanelDeletions = 'F92672',
-  DiffviewFilePanelInsertions = 'A6E22E',
-  DiffviewHash = 'AE81FF',
-  DiffviewStatusAdded = 'A6E22E',
-  DiffviewStatusDeleted = 'F92672',
-  DiffviewStatusModified = 'E6DB74',
-}) do
-  local footer_highlight = vim.api.nvim_get_hl(0, { name = group_name, link = false })
-  assert(
-    footer_highlight.fg == tonumber(expected_color, 16),
-    group_name .. ' lost its saturated Git-semantic foreground'
-  )
+-- The pinned tint follows changes to Normal within one theme, not a fixed panel color.
+local before_context = hl('TreesitterContext').bg
+vim.api.nvim_set_hl(0, 'Normal', { bg = 0x303030, fg = 0xF0F0F0 })
+highlights.apply()
+assert(hl('TreesitterContext').bg ~= before_context, 'Pinned tint ignores the editor background')
+local context_background = hl('TreesitterContext').bg
+assert(math.floor(context_background / 65536) == math.floor(context_background / 256) % 256
+    and math.floor(context_background / 256) % 256 == context_background % 256,
+  'Pinned context adds a hue to a neutral editor background')
+local context_border = hl('TreesitterContextBottom').sp
+assert(math.floor(context_border / 65536) == math.floor(context_border / 256) % 256
+    and math.floor(context_border / 256) % 256 == context_border % 256,
+  'Pinned context boundary retained a chromatic accent')
+-- Missing highlights, including a transparent Normal, use light/dark fallbacks.
+for _, mode in ipairs({ 'dark', 'light' }) do
+  vim.o.background = mode
+  vim.cmd('highlight clear')
+  for _, name in ipairs({ 'Normal', 'CursorLine', 'ColorColumn', 'Function', 'Type', 'Statement', 'String' }) do
+    vim.api.nvim_set_hl(0, name, {})
+  end
+  local resolved = palette.resolve()
+  assert(palette.contrast(resolved.foreground, resolved.background) >= 4.5, 'Unreadable fallback palette')
+  assert((resolved.background > 0x808080) == (mode == 'light'), 'Fallback ignores light/dark mode')
 end
-assert(diffview_addition.bg, 'Diffview additions lost their restrained background tint')
-assert(diffview_addition.fg == nil, 'Diffview additions override syntax foreground colors')
-assert(diffview_deletion.bg, 'Diffview deletions lost their restrained background tint')
-assert(diffview_deletion.fg == nil, 'Diffview deletions override syntax foreground colors')
-assert(diffview_change.bg, 'Diffview modifications lost their restrained background tint')
-assert(diffview_change.fg == nil, 'Diffview modifications override syntax foreground colors')
-assert(
-  treesitter_context.bg == tonumber('3A3D32', 16),
-  'Pinned code context lost its restrained light-green declaration background'
-)
-assert(
-  treesitter_context_bottom.underline == true
-    and treesitter_context_bottom.sp == tonumber('A6E22E', 16),
-  'Pinned code context lost its distinct green lower boundary'
-)
-assert(
-  treesitter_context_preview.bg == treesitter_context.bg
-    and treesitter_context_preview.underline == true
-    and treesitter_context_preview.sp == treesitter_context_bottom.sp
-    and treesitter_context_preview_separator.bg == treesitter_context.bg
-    and treesitter_context_preview_separator.underline == true
-    and treesitter_context_preview_separator.sp == treesitter_context_bottom.sp,
-  'Search preview context does not share the declaration background and lower boundary'
-)
-
--- Semantic colors must follow a theme reload, while scope hints stay neutral.
-local saved_string_highlight = vim.api.nvim_get_hl(0, { name = 'String', link = false })
-local saved_type_highlight = vim.api.nvim_get_hl(0, { name = 'Type', link = false })
-vim.api.nvim_set_hl(0, 'String', { fg = 0xFF0000 })
-vim.api.nvim_set_hl(0, 'Type', { fg = 0x66D9EF })
-vim.api.nvim_set_hl(0, 'Normal', { fg = 0xECECEC, bg = normal_highlight.bg })
-vim.api.nvim_exec_autocmds('ColorScheme', {})
-local refreshed_edge_label = vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidEdgeLabel', link = false })
-local refreshed_edge = vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidEdge', link = false })
-local refreshed_arrow = vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidArrow', link = false })
-assert(refreshed_edge_label.fg == 0xECECEC
-  and refreshed_edge_label.fg ~= refreshed_edge.fg
-  and refreshed_edge_label.fg ~= refreshed_arrow.fg,
-  'Theme reload merged connection text with the connector accent')
-local refreshed_mermaid_node = vim.api.nvim_get_hl(0, { name = 'RenderMarkdownMermaidNode', link = false })
-assert(refreshed_mermaid_node.fg ~= markdown_mermaid_node.fg,
-  'Mermaid node accents did not follow the active theme')
-local red_channel = math.floor(refreshed_mermaid_node.fg / 65536)
-local green_channel = math.floor(refreshed_mermaid_node.fg / 256) % 256
-assert(red_channel < 255 and green_channel > 0, 'Mermaid accents must reduce theme saturation')
-vim.api.nvim_set_hl(0, 'String', saved_string_highlight)
-vim.api.nvim_set_hl(0, 'Type', saved_type_highlight)
-vim.api.nvim_set_hl(0, 'Normal', normal_highlight)
-vim.api.nvim_exec_autocmds('ColorScheme', {})
+-- Explicit overrides are applied last on every theme change.
+highlights.setup({ overrides = function(colors)
+  return { RenderMarkdownMermaidEdge = { fg = colors.syntax.special, bg = colors.block, bold = true } }
+end })
+vim.api.nvim_cmd({ cmd = 'colorscheme', args = { 'morning' } }, {})
+assert(hl('RenderMarkdownMermaidEdge').bold, 'Theme reload discarded a configured override')
+highlights.setup({})
+vim.o.background = previous_background
+vim.api.nvim_cmd({ cmd = 'colorscheme', args = { previous_theme } }, {})

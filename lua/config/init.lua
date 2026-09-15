@@ -5,6 +5,7 @@ function M.setup()
   require('config.ui.float').setup()
   require('config.startup.autocmds').setup()
   require('config.startup.lazy')
+  require('config.ui.theme').setup()
   require('config.startup.keybindings').setup()
   require('config.network.ui').setup()
 end

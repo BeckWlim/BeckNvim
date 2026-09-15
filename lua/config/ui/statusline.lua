@@ -56,6 +56,24 @@ end
 
 function M.setup()
   require('lualine').setup({
+    options = {
+      theme = function()
+        local colors = require('config.ui.palette').resolve().statusline
+        local theme = {}
+        for _, mode in ipairs({ 'normal', 'insert', 'visual', 'replace', 'command', 'inactive' }) do
+          local foreground_hex = string.format('#%06x',
+            mode == 'inactive' and colors.inactive_foreground or colors.foreground)
+          local background_hex = string.format('#%06x',
+            mode == 'inactive' and colors.inactive_background or colors.background)
+          theme[mode] = {
+            a = { fg = foreground_hex, bg = background_hex, gui = 'bold' },
+            b = { fg = foreground_hex, bg = background_hex },
+            c = { fg = foreground_hex, bg = background_hex },
+          }
+        end
+        return theme
+      end,
+    },
     sections = {
       lualine_c = {
         {

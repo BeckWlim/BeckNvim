@@ -2,6 +2,40 @@
 local markdown_features = require('config.syntax.markdown_features')
 local mermaid = require('config.syntax.mermaid')
 
+-- Resolve the managed checkout, including a custom lazy root, before any PATH tool.
+local saved_lazy_config = package.loaded['lazy.core.config']
+local saved_command = mermaid.command
+local saved_search_path = vim.env.PATH
+local resolver_directory = vim.fn.tempname() .. ' lazy root'
+local managed_directory = resolver_directory .. '/termaid'
+local managed_executable = managed_directory .. '/.venv/bin/termaid'
+local external_executable = resolver_directory .. '/bin/termaid'
+vim.fn.mkdir(resolver_directory .. '/bin', 'p')
+vim.fn.writefile({ '#!/bin/sh', 'exit 0' }, external_executable)
+vim.fn.setfperm(external_executable, 'rwx------')
+vim.env.PATH = resolver_directory .. '/bin:' .. (saved_search_path or '')
+package.loaded['lazy.core.config'] = nil
+local default_managed_path = vim.fs.joinpath(vim.fn.stdpath('data'), 'lazy', 'termaid', '.venv/bin/termaid')
+local expected_default = vim.fn.executable(default_managed_path) == 1 and default_managed_path or nil
+assert(mermaid.find_executable() == expected_default, 'Default lazy checkout was not resolved')
+package.loaded['lazy.core.config'] = { plugins = { termaid = { dir = managed_directory } } }
+assert(mermaid.find_executable() == nil, 'Missing managed Termaid fell back to an unrelated installation')
+vim.fn.mkdir(managed_directory .. '/.venv/bin', 'p')
+vim.fn.writefile({ '#!/bin/sh', 'exit 0' }, managed_executable)
+vim.fn.setfperm(managed_executable, 'rwx------')
+assert(mermaid.find_executable() == managed_executable,
+  'Custom lazy root or newly installed executable was ignored')
+mermaid.command = resolver_directory .. '/missing/termaid'
+assert(mermaid.find_executable() == nil, 'Missing explicit executable fell back to managed Termaid')
+mermaid.command = external_executable
+assert(mermaid.find_executable() == external_executable, 'Explicit executable path was ignored')
+mermaid.command = 'sh'
+assert(mermaid.find_executable() == vim.fn.exepath('sh'), 'Explicit PATH command was ignored')
+mermaid.command = saved_command
+package.loaded['lazy.core.config'] = saved_lazy_config
+vim.env.PATH = saved_search_path
+vim.fn.delete(resolver_directory, 'rf')
+
 local original = {
   arrow_position = mermaid.arrow_position,
   buffer = vim.api.nvim_get_current_buf(),
@@ -199,7 +233,15 @@ for index, row in ipairs(blocks[1].rows) do
     assert(row.source_row >= 2 and row.source_row < 4, 'Diagram row lost its source position')
   end
 end
-assert(table.concat(rendered_lines, '\n') == '┌─►\n│ A │\n└───┘', 'Mermaid projection changed diagram content')
+local expected_diagram_width = math.max(vim.fn.strdisplaywidth('󰙅 mermaid'), 5)
+for index, content in ipairs({ '┌─►', '│ A │', '└───┘' }) do
+  assert(rendered_lines[index] == content .. string.rep(' ', expected_diagram_width - vim.fn.strdisplaywidth(content)),
+    'Mermaid projection did not fill the shorter row to the title or diagram right edge')
+end
+assert(markdown_features.chunks_width(blocks[1].rows[1].chunks) == expected_diagram_width,
+  'Mermaid title did not share the filled rectangle')
+assert(blocks[1].rows[2].chunks[#blocks[1].rows[2].chunks][2] == 'RenderMarkdownMermaid',
+  'Mermaid padding lost its canvas highlight')
 assert(semantic_highlights.RenderMarkdownMermaidNode and semantic_highlights.RenderMarkdownMermaidEdge
   and semantic_highlights.RenderMarkdownMermaidArrow and semantic_highlights.RenderMarkdownMermaidContentLabel,
   'Mermaid projection flattened semantic colors')
@@ -227,11 +269,16 @@ assert(
   not vim.tbl_contains(process_requests[2].command, '--format'),
   'Mermaid plain fallback retained the unsupported styled-output option'
 )
-process_requests[2].callback({ code = 0, stdout = 'plain fallback' })
+process_requests[2].callback({ code = 0, stdout = 'plain fallback\n\n你好' })
 assert(vim.wait(100, function()
   return refreshes == 1
 end, 1), 'Mermaid plain fallback did not settle through the shared pipeline')
 assert(#mermaid.stage(buffer) == 1, 'Mermaid plain fallback was not rendered')
+local fallback_rows = mermaid.stage(buffer)[1].rows
+for index = 2, #fallback_rows do
+  assert(markdown_features.chunks_width(fallback_rows[index].chunks) == 14,
+    'Mermaid blank or wide-character row did not fill the rectangle in display cells')
+end
 
 mermaid.detach(buffer)
 refreshes = 0

@@ -8,7 +8,7 @@ local sessions_by_preview = {}
 local window_option_names = {
   'number', 'relativenumber', 'signcolumn', 'foldcolumn', 'foldenable', 'foldmethod', 'wrap',
   'linebreak', 'breakindent', 'breakindentopt', 'showbreak', 'smoothscroll', 'cursorline', 'winbar',
-  'conceallevel', 'concealcursor',
+  'conceallevel', 'concealcursor', 'colorcolumn',
 }
 
 local function live(session)
@@ -248,6 +248,7 @@ function M.open(source)
   vim.wo[window].showbreak = '↳ '
   vim.wo[window].smoothscroll = true
   vim.wo[window].cursorline = true
+  vim.wo[window].colorcolumn = ''
   vim.wo[window].winbar = ''
   local session = {
     source = source, buffer = buffer, window = window, rows = {}, feature_cache = {},

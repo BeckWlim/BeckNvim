@@ -11,8 +11,10 @@ system while keeping native Neovim and plugin behavior wherever practical.
 - Unified file, symbol, repository, branch, commit, issue, and pull-request inspection.
 - Diffview-based history review with bounded asynchronous loading and safe state transitions.
 - LSP completion, diagnostics, type information, and language-aware navigation.
-- Tree-sitter highlighting, folding, syntax context, scope visualization, and structural selection.
-- Markdown prose, responsive tables, and Mermaid diagrams with subdued theme colors, distinct connector and label colors, and width-aware spacing rendered by default, with native Enter navigation, pinned headings, and source editing in the same pane. [Mermaid settings](docs/architecture.md#markdown-mermaid-feature) include optional middle arrowheads and numbered references for labels that cannot fit.
+- Tree-sitter highlighting, folding, syntax context, scope visualization limited to half the active view, and structural selection. Syntax and preview context load asynchronously; large files skip whole-file scope and rainbow decoration.
+- Project-wide [theme switching](themes/README.md) with live preview, saved selection, light/dark palettes, and personal theme files. Monokai remains the default; VS Code, Darcula, TokyoNight, Catppuccin, Gruvbox, and a softer Paper Light palette are included choices.
+- Telescope panes and margins blend into the editor background and close together with `<C-q>` in every mode; source previews stay read-only. Pinned context uses a subtle grey background filter.
+- Markdown prose, responsive tables, and Mermaid diagrams with subdued theme colors, distinct connector and label colors, and width-aware spacing rendered by default, with native Enter navigation, pinned headings, and source editing in the same pane. Table and diagram headers include distinctly colored icons and labels; Mermaid diagrams use a solid rectangular fill matching the tables. [Mermaid settings](docs/architecture.md#markdown-mermaid-feature) include optional middle arrowheads and numbered references for labels that cannot fit.
 - Integrated terminal, translation, proxy management, and project diagnostics.
 
 ## Main Modules
@@ -21,7 +23,7 @@ system while keeping native Neovim and plugin behavior wherever practical.
 | --- | --- |
 | `config/startup/` | Editor options, autocmds, keymap assembly, and plugin bootstrap |
 | `config/project.lua` | Project-root discovery, activation, containment, and cached project state |
-| `config/ui/` | Dashboard, file tree, statusline, terminal, shared floats, and window state |
+| `config/ui/` | Theme selection and palette, dashboard, file tree, statusline, terminal, shared floats, and window state |
 | `config/search/` | Telescope configuration, project search, previews, and LSP location results |
 | `config/git/` | Git history workflows, Diffview lifecycle, repository data, and GitHub details |
 | `config/lsp/` | Language-server setup, completion, diagnostics, and type-information views |
@@ -41,7 +43,7 @@ The complete ownership and lifecycle model is documented in
 Back up any existing `~/.config/nvim` directory, then run:
 
 ```bash
-git clone --branch v0.1.0 https://github.com/BeckWlim/BeckNvim.git ~/.config/nvim
+git clone https://github.com/BeckWlim/BeckNvim.git ~/.config/nvim
 cd ~/.config/nvim
 ./setup.sh
 ```
@@ -53,7 +55,8 @@ PATH instructions it prints, reopen your terminal, and start Neovim:
 nvim
 ```
 
-On first launch, lazy.nvim installs missing plugins and Mason installs configured language servers.
+On first launch, lazy.nvim installs missing plugins and builds Termaid for Mermaid diagrams;
+Mason installs configured language servers. Use `:Lazy update termaid` to update the diagram renderer.
 Use a Nerd Font in your terminal for icons.
 
 Run `./setup.sh --check` to check dependencies or `./setup.sh --help` for setup options.

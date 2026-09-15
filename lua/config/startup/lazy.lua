@@ -22,4 +22,10 @@ end
 
 vim.opt.rtp:prepend(lazypath)
 
-require("lazy").setup("plugins")
+require("lazy").setup("plugins", {
+  performance = {
+    rtp = {
+      paths = vim.api.nvim_get_runtime_file("lua/config/syntax/after", true),
+    },
+  },
+})

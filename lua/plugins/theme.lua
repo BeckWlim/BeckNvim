@@ -2,10 +2,16 @@ return {
   {
     'crusoexia/vim-monokai',
     priority = 1000,
-    config = function()
-      vim.cmd.colorscheme('monokai')
-      require('config.syntax.highlights').setup()
-    end,
+    lazy = false,
+  },
+  { 'Mofiqul/vscode.nvim', lazy = true },
+  { 'folke/tokyonight.nvim', lazy = true },
+  { 'catppuccin/nvim', name = 'catppuccin', lazy = true, opts = { auto_integrations = false } },
+  { 'ellisonleao/gruvbox.nvim', lazy = true },
+  {
+    'xiantang/darcula-dark.nvim',
+    lazy = true,
+    dependencies = { 'nvim-treesitter/nvim-treesitter' },
   },
   {
     'glepnir/dashboard-nvim',

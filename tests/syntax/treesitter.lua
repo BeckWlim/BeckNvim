@@ -57,9 +57,11 @@ assert(
 assert(type(installation_callback) == 'function', 'parser installation completion was not observed')
 
 vim.api.nvim_exec_autocmds('FileType', { buffer = test_buffer })
-assert(#start_calls == 1, 'FileType did not attempt to start Treesitter highlighting')
+assert(#start_calls == 0, 'FileType blocked on highlighting setup')
+assert(vim.wait(500, function() return #start_calls == 1 end), 'Deferred highlighting did not start')
 
 treesitter_config.ensure_highlighting(test_buffer)
+vim.wait(30)
 assert(
   #start_calls == 2
     and start_calls[2] == test_buffer
@@ -67,6 +69,7 @@ assert(
   'Explicit syntax synchronization did not retry Tree-sitter and rainbow highlighting'
 )
 treesitter_config.ensure_highlighting(test_buffer)
+vim.wait(30)
 assert(
   #rainbow_attach_calls == 1,
   'Repeated syntax synchronization attached rainbow parsing more than once per buffer'
@@ -78,6 +81,7 @@ vim.bo[hidden_diffview_buffer].filetype = 'cpp'
 local starts_before_hidden_diff = #start_calls
 vim.api.nvim_exec_autocmds('FileType', { buffer = hidden_diffview_buffer })
 treesitter_config.ensure_highlighting(hidden_diffview_buffer)
+vim.wait(30)
 assert(
   #start_calls == starts_before_hidden_diff,
   'Hidden Diffview prewarm buffers started synchronous Tree-sitter work'
@@ -99,6 +103,13 @@ for start_index = starts_before_installation + 1, #start_calls do
     'Parser installation eagerly parsed a hidden Diffview prewarm buffer'
   )
 end
+
+local retired_buffer = vim.api.nvim_create_buf(false, true)
+local starts_before_retirement = #start_calls
+treesitter_config.ensure_highlighting(retired_buffer)
+vim.api.nvim_buf_delete(retired_buffer, { force = true })
+vim.wait(30)
+assert(#start_calls == starts_before_retirement, 'Deleted buffer started deferred highlighting')
 
 vim.api.nvim_del_augroup_by_name('config-treesitter-highlight')
 vim.api.nvim_buf_delete(hidden_diffview_buffer, { force = true })

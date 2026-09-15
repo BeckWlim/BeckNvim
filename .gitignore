@@ -6,6 +6,8 @@
 .codex/
 
 # Neovim runtime files
+# Personal themes; bundled themes/default/ files remain tracked.
+/themes/*.lua
 nvim.log
 *.swp
 *.swo
