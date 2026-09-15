@@ -173,9 +173,17 @@ function M.theme_picker(options)
   local actions = require('telescope.actions')
   local action_state = require('telescope.actions.state')
   local source_buffer = vim.api.nvim_get_current_buf()
+  local source_window = vim.api.nvim_get_current_win()
   local source_lines = vim.api.nvim_buf_get_lines(source_buffer, 0, -1, false)
   local source_filetype = vim.bo[source_buffer].filetype
   local closed = false
+  local preview_request
+  local function apply_preview(name)
+    if vim.api.nvim_win_is_valid(source_window) then
+      return vim.api.nvim_win_call(source_window, function() return options.preview(name) end)
+    end
+    return options.preview(name)
+  end
   local function close_session()
     if closed then return end
     closed = true
@@ -185,15 +193,26 @@ function M.theme_picker(options)
     title = 'Theme preview',
     define_preview = function(self, entry)
       if closed then return end
-      local failure = options.preview(entry.value)
-      local lines = failure and { 'Theme unavailable', '', failure } or source_lines
-      local was_modifiable = vim.bo[self.state.bufnr].modifiable
-      vim.bo[self.state.bufnr].modifiable = true
-      vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
-      vim.bo[self.state.bufnr].modifiable = was_modifiable
-      if not failure then
-        require('telescope.previewers.utils').highlighter(self.state.bufnr, source_filetype)
-      end
+      local request = {}
+      preview_request = request
+      local preview_buffer = self.state.bufnr
+      -- Picker updates can run under :noautocmd / a non-nested autocmd.
+      -- Apply outside that context so every ColorScheme consumer sees the
+      -- same transition as an explicit confirmation (statusline, context, etc.).
+      vim.schedule(function()
+        if closed or preview_request ~= request or self.state.bufnr ~= preview_buffer
+            or not vim.api.nvim_buf_is_valid(preview_buffer) then return end
+        local failure = apply_preview(entry.value)
+        if closed or not vim.api.nvim_buf_is_valid(preview_buffer) then return end
+        local lines = failure and { 'Theme unavailable', '', failure } or source_lines
+        local was_modifiable = vim.bo[preview_buffer].modifiable
+        vim.bo[preview_buffer].modifiable = true
+        vim.api.nvim_buf_set_lines(preview_buffer, 0, -1, false, lines)
+        vim.bo[preview_buffer].modifiable = was_modifiable
+        if not failure then
+          require('telescope.previewers.utils').highlighter(preview_buffer, source_filetype)
+        end
+      end)
     end,
     teardown = close_session,
   })

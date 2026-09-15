@@ -1,4 +1,7 @@
 vim.opt.background = "dark"
+-- The project dashboard owns the welcome screen; do not flash Neovim's intro
+-- while its UIEnter callback is preparing the homepage.
+vim.opt.shortmess:append("I")
 vim.opt.clipboard = "unnamedplus"
 vim.opt.scrolloff = 8
 vim.opt.sidescrolloff = 8

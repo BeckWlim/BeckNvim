@@ -40,6 +40,8 @@ Neovim UI. The check retains normal prompt behavior so blocking errors remain vi
 ```bash
 nvim --headless -u NONE -i NONE -l tests/syntax/markdown/installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/theme_installed.lua
+nvim --headless -u NONE -i NONE -l tests/ui/theme_preview_installed.lua
+nvim --headless -u NONE -i NONE -l tests/ui/dashboard_installed.lua
 nvim --headless -u NONE -i NONE -l tests/search/telescope_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/visuals_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/treesitter_installed.lua

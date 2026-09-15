@@ -97,6 +97,10 @@ Highlight attachment is deferred and coalesced per buffer; unloading cancels a p
 Monokai's plugin declaration. `:Theme` uses the theme picker in `config.search.telescope`; the theme owner handles preview
 rollback and its confirmation action saves the final choice. Native `:colorscheme` changes remain
 transient. The theme picker preserves the previous background setting when cancelled.
+Live preview applies on the next main-loop turn, outside the picker's suppressed or non-nested
+autocommands, using the original editor window's context rather than the floating prompt's
+highlight mappings. Colorscheme listeners refresh the same modules as confirmation. A request token
+discards superseded selections; closing the picker or deleting its preview retires queued work.
 
 `config.ui.palette` derives one semantic schema from the active theme's `Normal`, syntax, diagnostic,
 and Git groups. Missing values have separate dark/light fallbacks. Text and selected rows are checked
@@ -799,6 +803,8 @@ latest generation for the next event-loop turn and rejects stale generations bef
 nvim-tree's root and window-local directory.
 
 `dashboard-nvim` remains responsible for the homepage buffer lifecycle. The local
+startup options suppress Neovim's built-in intro (`shortmess+=I`) so it cannot flash before the
+project homepage. The local
 `dashboard.theme.project` module delegates its compact rendering and navigation to
 `config.ui.dashboard`; recent files come from `vim.v.oldfiles`, are grouped through the shared project
 authority policy, and are capped before rendering. Activating a project updates the dashboard

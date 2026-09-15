@@ -8,6 +8,11 @@ local replaced_modules = {
   'telescope.actions',
   'telescope.actions.state',
   'telescope.themes',
+  'telescope.previewers',
+  'telescope.previewers.utils',
+  'telescope.pickers',
+  'telescope.finders',
+  'telescope.config',
 }
 local original_modules = {}
 for _, module_name in ipairs(replaced_modules) do
@@ -215,6 +220,60 @@ assert(
   layout_config.vertical.preview_height == 0.36,
   'Narrow Telescope layout did not initially favor search results'
 )
+
+-- Live themes must leave the picker callback's suppressed-autocmd context.
+local theme_previewer
+package.loaded['telescope.previewers'] = {
+  new_buffer_previewer = function(options) theme_previewer = options; return options end,
+}
+package.loaded['telescope.previewers.utils'] = { highlighter = function() end }
+package.loaded['telescope.pickers'] = { new = function() return { find = function() end } end }
+package.loaded['telescope.finders'] = { new_table = function(options) return options end }
+package.loaded['telescope.config'] = { values = { generic_sorter = function() end } }
+local previewed_names = {}
+local scheme_events = 0
+local theme_group = vim.api.nvim_create_augroup('theme_preview_event_test', { clear = true })
+vim.api.nvim_create_autocmd('ColorScheme', {
+  group = theme_group, callback = function() scheme_events = scheme_events + 1 end,
+})
+local function open_theme_preview()
+  telescope_config.theme_picker({
+    names = { 'habamax', 'morning' },
+    preview = function(name)
+      previewed_names[#previewed_names + 1] = name
+      vim.api.nvim_cmd({ cmd = 'colorscheme', args = { name } }, {})
+    end,
+    close = function() end,
+  })
+end
+local previous_theme = vim.g.colors_name or 'default'
+open_theme_preview()
+local theme_buffer = vim.api.nvim_create_buf(false, true)
+local theme_instance = { state = { bufnr = theme_buffer } }
+vim.api.nvim_create_autocmd('User', {
+  group = theme_group, pattern = 'SuppressedThemePreview',
+  callback = function()
+    theme_previewer.define_preview(theme_instance, { value = 'habamax' })
+    theme_previewer.define_preview(theme_instance, { value = 'morning' })
+    assert(#previewed_names == 0, 'Theme application ran inside the picker autocmd')
+  end,
+})
+vim.api.nvim_exec_autocmds('User', { pattern = 'SuppressedThemePreview' })
+assert(vim.wait(500, function() return #previewed_names == 1 end))
+assert(previewed_names[1] == 'morning' and scheme_events == 1,
+  'Latest preview did not notify colorscheme consumers')
+theme_previewer.define_preview(theme_instance, { value = 'habamax' })
+theme_previewer.teardown()
+vim.wait(30)
+assert(#previewed_names == 1, 'Closed picker applied a queued theme')
+open_theme_preview()
+theme_previewer.define_preview(theme_instance, { value = 'habamax' })
+vim.api.nvim_buf_delete(theme_buffer, { force = true })
+vim.wait(30)
+assert(#previewed_names == 1, 'Deleted preview buffer applied a queued theme')
+theme_previewer.teardown()
+vim.api.nvim_del_augroup_by_id(theme_group)
+vim.api.nvim_cmd({ cmd = 'colorscheme', args = { previous_theme } }, {})
 
 for _, module_name in ipairs(replaced_modules) do
   package.loaded[module_name] = original_modules[module_name]
