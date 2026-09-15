@@ -145,6 +145,36 @@ for _, name in ipairs({ 'habamax', 'morning', 'habamax' }) do
   highlights.apply()
   assert(vim.deep_equal(first_apply, vim.api.nvim_get_hl(0, {})), 'Palette application drifts on repeat')
 end
+-- A plugin loaded later can overwrite derived diff groups after our immediate
+-- ColorScheme callback. One deferred pass must settle on the newest theme.
+local late_theme_group = vim.api.nvim_create_augroup('test_late_theme_refresh', { clear = true })
+vim.api.nvim_create_autocmd('ColorScheme', {
+  group = late_theme_group,
+  callback = function()
+    vim.api.nvim_set_hl(0, 'DiffviewDiffAddAsDelete', { bg = 0x123456, fg = 0xABCDEF })
+  end,
+})
+vim.api.nvim_cmd({ cmd = 'colorscheme', args = { 'morning' } }, {})
+vim.api.nvim_cmd({ cmd = 'colorscheme', args = { 'habamax' } }, {})
+assert(vim.wait(1000, function()
+  local deleted = hl('DiffviewDiffAddAsDelete')
+  return deleted.bg == palette.resolve().history.deleted_background and not deleted.fg
+end, 10), 'Late plugin refresh overrode the final theme or its syntax foregrounds')
+vim.api.nvim_del_augroup_by_id(late_theme_group)
+-- A rendered plugin pane must not turn its previous mapped colors into inputs
+-- for the next global palette refresh.
+local expected_palette = palette.resolve()
+local previous_winhl = vim.wo.winhighlight
+vim.api.nvim_set_hl(0, 'TestStalePane', { bg = 0xFFFFFF, fg = 0x000000 })
+vim.api.nvim_set_hl(0, 'TestStaleCursor', { bg = 0xFFFF00 })
+vim.wo.winhighlight = 'Normal:TestStalePane,CursorLine:TestStaleCursor'
+vim.cmd('redraw')
+assert(vim.deep_equal(palette.resolve(), expected_palette), 'Window mappings contaminated the shared palette')
+highlights.apply()
+assert(vim.api.nvim_get_hl(0, { name = 'DiffviewNormal', link = true }).bg == expected_palette.background,
+  'Refreshing from a plugin pane retained its stale background')
+vim.wo.winhighlight = previous_winhl
+vim.cmd('redraw')
 -- The pinned tint follows changes to Normal within one theme, not a fixed panel color.
 local before_context = hl('TreesitterContext').bg
 vim.api.nvim_set_hl(0, 'Normal', { bg = 0x303030, fg = 0xF0F0F0 })

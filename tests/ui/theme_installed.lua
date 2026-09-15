@@ -28,7 +28,7 @@ local function evaluate(source, arguments)
   return vim.rpcrequest(child, 'nvim_exec_lua', source, arguments or {})
 end
 local function wait_for(source, message)
-  assert(vim.wait(5000, function() return evaluate(source) end, 20), message)
+  assert(vim.wait(5000, function() return evaluate(source) == true end, 20), message)
 end
 local function open_picker(target)
   evaluate([[

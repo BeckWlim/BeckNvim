@@ -52,7 +52,18 @@ local function readable(color, background, minimum)
 end
 
 local function highlight(name)
-  return vim.api.nvim_get_hl(0, { name = name, link = false, create = false })
+  -- Resolved lookups can use the active window's winhighlight mapping after
+  -- redraw. Follow global links explicitly so old pane colors cannot feed back
+  -- into the new theme's shared palette.
+  local current_name = name
+  local visited = {}
+  while not visited[current_name] do
+    visited[current_name] = true
+    local definition = vim.api.nvim_get_hl(0, { name = current_name, link = true, create = false })
+    if not definition.link then return definition end
+    current_name = definition.link
+  end
+  return {}
 end
 
 local function foreground(names, default_color)

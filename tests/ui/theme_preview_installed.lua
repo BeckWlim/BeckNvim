@@ -8,6 +8,10 @@ local child = vim.fn.jobstart({
 local function evaluate(source, arguments)
   return vim.rpcrequest(child, 'nvim_exec_lua', source, arguments or {})
 end
+local function input(keys)
+  vim.rpcrequest(child, 'nvim_input', keys)
+  vim.wait(30)
+end
 local function wait_for(source, message)
   assert(vim.wait(3000, function() return evaluate(source) end, 10), message)
 end
@@ -59,6 +63,27 @@ local function check()
           .. vim.inspect({ theme = vim.g.theme_comparison_target, background = vim.o.background, preview = actual[name], applied = expected, current_normal = actual.Normal, expected_normal = vim.g.theme_comparison_expected.Normal }))
       end
     ]])
+    if name == 'monokai' then
+      evaluate([[vim.g.theme_comparison_prompt = vim.api.nvim_get_current_buf()]])
+      input('<Esc><Tab>')
+      wait_for([[
+        local picker = require('telescope.actions.state').get_current_picker(vim.g.theme_comparison_prompt)
+        return vim.api.nvim_get_current_win() == picker.previewer.state.winid
+      ]], 'Theme Tab did not focus preview')
+      input('<Tab>')
+      wait_for([[return vim.api.nvim_get_current_buf() == vim.g.theme_comparison_prompt]],
+        'Theme preview Tab did not return to search prompt')
+      input('i<Tab>')
+      wait_for([[
+        local picker = require('telescope.actions.state').get_current_picker(vim.g.theme_comparison_prompt)
+        return vim.api.nvim_get_current_win() == picker.previewer.state.winid
+      ]], 'Theme could not switch windows after returning to prompt')
+      input('<Tab>')
+      wait_for([[
+        return vim.api.nvim_get_current_buf() == vim.g.theme_comparison_prompt
+          and vim.api.nvim_get_mode().mode == 'i'
+      ]], 'Theme second preview Tab did not restore insert-mode search prompt')
+    end
     vim.rpcrequest(child, 'nvim_input', '<CR>')
     wait_for([[return vim.api.nvim_get_current_buf() == vim.g.theme_comparison_buffer]],
       name .. ': confirmation did not close the picker')

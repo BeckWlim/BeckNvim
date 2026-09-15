@@ -44,6 +44,9 @@ local function load_selection(name, background)
   -- reload it recursively. Retire its name before loading the chosen variant.
   vim.g.colors_name = nil
   vim.o.background = background or preset.background or vim.o.background
+  -- Some schemes clear old groups only when colors_name is set. We retired it
+  -- above to avoid a background-triggered reload, so clear stale colors here.
+  vim.cmd('highlight clear')
   vim.api.nvim_cmd({ cmd = 'colorscheme', args = { preset.colorscheme } }, {})
   if preset.palette then
     require('config.syntax.highlights').load_palette(preset.palette)

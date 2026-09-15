@@ -53,6 +53,18 @@ vim.fn.writefile({ 'return { colorscheme = "habamax", palette = { background = -
   runtime .. '/themes/broken.lua')
 assert(not theme.select('broken') and theme.current().name == 'custom',
   'Invalid palette did not restore the previous preset')
+-- Retiring colors_name for a background change must not defeat schemes that
+-- conditionally clear the previous theme's groups.
+vim.fn.mkdir(runtime .. '/colors', 'p')
+vim.fn.writefile({
+  "if vim.g.colors_name then vim.cmd('highlight clear') end",
+  "vim.api.nvim_set_hl(0, 'Normal', { fg = 0xEEEEEE, bg = 0x222222 })",
+  "vim.g.colors_name = 'conditional_clear'",
+}, runtime .. '/colors/conditional_clear.lua')
+vim.api.nvim_set_hl(0, 'ThemePreviousOnly', { fg = 0x123456 })
+assert(theme.select('conditional_clear'))
+assert(vim.tbl_isempty(vim.api.nvim_get_hl(0, { name = 'ThemePreviousOnly', link = true })),
+  'Theme switch inherited colors omitted by the next scheme')
 -- Only the last confirmation survives a burst of asynchronous writes.
 assert(theme.select('habamax'))
 assert(theme.select('morning'))

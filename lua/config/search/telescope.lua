@@ -62,20 +62,6 @@ local function bind_pane(buffer, prompt_buffer, picker, is_preview)
   end
 end
 
-local function bind_open_pickers()
-  local state = require('telescope.state')
-  for _, prompt_buffer in ipairs(state.get_existing_prompt_bufnrs()) do
-    local picker = state.get_status(prompt_buffer).picker
-    if picker then
-      bind_pane(prompt_buffer, prompt_buffer, picker, false)
-      bind_pane(picker.results_bufnr, prompt_buffer, picker, true)
-      local previewer = picker.previewer
-      local preview_buffer = previewer and previewer.state and previewer.state.bufnr
-      bind_pane(preview_buffer, prompt_buffer, picker, true)
-    end
-  end
-end
-
 local function set_current_window_without_autocommands(window)
   vim.cmd(('noautocmd call nvim_set_current_win(%d)'):format(window))
 end
@@ -99,6 +85,61 @@ local function resize_for_focus(picker, preview_focused)
   picker:full_layout_update()
 end
 
+local function bind_focused_preview(buffer, prompt_buffer, picker)
+  if not buffer or not vim.api.nvim_buf_is_valid(buffer) then return end
+  bind_pane(buffer, prompt_buffer, picker, true)
+  if vim.b[buffer].telescope_preview_modifiable == nil then
+    vim.b[buffer].telescope_preview_modifiable = vim.bo[buffer].modifiable
+  end
+  vim.bo[buffer].modifiable = false
+  vim.keymap.set('n', '<Tab>', function()
+    local active_prompt_window = picker.prompt_win
+    if not active_prompt_window or not vim.api.nvim_win_is_valid(active_prompt_window) then return end
+    unlock_preview(buffer)
+    local return_to_insert_mode = picker.preview_focus_return_mode == 'i'
+    picker.preview_focus_return_mode = nil
+    resize_for_focus(picker, false)
+    local resized_prompt_window = picker.prompt_win
+    if not resized_prompt_window or not vim.api.nvim_win_is_valid(resized_prompt_window) then return end
+    set_current_window_without_autocommands(resized_prompt_window)
+    if return_to_insert_mode then vim.cmd('startinsert') end
+  end, {
+    buffer = buffer,
+    nowait = true,
+    silent = true,
+    desc = 'Return to Telescope prompt',
+  })
+  vim.keymap.set('n', '<CR>', function()
+    if picker.preview_enter_action then
+      picker.preview_enter_action(prompt_buffer)
+    else
+      require('telescope.actions').select_default(prompt_buffer)
+    end
+  end, {
+    buffer = buffer,
+    silent = true,
+    desc = 'Jump to selected Telescope result',
+  })
+end
+
+local function bind_open_pickers()
+  local state = require('telescope.state')
+  for _, prompt_buffer in ipairs(state.get_existing_prompt_bufnrs()) do
+    local picker = state.get_status(prompt_buffer).picker
+    if picker then
+      bind_pane(prompt_buffer, prompt_buffer, picker, false)
+      bind_pane(picker.results_bufnr, prompt_buffer, picker, true)
+      local previewer = picker.previewer
+      local preview_buffer = previewer and previewer.state and previewer.state.bufnr
+      bind_pane(preview_buffer, prompt_buffer, picker, true)
+      if picker.preview_focus_return_mode and previewer and previewer.state
+          and previewer.state.winid == vim.api.nvim_get_current_win() then
+        bind_focused_preview(vim.api.nvim_win_get_buf(previewer.state.winid), prompt_buffer, picker)
+      end
+    end
+  end
+end
+
 function M.focus_preview(prompt_buffer)
   local action_state = require('telescope.actions.state')
   local picker = action_state.get_current_picker(prompt_buffer)
@@ -114,51 +155,17 @@ function M.focus_preview(prompt_buffer)
   end
 
   local return_to_insert_mode = vim.api.nvim_get_mode().mode:sub(1, 1) == 'i'
+  picker.preview_focus_return_mode = return_to_insert_mode and 'i' or 'n'
   resize_for_focus(picker, true)
   local focused_preview_window = previewer.state.winid
   if not focused_preview_window or not vim.api.nvim_win_is_valid(focused_preview_window) then
+    picker.preview_focus_return_mode = nil
     return
   end
   local preview_buffer = vim.api.nvim_win_get_buf(focused_preview_window)
-  bind_pane(preview_buffer, prompt_buffer, picker, true)
-  if vim.b[preview_buffer].telescope_preview_modifiable == nil then
-    vim.b[preview_buffer].telescope_preview_modifiable = vim.bo[preview_buffer].modifiable
-  end
-  vim.bo[preview_buffer].modifiable = false
+  bind_focused_preview(preview_buffer, prompt_buffer, picker)
   vim.wo[focused_preview_window].cursorline = true
   vim.wo[focused_preview_window].cursorlineopt = 'line'
-  vim.keymap.set('n', '<Tab>', function()
-    local active_prompt_window = picker.prompt_win
-    if not active_prompt_window or not vim.api.nvim_win_is_valid(active_prompt_window) then
-      return
-    end
-    unlock_preview(preview_buffer)
-    resize_for_focus(picker, false)
-    local resized_prompt_window = picker.prompt_win
-    if not resized_prompt_window or not vim.api.nvim_win_is_valid(resized_prompt_window) then
-      return
-    end
-    set_current_window_without_autocommands(resized_prompt_window)
-    if return_to_insert_mode then
-      vim.cmd('startinsert')
-    end
-  end, {
-    buffer = preview_buffer,
-    nowait = true,
-    silent = true,
-    desc = 'Return to Telescope results',
-  })
-  vim.keymap.set('n', '<CR>', function()
-    if picker.preview_enter_action then
-      picker.preview_enter_action(prompt_buffer)
-    else
-      require('telescope.actions').select_default(prompt_buffer)
-    end
-  end, {
-    buffer = preview_buffer,
-    silent = true,
-    desc = 'Jump to selected Telescope result',
-  })
 
   -- Telescope normally closes when its prompt loses focus. Suppressing these
   -- two focus-transition events keeps the picker alive while inspecting its

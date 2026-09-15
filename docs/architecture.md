@@ -97,21 +97,28 @@ Highlight attachment is deferred and coalesced per buffer; unloading cancels a p
 Monokai's plugin declaration. `:Theme` uses the theme picker in `config.search.telescope`; the theme owner handles preview
 rollback and its confirmation action saves the final choice. Native `:colorscheme` changes remain
 transient. The theme picker preserves the previous background setting when cancelled.
+The loader clears old highlight groups before applying the next scheme, including schemes that
+conditionally clear only while the previous colorscheme name is still set.
 Live preview applies on the next main-loop turn, outside the picker's suppressed or non-nested
 autocommands, using the original editor window's context rather than the floating prompt's
 highlight mappings. Colorscheme listeners refresh the same modules as confirmation. A request token
 discards superseded selections; closing the picker or deleting its preview retires queued work.
 
 `config.ui.palette` derives one semantic schema from the active theme's `Normal`, syntax, diagnostic,
-and Git groups. Missing values have separate dark/light fallbacks. Text and selected rows are checked
+and Git groups. It reads global definitions and follows their links explicitly: resolved API lookups
+can otherwise reuse the active pane's `winhighlight` mappings after redraw and feed old pane colors
+back into the new palette. Missing values have separate dark/light fallbacks. Text and selected rows are checked
 for contrast; ordinary surfaces share the editor base, and pinned context is a subtle grey tint of
 the editor background, with a weaker filter for light themes. Telescope's pane backgrounds
 and margin cells share this editor base color; border glyphs use the shared neutral edge color
 with at least 3:1 contrast. Titles and selection retain their
 own emphasis. Inactive editor windows use the same background so the picker has no contrasting
 rectangular backing. `config.syntax.highlights` remains the sole owner of project highlight
-application and optional base-palette application. It reapplies groups on `ColorScheme` and coalesces
-refreshes after lazy plugin loads. Renderers retain their named highlights, buffers, and cached data;
+application and optional base-palette application. Its shared refresh coordinator applies groups
+immediately on `ColorScheme`, then coalesces a final `vim.schedule` pass after plugin callbacks and
+lazy plugin loads. The final pass reads the current palette, so rapid switches cannot restore an
+older theme. This runtime path uses no timers or polling. Plugins retain their native theme listeners;
+renderers retain their named highlights, buffers, and cached data;
 changing colors does not rerun Mermaid jobs or rebuild panels. The native `StatusLine` and
 `StatusLineNC` groups use a subtle neutral filter over the editor background, with a weaker
 inactive variant. Lualine consumes these same palette roles through its public theme callback;
@@ -173,7 +180,9 @@ owning picker in every mode, including Visual and command-line mode. `q`, normal
 insert-mode Ctrl-C do not dismiss it; `:q` is rejected before a pane can close. A pane unexpectedly
 closing retires the remaining picker through Telescope's native teardown. Focused source previews
 are read-only and reject Insert/Replace mode; Tab unlocks native preview updates and returns to the
-prompt. Git pickers retain their existing layer-pop action.
+prompt. Telescope may replace the preview buffer during a layout refresh, so the shared previewer
+loaded handler binds the return action to the current buffer while preview focus is active. Git
+pickers retain their existing layer-pop action.
 Renderer-owned scratch buffers do not set `readonly`, which would raise W10 on native result and
 preview updates. Grep/definition preview text and cursor placement precede asynchronous structural
 context; the winbar accepts a completion only for the current selection, buffer revision, and window.

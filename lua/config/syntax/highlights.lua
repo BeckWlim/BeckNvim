@@ -425,6 +425,17 @@ function M.apply()
   apply()
 end
 
+local function request_refresh()
+  if refresh_pending then return end
+  refresh_pending = true
+  vim.schedule(function()
+    refresh_pending = false
+    -- Plugins may replace derived highlights in their own ColorScheme callbacks.
+    -- Finish with the current palette after all synchronous listeners have run.
+    M.apply()
+  end)
+end
+
 -- Optional theme-file palettes replace the base schema in the existing owner.
 -- The active native colorscheme remains the reload target for :colorscheme.
 function M.load_palette(colors)
@@ -496,19 +507,15 @@ function M.setup(options)
   vim.api.nvim_create_autocmd('ColorScheme', {
     group = group,
     pattern = '*',
-    callback = M.apply,
+    callback = function()
+      M.apply()
+      request_refresh()
+    end,
   })
   vim.api.nvim_create_autocmd('User', {
     group = group,
     pattern = 'LazyLoad',
-    callback = function()
-      if refresh_pending then return end
-      refresh_pending = true
-      vim.schedule(function()
-        refresh_pending = false
-        M.apply()
-      end)
-    end,
+    callback = request_refresh,
   })
   M.apply()
 end

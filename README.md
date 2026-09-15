@@ -71,14 +71,12 @@ nvim
 ```
 
 On first launch, lazy.nvim installs missing plugins and builds Termaid for Mermaid diagrams;
-Mason installs configured language servers. Use `:Lazy update termaid` to update the diagram renderer.
-Use a Nerd Font in your terminal for icons.
+Mason installs configured language servers.
 
 Run `./setup.sh --check` to check dependencies or `./setup.sh --help` for setup options.
 
 ## Documentation
 
-- [v0.1.0 release notes](docs/release-notes.md)
 - [Default keybindings](docs/keybindings.md)
 - [Git mode](docs/git-mode.md)
 - [Architecture](docs/architecture.md)
