@@ -41,7 +41,7 @@ The complete ownership and lifecycle model is documented in
 Back up any existing `~/.config/nvim` directory, then run:
 
 ```bash
-git clone https://github.com/BeckWlim/BeckNvim.git ~/.config/nvim
+git clone --branch v0.1.0 https://github.com/BeckWlim/BeckNvim.git ~/.config/nvim
 cd ~/.config/nvim
 ./setup.sh
 ```
@@ -60,6 +60,7 @@ Run `./setup.sh --check` to check dependencies or `./setup.sh --help` for setup 
 
 ## Documentation
 
+- [v0.1.0 release notes](docs/release-notes.md)
 - [Default keybindings](docs/keybindings.md)
 - [Git mode](docs/git-mode.md)
 - [Architecture](docs/architecture.md)

@@ -1,5 +1,17 @@
 # Development
 
+## Versions
+
+`v0.1.0` is the initial release baseline. During `0.x` development, use patch releases (`v0.1.x`)
+for compatible fixes and minor releases (`v0.x.0`) for features or incompatible changes. Describe
+incompatible changes in the release notes. Each release uses an annotated Git tag and matching
+GitHub release notes.
+
+The README installation selects the tagged release. For development, use `git switch master`
+from a clean checkout.
+
+## Validation
+
 Keep behavior in its owning module and preserve native plugin renderers. Update focused tests and
 documentation with user-visible behavior.
 
