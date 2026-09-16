@@ -38,6 +38,7 @@ lua/
 | `config/ui/statusline.lua` | Explicit project identity and project-relative current-file state |
 | `config/ui/theme.lua` | Theme selection, Telescope preview/rollback, and bounded asynchronous preference persistence |
 | `config/ui/palette.lua` | Shared semantic palette resolved from the selected colorscheme, light/dark fallbacks, contrast, and background tints |
+| `config/ui/tmux.lua` | Asynchronous pane palette publication through tmux's application hook and editor owner lifecycle |
 | `config/ui/dashboard.lua` | Bounded project drawer, project-relative MRU state, and dashboard actions |
 | `config/ui/folder_picker.lua` | Reusable Telescope directory browsing, path input, completion, and adaptive sizing |
 | `config/ui/filetree.lua` | Nvim-tree mappings, authoritative root synchronization, window-switching Tab preservation, and project-boundary confirmation |
@@ -80,6 +81,21 @@ lua/
 | `config/audit/project.lua` | Batch project analysis and Overseer task coordination |
 | `config/audit/diagnostic.lua` | Diagnostic-cache inspection and project reporting |
 | `plugins/*.lua` | Plugin specifications, dependencies, conditions, and lightweight setup calls |
+
+`config.startup.autocmds` clears each window's restored jumplist once at `VimEnter`, after ShaDa
+has loaded. Back/forward navigation therefore starts with the current Neovim process, including
+windows opened with startup split arguments. ShaDa still preserves recent files, file marks,
+registers, and search history; ordinary navigation continues to use native window-local jumplists.
+
+## Local plugin development
+
+`config.user` maps `NVIM_DEV`, `NVIM_DEV_PATH`, and `NVIM_DEV_PLUGINS` assignments in `~/.nvim`
+to a `dev` table while preserving proxy assignments. It also accepts existing JSON settings.
+`config.startup.lazy` reads that optional `dev` table before plugin setup.
+It gates repository match patterns on `dev.enabled` and passes the checkout parent directory
+to lazy.nvim's native development resolver, with remote fallback disabled. Plugin declarations
+retain their remote source so disabling development mode restores managed installs. See
+[Local plugin development](development.md#local-plugin-development) for settings.
 
 ## Project Theme System
 
@@ -136,6 +152,45 @@ it does not expand installed plugins into every native variant. The loader valid
 optional light/dark variant, then uses the existing colorscheme path. An optional eight-color palette
 is applied through the highlight owner. Personal preset files are ignored by Git; bundled files and
 plugin pins remain tracked. See [Themes](../themes/README.md) for presets, file creation, and overrides.
+
+### Tmux theme integration
+
+Startup enables `config.ui.tmux` when `TMUX` and `TMUX_PANE` are valid, `tmux` is available,
+and `~/.config/tmux/scripts/theme.sh` is executable. Publication requires an attached Neovim UI,
+so headless commands do not publish. Set `vim.g.beck_tmux_theme = false` before
+`require('config').setup()` in `init.lua` to opt out. Tmux's hook also verifies that the Neovim
+terminal UI PID owns the pane's foreground terminal; inherited environment alone cannot claim a pane.
+
+The adapter resolves colors through `config.ui.palette`: `bg`/`fg` use the editor base,
+`surface` uses the code-block surface, `cursor` uses the active row, and `border`/`muted`
+use the shared neutral roles. `green`, `cyan`, `yellow`, and `purple` use function, type,
+string, and constant accents; `red` uses the deletion accent. These eleven base roles are
+sent as `#RRGGBB` argv entries with `--owner` set to the `nvim-tui` channel's advertised PID,
+falling back to the editor PID for older UIs. This supports Neovim's separate TUI and editor processes.
+
+The hook accepts any nonempty subset of `ROLE=#RRGGBB` entries, with omitted base roles
+falling back to tmux's night defaults. Each publication replaces the previous overrides.
+It accepts color values, not a theme name or a light/dark selector. Sending all base roles
+keeps light themes consistent. The optional `window_active_fg`, `window_active_bg`,
+`window_inactive_fg`, and `window_inactive_bg` roles are omitted: tmux derives them from
+`green`, `cursor`, `muted`, and `bg` respectively. Tmux stores publications in
+`@beck_palette_*` and resolves pane/shared UI colors through `@beck_pane_*`/`@beck_ui_*`;
+the adapter only calls the hook and does not depend on these internal option names.
+
+Startup, UI attachment, colorscheme changes (including preview and rollback), and lazy plugin
+loads schedule publication after highlight callbacks. One asynchronous hook runs at a time,
+with a one-second timeout and one replaceable pending action. Palette resolution occurs when
+the queued publication starts, so bursts use current colors. Resume and return from shell
+commands republish even if the palette is unchanged. Suspend queues an owner-scoped reset
+and suppresses color updates; exit retires queued publications and attempts a reset without waiting.
+Sync is best effort: failed color resolution, launch errors, nonzero exits, and timeouts stay silent.
+There are no retries until another editor event requests publication, and sync never delays editor exit.
+Tmux owns crash and foreground-loss recovery through its watcher, including when suspension
+or exit prevents Neovim's callbacks from completing. The adapter does not reset on pane focus
+changes and never uses `--force` or changes tmux's global defaults.
+
+### Tree-sitter query extensions
+
 Custom Tree-sitter query extensions live in `lua/config/syntax/after/queries/`. The lazy.nvim
 bootstrap registers `lua/config/syntax/after` as an additional runtime path, preserving standard
 query discovery and `; extends` behavior. The Markdown query adds the table highlight capture.
@@ -227,11 +282,22 @@ same pane. The source window's options and view are restored when leaving the re
 `i` uses the same source-position transition and enters Insert mode, including from wrapped table
 cells and diagram rows. Editing stays in the source buffer; yanking from the rendered view copies
 displayed text.
+
+Source/preview buffer switches use `keepjumps`, so rendering does not add source entries or reset
+the native jump index. Navigating to another file keeps the rendered buffer hidden; `<Space>o`
+and `<Space>p` (native `<C-o>` / `<C-i>`) retain their destinations and displayed cursor positions.
+Revisiting the source reuses its preview in the same window. Reentering the preview restores its
+window options and refreshes after the native jump has placed the cursor. Explicit source mode,
+source deletion, or closing the owning window retires the preview and its subscriptions.
+
 `<Space>h` retires the preview through its mapped source transition before opening the dashboard.
 The dashboard therefore captures the file's project context and editor options from the source
 buffer; revisiting the file restores its rendered preference.
 
-Source edits, diagram completions, and window resizing coalesce into a refresh after navigation has
+The startup file checks also check hidden source buffers behind visible Markdown previews on focus,
+buffer entry, and cursor idle events. Neovim's normal `autoread` and unsaved-change handling apply;
+the preview subscribes to `FileChangedShellPost` so external reloads refresh tables and Mermaid too.
+Source edits, external reloads, diagram completions, and window resizing coalesce into a refresh after navigation has
 been idle for 120 ms. Completed background renders therefore do not interrupt continuous movement
 or scrolling. The current source position is retained
 through a source extmark, including edits above the selection; rebuilds restore the corresponding
@@ -322,6 +388,11 @@ recalculate accents; explicit bold and italic labels retain their formatting. Ol
 executables that reject styled output, and malformed styled responses, receive one bounded plain
 fallback. Missing executables, failed renders, and oversized diagrams leave their original fences
 visible in the preview. No rendered diagram is split after routing its connectors.
+When Termaid exits unsuccessfully, its existing process completion callback shows a single-line
+warning with the opening fence line and exit status, leaving the source readable and editable.
+Timeouts report the configured duration. Warnings remain in `:messages`; stderr is not displayed.
+Successful compatibility retries and stale or canceled jobs stay quiet; cached failures do not log
+again on redraw. Failure reporting adds no polling or listeners.
 
 ## Project Definition Search
 
@@ -397,7 +468,7 @@ the others for background preload.
 For repository scope, a dirty porcelain-v2 worktree adds one synthetic `WORKTREE` row ahead of the
 branch rows. Its children use Diffview's native `HEAD → LOCAL` revisions and include untracked files;
 it is not emitted for file or symbol scopes and does not alter cursor-target restoration.
-Cursor movement within the window does not replace or reprioritize that queue. `config.user` reads an optional user-level `~/.nvim` Lua table and `config.git.settings`
+Cursor movement within the window does not replace or reprioritize that queue. `config.user` reads optional user-level `~/.nvim` settings and `config.git.settings`
 validates bounded overrides before the repository/loader modules consume them. Its history panel starts at ten lines at the bottom;
 the first native frame focuses that panel and reports HEAD metadata and history-list work as separate
 view-owned async activities. HEAD resolution runs after the panel mount and alongside Diffview's

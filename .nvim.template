@@ -1,3 +1,10 @@
 http_proxy=http://127.0.0.1:7890
 https_proxy=http://127.0.0.1:7890
 # NO_PROXY=localhost,127.0.0.1
+
+# Load selected plugins from local checkouts; restart Neovim after changing.
+NVIM_DEV=false
+# Parent directory containing plugin repositories (defaults to ~/.config).
+NVIM_DEV_PATH=~/.config
+# Comma-separated repository matches; this selects ~/.config/termaid.
+NVIM_DEV_PLUGINS=BeckWlim/termaid

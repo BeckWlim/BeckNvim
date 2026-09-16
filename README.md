@@ -8,8 +8,12 @@ system while keeping native Neovim and plugin behavior wherever practical.
 
 - **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
 - **Git review:** search remote branches, inspect commits, detach HEAD for deeper review, and read pull requests in floating dialogs.
-- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, with source editing in place.
+- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, with source editing in place and refreshes when external file changes are detected.
+  Use `<Space>o` / `<Space>p` to jump back and forward through rendered documents within the current Neovim run.
+  Mermaid render failures show a single-line warning and leave the source readable and editable.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
+  Inside tmux, its local palette hook makes the pane and status bar follow the editor theme;
+  see [tmux theme integration](docs/architecture.md#tmux-theme-integration).
 
 ## See it in action
 
@@ -74,6 +78,9 @@ On first launch, lazy.nvim installs missing plugins and builds Termaid for Merma
 Mason installs configured language servers.
 
 Run `./setup.sh --check` to check dependencies or `./setup.sh --help` for setup options.
+
+To load plugins from local checkouts, configure [development mode](docs/development.md#local-plugin-development)
+in `~/.nvim`.
 
 ## Documentation
 

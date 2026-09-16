@@ -11,6 +11,30 @@ local window_option_names = {
   'conceallevel', 'concealcursor', 'colorcolumn',
 }
 
+local function set_buffer(window, buffer)
+  vim.api.nvim_win_call(window, function()
+    vim.api.nvim_cmd({ cmd = 'buffer', args = { tostring(buffer) }, mods = { keepjumps = true } }, {})
+  end)
+end
+
+local function preview_options(session)
+  local window = session.window
+  vim.wo[window].foldmethod = 'manual'
+  vim.wo[window].number = session.source_options.number
+  vim.wo[window].relativenumber = session.source_options.relativenumber
+  vim.wo[window].signcolumn = 'no'
+  vim.wo[window].foldcolumn = '0'
+  vim.wo[window].foldenable = false
+  vim.wo[window].wrap = true
+  vim.wo[window].linebreak = true
+  vim.wo[window].breakindent = true
+  vim.wo[window].showbreak = '↳ '
+  vim.wo[window].smoothscroll = true
+  vim.wo[window].cursorline = true
+  vim.wo[window].colorcolumn = ''
+  vim.wo[window].winbar = ''
+end
+
 local function live(session)
   return sessions[session.source] == session
     and vim.api.nvim_buf_is_valid(session.source)
@@ -87,7 +111,7 @@ local function close(session, buffer_wiping)
     if not buffer_wiping then
       local replacement = not session.source_gone and vim.api.nvim_buf_is_valid(session.source)
         and session.source or vim.api.nvim_create_buf(true, false)
-      vim.api.nvim_win_set_buf(session.window, replacement)
+      set_buffer(session.window, replacement)
     end
     if returning_to_source then
       for name, value in pairs(session.source_options) do vim.wo[session.window][name] = value end
@@ -221,6 +245,19 @@ function M.open(source)
   if existing and live(existing) and existing.window == window then
     return existing.buffer
   end
+  if existing and existing.window == window then
+    local source_cursor = vim.api.nvim_win_get_cursor(window)
+    existing.source_view = vim.fn.winsaveview()
+    for _, name in ipairs(window_option_names) do existing.source_options[name] = vim.wo[window][name] end
+    set_buffer(window, existing.buffer)
+    preview_options(existing)
+    M.refresh(source)
+    vim.api.nvim_win_set_cursor(window,
+      features.preview_position(existing.rows, source_cursor[1] - 1, source_cursor[2]))
+    remember_source_position(existing)
+    highlight_cursor(existing)
+    return existing.buffer
+  end
   if existing then close(existing) end
   local source_cursor = vim.api.nvim_win_get_cursor(window)
   local source_view = vim.fn.winsaveview()
@@ -230,26 +267,15 @@ function M.open(source)
   vim.bo[source].bufhidden = 'hide'
   vim.b[source].markdown_preview_disabled = false
   local buffer = vim.api.nvim_create_buf(false, true)
-  vim.bo[buffer].bufhidden = 'wipe'
+  -- Native jump entries refer to this buffer. Keep it until an explicit source
+  -- transition or source/window teardown so forward jumps retain their target.
+  vim.bo[buffer].bufhidden = 'hide'
   vim.bo[buffer].swapfile = false
   vim.bo[buffer].undolevels = -1
   vim.b[buffer].markdown_preview_source = source
   vim.api.nvim_buf_set_name(buffer, ('markdown-preview://%d'):format(source))
   vim.wo[window].foldmethod = 'manual'
-  vim.api.nvim_win_set_buf(window, buffer)
-  vim.wo[window].number = source_options.number
-  vim.wo[window].relativenumber = source_options.relativenumber
-  vim.wo[window].signcolumn = 'no'
-  vim.wo[window].foldcolumn = '0'
-  vim.wo[window].foldenable = false
-  vim.wo[window].wrap = true
-  vim.wo[window].linebreak = true
-  vim.wo[window].breakindent = true
-  vim.wo[window].showbreak = '↳ '
-  vim.wo[window].smoothscroll = true
-  vim.wo[window].cursorline = true
-  vim.wo[window].colorcolumn = ''
-  vim.wo[window].winbar = ''
+  set_buffer(window, buffer)
   local session = {
     source = source, buffer = buffer, window = window, rows = {}, feature_cache = {},
     last_activity_ns = vim.uv.hrtime(),
@@ -258,6 +284,7 @@ function M.open(source)
   }
   sessions[source] = session
   sessions_by_preview[buffer] = session
+  preview_options(session)
   features.subscribe(source, function() schedule_refresh(session) end)
   local close_preview = function() close(session) end
   require('config.ui.float').bind_close({ buffer = buffer, close = close_preview, description = 'Return to Markdown source' })
@@ -277,7 +304,20 @@ function M.open(source)
       end
     end,
   })
-  vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'BufWritePost' }, {
+  vim.api.nvim_create_autocmd('BufWinEnter', {
+    group = session.group, buffer = buffer, callback = function()
+      if not live(session) then return end
+      preview_options(session)
+      -- The native jump sets its destination cursor after BufWinEnter finishes.
+      vim.schedule(function()
+        if not live(session) then return end
+        remember_source_position(session)
+        M.refresh(source)
+        highlight_cursor(session)
+      end)
+    end,
+  })
+  vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'BufWritePost', 'FileChangedShellPost' }, {
     group = session.group, buffer = source, callback = function() schedule_refresh(session) end,
   })
   vim.api.nvim_create_autocmd('CursorMoved', {

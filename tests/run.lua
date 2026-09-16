@@ -1,6 +1,7 @@
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
 
 for _, test_file in ipairs({
+  'tests/user.lua',
   'tests/project.lua',
   'tests/audit/workflow.lua',
   'tests/git/diffview.lua',
@@ -23,11 +24,14 @@ for _, test_file in ipairs({
   'tests/search/telescope.lua',
   'tests/search/workspace_symbols.lua',
   'tests/startup/keybindings.lua',
+  'tests/startup/jumps.lua',
+  'tests/startup/lazy.lua',
   'tests/syntax/folds.lua',
   'tests/syntax/highlights.lua',
   'tests/syntax/markdown/table/cells.lua',
   'tests/syntax/markdown/configuration.lua',
   'tests/syntax/markdown/features.lua',
+  'tests/syntax/markdown/jumps.lua',
   'tests/syntax/markdown/preview.lua',
   'tests/syntax/markdown/table/rendering.lua',
   'tests/syntax/mermaid.lua',
@@ -46,6 +50,7 @@ for _, test_file in ipairs({
   'tests/ui/terminal.lua',
   'tests/ui/window_state.lua',
   'tests/ui/theme.lua',
+  'tests/ui/tmux.lua',
 }) do
   local test_chunk, load_error = loadfile(test_file)
   assert(test_chunk, load_error)

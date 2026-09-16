@@ -17,6 +17,42 @@ local function user_config_path()
   return vim.fs.normalize(vim.fn.expand('~/.nvim'))
 end
 
+local function read_assignments(config_lines)
+  local assignment_config = { proxy_environment = {}, dev = {} }
+  local found_assignment = false
+  local found_content = false
+  for _, line in ipairs(config_lines) do
+    if not line:match('^%s*$') and not line:match('^%s*#') then
+      found_content = true
+      local assignment_line = line:gsub('^%s*export%s+', '')
+      local name, raw_value = assignment_line:match('^%s*([%a_][%w_]*)%s*=%s*(.-)%s*$')
+      if name then
+        found_assignment = true
+        local _, quoted_value = raw_value:match('^(["\'])(.-)%1%s*$')
+        local _, commented_quoted_value = raw_value:match('^(["\'])(.-)%1%s*#.*$')
+        local value = quoted_value
+          or commented_quoted_value
+          or vim.trim((raw_value:gsub('%s+#.*$', '')))
+        if name == 'NVIM_DEV' then
+          assignment_config.dev.enabled = value == 'true' or value == '1'
+        elseif name == 'NVIM_DEV_PATH' then
+          assignment_config.dev.path = value
+        elseif name == 'NVIM_DEV_PLUGINS' then
+          assignment_config.dev.patterns = {}
+          for pattern in value:gmatch('[^,%s]+') do
+            table.insert(assignment_config.dev.patterns, pattern)
+          end
+        elseif value ~= '' then
+          assignment_config.proxy_environment[name] = value
+        end
+      end
+    end
+  end
+  if found_assignment or not found_content then
+    return assignment_config
+  end
+end
+
 local function read_config()
   local config_path = user_config_path()
   local config_stat = vim.uv.fs_stat(config_path)
@@ -30,21 +66,15 @@ local function read_config()
   end
   local config_source = table.concat(config_lines, '\n')
   local decoded, loaded_config = pcall(vim.json.decode, config_source)
-  if not decoded then
-    loaded_config = { proxy_environment = {} }
-    for _, line in ipairs(config_lines) do
-      local name, value = line:match('^%s*([%w_]+)%s*=%s*(.-)%s*$')
-      if name and value and value ~= '' then
-        loaded_config.proxy_environment[name] = value:gsub('^(["\'])(.*)%1$', '%2')
-      end
-    end
-    decoded = next(loaded_config.proxy_environment) ~= nil
+  if decoded and type(loaded_config) == 'table' then
+    return loaded_config
   end
-  if not decoded or type(loaded_config) ~= 'table' then
-    warn_once('Invalid user Neovim settings JSON: ' .. config_path)
-    return {}
+  local assignment_config = not decoded and read_assignments(config_lines) or nil
+  if assignment_config then
+    return assignment_config
   end
-  return loaded_config
+  warn_once('Invalid user Neovim settings (expected NAME=value lines or a JSON object): ' .. config_path)
+  return {}
 end
 
 function M.get()

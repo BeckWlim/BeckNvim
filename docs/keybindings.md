@@ -13,6 +13,10 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 | `<Tab>` / `<S-Tab>` | Move between results/preview or Git panes |
 | `<C-v>` / `<C-x>` | Open a result in a vertical/horizontal split |
 | `<C-q>` | Close the active UI layer |
+| `<Space>o` / `<Space>p` | Jump back / forward within the current Neovim run |
+
+Jump history starts fresh in each Neovim instance. Recent files, saved marks, registers, and
+search history remain available across restarts through ShaDa.
 
 ## Git Mode
 

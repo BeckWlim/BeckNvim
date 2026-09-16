@@ -2,6 +2,19 @@ local M = {}
 
 function M.setup()
   require('config.syntax.markdown').setup()
+  local jump_group = vim.api.nvim_create_augroup('current_instance_jumps', { clear = true })
+  vim.api.nvim_create_autocmd('VimEnter', {
+    group = jump_group,
+    once = true,
+    callback = function()
+      -- ShaDa has finished restoring here. Keep its recent files, marks, and
+      -- registers, but begin each process with its own navigation history.
+      for _, window in ipairs(vim.api.nvim_list_wins()) do
+        vim.api.nvim_win_call(window, function() vim.cmd('clearjumps') end)
+      end
+    end,
+    desc = 'Start jump history in the current Neovim instance',
+  })
   local external_change_group = vim.api.nvim_create_augroup(
     'reload_external_file_changes',
     { clear = true }
@@ -10,7 +23,17 @@ function M.setup()
     group = external_change_group,
     nested = true,
     callback = function()
-      vim.cmd.checktime()
+      vim.api.nvim_cmd({ cmd = 'checktime' }, {})
+      -- Rendered Markdown hides its file buffer; checktime skips hidden buffers
+      -- unless they are named explicitly.
+      local checked_sources = {}
+      for _, window in ipairs(vim.api.nvim_list_wins()) do
+        local source = vim.b[vim.api.nvim_win_get_buf(window)].markdown_preview_source
+        if source and not checked_sources[source] and vim.api.nvim_buf_is_loaded(source) then
+          checked_sources[source] = true
+          vim.api.nvim_cmd({ cmd = 'checktime', args = { tostring(source) } }, {})
+        end
+      end
     end,
     desc = 'Reload files changed outside Neovim',
   })

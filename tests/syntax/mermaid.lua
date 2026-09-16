@@ -1,6 +1,10 @@
 -- Focused projection, fallback, and process-budget tests for Mermaid.
 local markdown_features = require('config.syntax.markdown_features')
 local mermaid = require('config.syntax.mermaid')
+local function message_history()
+  return vim.api.nvim_exec2('messages', { output = true }).output
+end
+vim.cmd('messages clear')
 
 -- Resolve the managed checkout, including a custom lazy root, before any PATH tool.
 local saved_lazy_config = package.loaded['lazy.core.config']
@@ -279,6 +283,8 @@ for index = 2, #fallback_rows do
   assert(markdown_features.chunks_width(fallback_rows[index].chunks) == 14,
     'Mermaid blank or wide-character row did not fill the rectangle in display cells')
 end
+assert(not message_history():find('Mermaid line ', 1, true),
+  'Successful renders or a recovered compatibility retry logged a render failure')
 
 mermaid.detach(buffer)
 refreshes = 0
@@ -287,7 +293,10 @@ mermaid.find_executable = function()
   return '/test/bin/termaid'
 end
 assert(#mermaid.parse(context) == 0, 'A fresh Mermaid render was not pending')
-process_requests[1].callback({ code = 1, stderr = 'invalid graph', stdout = '' })
+vim.api.nvim_buf_set_name(buffer, '/tmp/termaid-errors.md')
+local error_before_failure = vim.v.errmsg
+local tick_before_failure = vim.api.nvim_buf_get_changedtick(buffer)
+process_requests[1].callback({ code = 1, stderr = 'Error rendering diagram: invalid graph\nparse detail', stdout = '' })
 assert(vim.wait(100, function()
   return refreshes == 1
 end, 1), 'Failed Mermaid rendering did not settle through the shared pipeline')
@@ -295,6 +304,27 @@ assert(
   #mermaid.parse(context) == 0 and #process_requests == 1,
   'Failed Mermaid rendering did not retain raw source without retrying'
 )
+local failure_history = message_history()
+assert(failure_history:find('Mermaid line 2:', 1, true)
+    and failure_history:find('exit 1', 1, true)
+    and not failure_history:find('\n', 1, true)
+    and not failure_history:find('parse detail', 1, true),
+  'Mermaid failure did not produce a single-line warning without stderr')
+assert(vim.v.errmsg == error_before_failure and not vim.api.nvim_get_mode().blocking,
+  'Optional Mermaid failure raised an editor error or blocked input')
+assert(vim.api.nvim_buf_get_changedtick(buffer) == tick_before_failure and vim.bo[buffer].modifiable,
+  'Optional Mermaid failure changed source text or disabled editing')
+mermaid.parse(context)
+assert(message_history() == failure_history, 'A cached failed render repeated its error log')
+
+mermaid.detach(buffer)
+refreshes = 0
+process_requests = {}
+mermaid.parse(context)
+process_requests[1].callback({ code = 124, stderr = '', stdout = '' })
+assert(vim.wait(100, function() return refreshes == 1 end, 1), 'Timed-out render did not settle')
+assert(message_history():find('timed out after 4321 ms', 1, true),
+  'Timeout without stderr was lost from :messages')
 
 mermaid.detach(buffer)
 process_requests = {}
@@ -307,9 +337,17 @@ assert(
   killed_processes >= 1,
   'Editing Mermaid source did not cancel the stale renderer generation'
 )
-process_requests[1].callback({ code = 0, stdout = 'stale output' })
+local history_before_stale = message_history()
+process_requests[1].callback({ code = 1, stderr = 'stale render failure', stdout = '' })
 vim.wait(20)
 assert(refreshes == 1, 'A stale Mermaid callback requested another render')
+assert(message_history() == history_before_stale, 'A canceled render logged a stale error')
+
+-- A source edit can arrive before the preview has reparsed the buffer.
+vim.api.nvim_buf_set_lines(buffer, 3, 4, false, { '  A --> Newer' })
+process_requests[2].callback({ code = 1, stderr = 'failure before reparse', stdout = '' })
+vim.wait(20)
+assert(message_history() == history_before_stale, 'An edited source logged an obsolete render error')
 
 mermaid.detach(buffer)
 process_requests = {}

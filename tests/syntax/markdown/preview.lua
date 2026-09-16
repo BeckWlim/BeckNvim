@@ -190,4 +190,45 @@ assert(not vim.wo.number and not vim.wo.relativenumber,
 preview.toggle()
 vim.api.nvim_set_current_buf(original_buffer)
 vim.api.nvim_buf_delete(section_source, { force = true })
+
+-- Disk reloads affect the hidden source without firing its editing events.
+local external_path = vim.fn.tempname() .. '.md'
+local saved_autoread = vim.o.autoread
+vim.o.autoread = true
+vim.fn.writefile({ '# Before reload', '', 'Original prose' }, external_path)
+vim.api.nvim_cmd({ cmd = 'edit', args = { external_path } }, {})
+local external_source = vim.api.nvim_get_current_buf()
+local external_preview = preview.open(external_source)
+vim.fn.writefile({ '# After external reload', '', 'Updated prose from disk' }, external_path)
+vim.api.nvim_cmd({ cmd = 'checktime', args = { tostring(external_source) } }, {})
+assert(vim.api.nvim_buf_get_lines(external_source, 0, 1, false)[1] == '# After external reload',
+  'External change fixture did not reload its hidden source')
+assert(vim.wait(500, function()
+  return vim.api.nvim_buf_get_lines(external_preview, 0, 1, false)[1] == '# After external reload'
+end, 5), 'External file reload did not refresh the rendered preview')
+assert(vim.api.nvim_get_current_buf() == external_preview and not vim.bo[external_source].modified,
+  'External reload left the preview or modified the source')
+vim.api.nvim_buf_set_lines(external_source, 0, 1, false, { '# Unsaved local edit' })
+vim.fn.writefile({ '# Conflicting external change', '', 'Disk content' }, external_path)
+local conflict_reason
+local conflict_handler = vim.api.nvim_create_autocmd('FileChangedShell', {
+  buffer = external_source,
+  callback = function()
+    conflict_reason = vim.v.fcs_reason
+    vim.v.fcs_choice = '' -- Keep local edits without opening an interactive prompt in the test.
+  end,
+})
+vim.api.nvim_cmd({ cmd = 'checktime', args = { tostring(external_source) } }, {})
+assert(conflict_reason == 'conflict' and vim.bo[external_source].modified
+  and vim.api.nvim_buf_get_lines(external_source, 0, 1, false)[1] == '# Unsaved local edit',
+  'External file checks bypassed Neovim conflict handling or overwrote local edits')
+assert(vim.api.nvim_get_current_buf() == external_preview
+  and vim.api.nvim_buf_get_lines(external_preview, 0, 1, false)[1] ~= '# Conflicting external change',
+  'Conflict handling replaced the preview with disk content')
+vim.api.nvim_del_autocmd(conflict_handler)
+preview.toggle()
+vim.api.nvim_set_current_buf(original_buffer)
+vim.api.nvim_buf_delete(external_source, { force = true })
+vim.fn.delete(external_path)
+vim.o.autoread = saved_autoread
 for name, value in pairs(original_options) do vim.wo[name] = value end

@@ -22,7 +22,26 @@ end
 
 vim.opt.rtp:prepend(lazypath)
 
+-- Personal development checkouts use lazy.nvim's native directory resolution.
+local user_config = require('config.user').get()
+local dev_config = type(user_config.dev) == 'table' and user_config.dev or {}
+local dev_patterns = {}
+if dev_config.enabled == true and type(dev_config.patterns) == 'table' then
+  for _, pattern in ipairs(dev_config.patterns) do
+    if type(pattern) == 'string' and pattern ~= '' then
+      dev_patterns[#dev_patterns + 1] = pattern
+    end
+  end
+end
+local dev_path = type(dev_config.path) == 'string' and dev_config.path ~= ''
+  and dev_config.path or '~/.config'
+
 require("lazy").setup("plugins", {
+  dev = {
+    path = vim.fn.expand(dev_path),
+    patterns = dev_patterns,
+    fallback = false,
+  },
   performance = {
     rtp = {
       paths = vim.api.nvim_get_runtime_file("lua/config/syntax/after", true),

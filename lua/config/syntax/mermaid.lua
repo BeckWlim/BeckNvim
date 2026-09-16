@@ -341,12 +341,19 @@ local function request_render(buffer)
   markdown_features.request_render(buffer, 'MermaidRender')
 end
 
+local function report_failure(block, reason)
+  local message = ('Mermaid line %d: %s; showing source.'):format(block.block_start + 1, reason)
+  vim.api.nvim_echo({ { message, 'WarningMsg' } }, true, {})
+end
+
 local pump
 local launch_request
 
 local function finish_request(buffer, state, request, completed_process)
   if states_by_buffer[buffer] ~= state
       or state.generation ~= request.generation
+      or not vim.api.nvim_buf_is_valid(buffer)
+      or vim.api.nvim_buf_get_changedtick(buffer) ~= state.changedtick
       or state.jobs[request.block.key] ~= request then
     return
   end
@@ -381,6 +388,11 @@ local function finish_request(buffer, state, request, completed_process)
   } or {
     status = completed_process.code == 124 and 'timeout' or 'failed',
   }
+  if completed_process.code ~= 0 then
+    local reason = completed_process.code == 124 and ('render timed out after %d ms'):format(M.timeout_ms)
+      or ('render failed (exit %s)'):format(tostring(completed_process.code))
+    report_failure(request.block, reason)
+  end
   pump(buffer, state)
   request_render(buffer)
 end

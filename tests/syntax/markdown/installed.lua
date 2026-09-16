@@ -25,6 +25,10 @@ local function check()
   vim.rpcrequest(child, 'nvim_set_var', 'preview_test_project', project_directory)
   evaluate([[
     vim.cmd('enew!')
+    vim.api.nvim_buf_set_name(0, vim.g.preview_test_project .. '/navigation-origin.lua')
+    vim.g.preview_jump_origin = vim.api.nvim_get_current_buf()
+    vim.cmd('clearjumps')
+    vim.cmd('enew!')
     vim.api.nvim_buf_set_lines(0, 0, -1, false, {
       '# Markdown preview', '', '[Visible link](https://example.com/prose)', '- List item', '',
       string.rep('Ordinary prose wraps independently. ', 5), '',
@@ -47,6 +51,24 @@ local function check()
   end, 100), 'Real Mermaid render did not complete')
   assert(evaluate([[return require('lazy.core.config').plugins.termaid._.loaded ~= nil]]),
     'Markdown rendering left its Termaid dependency unloaded in lazy.nvim')
+  evaluate([[
+    local rendered = vim.api.nvim_get_current_buf()
+    local position = { 1, 4 }
+    vim.api.nvim_win_set_cursor(0, position)
+    for _ = 1, 3 do
+      vim.api.nvim_feedkeys(vim.keycode('<Space>o'), 'xt', false)
+      vim.wait(50)
+      assert(vim.api.nvim_get_current_buf() == vim.g.preview_jump_origin,
+        'Space o bounced back into rendered Markdown')
+      vim.api.nvim_feedkeys(vim.keycode('<Space>p'), 'xt', false)
+      vim.wait(50)
+      assert(vim.api.nvim_get_current_buf() == rendered
+        and vim.deep_equal(vim.api.nvim_win_get_cursor(0), position),
+        'Space p lost its rendered Markdown destination')
+    end
+    assert(vim.wo.foldmethod == 'manual' and vim.wo.conceallevel == 3,
+      'Jumping forward did not restore the rendered window options')
+  ]])
   vim.wait(100)
   assert(not vim.rpcrequest(child, 'nvim_get_mode').blocking, 'Preview opened a blocking prompt')
   evaluate([[
@@ -399,6 +421,99 @@ local function check()
     vim.api.nvim_feedkeys(vim.keycode('i'), 'xt', false)
     assert(vim.api.nvim_get_current_buf() == vim.g.homepage_test_source and vim.wo.number,
       'Returning to source after the homepage lost line numbers')
+  ]])
+  local external_path = project_directory .. '/external.md'
+  local function write_diagram(label)
+    vim.fn.writefile({ '# External changes', '', '```mermaid', 'graph LR',
+      'A[Input] --> B[' .. label .. ']', '```', '', 'End of document',
+    }, external_path)
+  end
+  write_diagram('Original')
+  vim.rpcrequest(child, 'nvim_exec_lua', [[
+    vim.api.nvim_cmd({ cmd = 'edit', args = { ... }, bang = true }, {})
+    vim.g.external_test_source = vim.api.nvim_get_current_buf()
+  ]], { external_path })
+  local function diagram_contains(label)
+    return vim.rpcrequest(child, 'nvim_exec_lua', [[
+      local label = ...
+      local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
+      return vim.b.markdown_preview_source == vim.g.external_test_source
+        and text:find('󰙅 mermaid', 1, true) ~= nil and text:find(label, 1, true) ~= nil
+    ]], { label })
+  end
+  assert(vim.wait(10000, function() return diagram_contains('Original') end, 50),
+    'External-change fixture did not render its initial diagram')
+  local external_preview = evaluate([[return vim.api.nvim_get_current_buf()]])
+  for _, change in ipairs({
+    { label = 'DiskUpdate', event = 'FocusGained' },
+    { label = 'IdleUpdate', event = 'CursorHold' },
+  }) do
+    write_diagram(change.label)
+    vim.rpcrequest(child, 'nvim_exec_lua', [[
+      vim.api.nvim_exec_autocmds(..., {})
+    ]], { change.event })
+    assert(vim.wait(10000, function() return diagram_contains(change.label) end, 50),
+      change.event .. ' did not rerender the externally changed Mermaid diagram: ' .. vim.inspect(evaluate([[
+        return { source = vim.api.nvim_buf_get_lines(vim.g.external_test_source, 0, -1, false),
+          preview = vim.api.nvim_buf_get_lines(0, 0, -1, false),
+          messages = vim.api.nvim_exec2('messages', { output = true }).output }
+      ]])))
+    assert(evaluate([[return vim.api.nvim_get_current_buf()]]) == external_preview,
+      'External change replaced the preview session')
+    assert(not diagram_contains('Original'), 'External change retained the cached diagram')
+    assert(evaluate([[return not vim.bo[vim.g.external_test_source].modified]]),
+      'External reload marked its source modified')
+  end
+  -- Keep the UI attached so render failures exercise normal hit-enter behavior.
+  evaluate([[
+    local mermaid = require('config.syntax.mermaid')
+    local buffer = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_name(buffer, vim.g.preview_test_project .. '/invalid-diagram.md')
+    local original_line_limit = mermaid.max_rendered_lines
+    local original_window = vim.api.nvim_get_current_win()
+    local original_buffer = vim.api.nvim_get_current_buf()
+    local original_cursor = vim.api.nvim_win_get_cursor(0)
+    local original_error = vim.v.errmsg
+    for _, case in ipairs({
+      { source = { 'not-a-diagram-type' }, width = 120, lines = original_line_limit,
+        exit_code = 1 },
+      { source = { 'graph LR', 'A --> B' }, width = 2, lines = original_line_limit,
+        exit_code = 2 },
+      { source = { 'graph LR', 'A --> B' }, width = 120, lines = 1,
+        exit_code = 2 },
+    }) do
+      local source_lines = vim.list_extend({ '```mermaid' }, case.source)
+      source_lines[#source_lines + 1] = '```'
+      vim.api.nvim_buf_set_lines(buffer, 0, -1, false, source_lines)
+      local tree = assert(vim.treesitter.get_parser(buffer, 'markdown'):parse()[1])
+      local context = { buf = buffer, root = tree:root(), width = case.width }
+      mermaid.max_rendered_lines = case.lines
+      vim.cmd('messages clear')
+      mermaid.parse(context)
+      assert(vim.wait(10000, function()
+        return vim.api.nvim_exec2('messages', { output = true }).output:find('Mermaid line 1:', 1, true)
+      end, 20), 'Installed Termaid failure did not reach :messages')
+      local messages = vim.api.nvim_exec2('messages', { output = true }).output
+      assert(not messages:find('\n', 1, true) and messages:find('exit ' .. case.exit_code, 1, true),
+        'Installed Termaid failure did not produce a single-line warning: ' .. messages)
+      assert(not vim.api.nvim_get_mode().blocking and vim.v.errmsg == original_error,
+        'Optional render failure blocked input or raised an editor error')
+      assert(vim.api.nvim_get_current_win() == original_window
+          and vim.api.nvim_get_current_buf() == original_buffer
+          and vim.deep_equal(vim.api.nvim_win_get_cursor(0), original_cursor),
+        'Optional render failure interrupted reading')
+      assert(#mermaid.stage(buffer) == 0 and vim.deep_equal(
+        vim.api.nvim_buf_get_lines(buffer, 0, -1, false), source_lines), 'Failed render replaced its source')
+      mermaid.parse(context)
+      assert(vim.api.nvim_exec2('messages', { output = true }).output == messages,
+        'Cached installed Termaid failure repeated its log')
+      mermaid.detach(buffer)
+      vim.api.nvim_buf_set_lines(buffer, 1, 2, false, { 'graph LR' })
+      assert(vim.api.nvim_buf_get_lines(buffer, 1, 2, false)[1] == 'graph LR',
+        'Failed Mermaid source could not be edited')
+    end
+    mermaid.max_rendered_lines = original_line_limit
+    vim.api.nvim_buf_delete(buffer, { force = true })
   ]])
 end
 local passed, failure = xpcall(check, debug.traceback)
