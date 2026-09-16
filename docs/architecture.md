@@ -283,6 +283,11 @@ same pane. The source window's options and view are restored when leaving the re
 cells and diagram rows. Editing stays in the source buffer; yanking from the rendered view copies
 displayed text.
 
+The shared `config.ui.open_target` opener resolves preview link positions through the existing
+source-position map, including links concealed inside wrapped table cells. Local paths, same-file
+fragments, and project membership use the source file's name. Link lookup preserves the rendered
+buffer so cancelling an open or returning through native jump history retains the reading position.
+
 Source/preview buffer switches use `keepjumps`, so rendering does not add source entries or reset
 the native jump index. Navigating to another file keeps the rendered buffer hidden; `<Space>o`
 and `<Space>p` (native `<C-o>` / `<C-i>`) retain their destinations and displayed cursor positions.

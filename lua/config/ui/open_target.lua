@@ -21,8 +21,16 @@ local function split_file_reference(target)
 end
 
 local function inline_markdown_destination_at_cursor()
-  local cursor_column = vim.api.nvim_win_get_cursor(0)[2] + 1
-  local current_line = vim.api.nvim_get_current_line()
+  local window = vim.api.nvim_get_current_win()
+  local source, position
+  if vim.b.markdown_preview_source then
+    source, position = require('config.syntax.markdown.preview').source_location(window)
+  end
+  local cursor_position = position or vim.api.nvim_win_get_cursor(window)
+  local buffer = source or vim.api.nvim_get_current_buf()
+  local cursor_column = cursor_position[2] + 1
+  local current_line = vim.api.nvim_buf_get_lines(
+    buffer, cursor_position[1] - 1, cursor_position[1], false)[1] or ''
   local search_start = 1
   while search_start <= #current_line do
     local label_start, label_end = current_line:find('%b[]', search_start)
@@ -46,7 +54,9 @@ end
 
 local function resolve_file_reference(target)
   local path_text, fragment_text = split_file_reference(target)
-  local current_buffer_path = vim.api.nvim_buf_get_name(0)
+  local source = vim.b.markdown_preview_source
+  local current_buffer_path = vim.api.nvim_buf_get_name(
+    source and vim.api.nvim_buf_is_valid(source) and source or 0)
   local decoded_path
   if vim.startswith(path_text, 'file://') then
     local decoded_file_path

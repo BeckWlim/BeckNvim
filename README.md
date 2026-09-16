@@ -8,7 +8,7 @@ system while keeping native Neovim and plugin behavior wherever practical.
 
 - **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
 - **Git review:** search remote branches, inspect commits, detach HEAD for deeper review, and read pull requests in floating dialogs.
-- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, with source editing in place and refreshes when external file changes are detected.
+- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, with source editing in place and refreshes when external file changes are detected. Use `gx` on prose or table links to open files relative to the source document.
   Use `<Space>o` / `<Space>p` to jump back and forward through rendered documents within the current Neovim run.
   Mermaid render failures show a single-line warning and leave the source readable and editable.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).

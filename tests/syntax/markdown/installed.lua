@@ -3,6 +3,7 @@
 local project_directory = vim.fn.tempname()
 vim.fn.mkdir(project_directory .. '/.git', 'p')
 vim.fn.mkdir(project_directory .. '/docs/production', 'p')
+vim.fn.writefile({ '# Replicas', 'Replica details' }, project_directory .. '/docs/production/replicas.md')
 local child = vim.fn.jobstart({
   vim.v.progpath, '--headless', '--embed', '-n', '-u', 'init.lua', '-i', 'NONE',
 }, { rpc = true })
@@ -30,7 +31,7 @@ local function check()
     vim.cmd('clearjumps')
     vim.cmd('enew!')
     vim.api.nvim_buf_set_lines(0, 0, -1, false, {
-      '# Markdown preview', '', '[Visible link](https://example.com/prose)', '- List item', '',
+      '# Markdown preview', '', '[Visible link](https://example.com/prose) and [Replica support](replicas.md#L2)', '- List item', '',
       string.rep('Ordinary prose wraps independently. ', 5), '',
       '| Key | Description |', '| --- | --- |',
       '| Enter | **literal cell** ' .. string.rep('long cell content ', 100) .. '|', '',
@@ -71,6 +72,49 @@ local function check()
   ]])
   vim.wait(100)
   assert(not vim.rpcrequest(child, 'nvim_get_mode').blocking, 'Preview opened a blocking prompt')
+  -- Use real input and inspect the screen: command mode alone does not prove
+  -- that the prompt is visible while Markdown conceals the cursor's link.
+  for _, column in ipairs({ 2, 20, 47, 70 }) do
+    vim.rpcrequest(child, 'nvim_win_set_cursor', 0, { 3, column })
+    vim.rpcnotify(child, 'nvim_input', ':')
+    assert(vim.wait(1000, function()
+      return vim.rpcrequest(child, 'nvim_get_mode').mode == 'c'
+        and evaluate([[return vim.fn.screenstring(vim.o.lines, 1) == ':']])
+    end, 20), 'Colon prompt is not visible with the cursor on a rendered link')
+    vim.rpcnotify(child, 'nvim_input', 'let g:preview_command_entered = 1<CR>')
+    assert(vim.wait(1000, function()
+      return evaluate([[return vim.g.preview_command_entered == 1]])
+    end, 20), 'Command input stalled on a rendered link')
+    evaluate([[vim.g.preview_command_entered = nil]])
+  end
+  evaluate([[
+    local rendered = vim.api.nvim_get_current_buf()
+    vim.api.nvim_win_set_cursor(0, { 3, 47 })
+    local position = vim.api.nvim_win_get_cursor(0)
+    local original_confirm = vim.fn.confirm
+    vim.fn.confirm = function() return 1 end
+    vim.api.nvim_feedkeys('gx', 'xt', false)
+    vim.fn.confirm = original_confirm
+    vim.g.preview_link_origin = rendered
+    vim.g.preview_link_position = position
+  ]])
+  assert(vim.wait(1000, function()
+    return evaluate([[
+      local source = vim.b.markdown_preview_source
+      return source and vim.api.nvim_buf_get_name(source) == vim.g.preview_test_project .. '/docs/production/replicas.md'
+    ]])
+  end, 20), 'Installed gx did not open the source-relative Markdown link')
+  evaluate([[
+    assert(vim.api.nvim_win_get_cursor(0)[1] == 2, 'Installed gx lost its line anchor')
+    vim.api.nvim_feedkeys(vim.keycode('<Space>o'), 'xt', false)
+  ]])
+  assert(vim.wait(1000, function()
+    return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.preview_link_origin]])
+  end, 20), 'Returning from gx did not restore the rendered source')
+  evaluate([[
+    assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), vim.g.preview_link_position),
+      'Returning from gx lost the link cursor position')
+  ]])
   evaluate([[
     vim.cmd('redraw!')
     local buffer = vim.api.nvim_get_current_buf()
