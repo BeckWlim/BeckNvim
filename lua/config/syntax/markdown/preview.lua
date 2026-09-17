@@ -71,6 +71,76 @@ local function highlight_cursor(session)
   })
 end
 
+local function concealed_spans(buffer, row, line)
+  local highlighter = vim.treesitter.highlighter.active[buffer]
+  if not highlighter then return {} end
+  local spans = {}
+  highlighter.tree:for_each_tree(function(tree, language_tree)
+    local root = tree:root()
+    local first_row, _, last_row = root:range()
+    if row < first_row or row > last_row then return end
+    local query = vim.treesitter.query.get(language_tree:lang(), 'highlights')
+    if not query then return end
+    for id, node, metadata in query:iter_captures(root, buffer, row, row + 1) do
+      local capture_metadata = metadata[id] or {}
+      if capture_metadata.conceal ~= nil or metadata.conceal ~= nil then
+        local range = vim.treesitter.get_range(node, buffer, capture_metadata)
+        local start_row, start_col, end_row, end_col = range[1], range[2], range[4], range[5]
+        if start_row <= row and end_row >= row then
+          local first_byte = start_row == row and start_col or 0
+          local last_byte = end_row == row and end_col or #line
+          spans[#spans + 1] = { vim.fn.charidx(line, first_byte), vim.fn.charidx(line, last_byte) }
+        end
+      end
+    end
+  end)
+  table.sort(spans, function(left, right) return left[1] < right[1] end)
+  local merged = {}
+  for _, span in ipairs(spans) do
+    local previous = merged[#merged]
+    if previous and span[1] <= previous[2] then
+      previous[2] = math.max(previous[2], span[2])
+    else
+      merged[#merged + 1] = span
+    end
+  end
+  return merged
+end
+
+local function move_horizontal(session, key, direction)
+  local count = vim.v.count1
+  local cursor = vim.api.nvim_win_get_cursor(session.window)
+  local line = vim.api.nvim_buf_get_lines(session.buffer, cursor[1] - 1, cursor[1], false)[1]
+  local mode = vim.api.nvim_get_mode().mode
+  local conceal_mode = mode == 'n' and 'n' or 'v'
+  local spans = vim.wo[session.window].conceallevel == 3
+      and vim.wo[session.window].concealcursor:find(conceal_mode, 1, true)
+      and concealed_spans(session.buffer, cursor[1] - 1, line) or {}
+  local steps = count
+  if #spans > 0 then
+    local original_character = vim.fn.charidx(line, cursor[2])
+    local character = original_character
+    local character_count = vim.fn.strchars(line, true)
+    for _ = 1, count do
+      local candidate = character + direction
+      for _, span in ipairs(spans) do
+        if candidate >= span[1] and candidate < span[2] then
+          candidate = direction < 0 and span[1] - 1 or span[2]
+          break
+        end
+      end
+      if candidate < 0 or candidate >= character_count then break end
+      character = candidate
+    end
+    steps = math.abs(character - original_character)
+  end
+  -- Replay one native motion so Visual selection and UTF-8 character movement
+  -- retain their usual semantics, without stopping on concealed URL bytes.
+  if steps > 0 then
+    vim.api.nvim_cmd({ cmd = 'normal', args = { tostring(steps) .. vim.keycode(key) }, bang = true }, {})
+  end
+end
+
 -- Each untouched prose run is a Markdown parse region. Generated rows already
 -- contain their final text and styling; diagram labels must not become links,
 -- list markers, or code blocks when the ordinary Markdown renderer attaches.
@@ -343,6 +413,10 @@ function M.open(source)
   local close_preview = function() close(session) end
   require('config.ui.float').bind_close({ buffer = buffer, close = close_preview, description = 'Return to Markdown source' })
   vim.keymap.set({ 'n', 'x' }, '<C-q>', close_preview, { buffer = buffer, silent = true })
+  for key, direction in pairs({ h = -1, l = 1, ['<Left>'] = -1, ['<Right>'] = 1 }) do
+    vim.keymap.set({ 'n', 'x' }, key, function() move_horizontal(session, key, direction) end,
+      { buffer = buffer, silent = true, desc = 'Move across visible Markdown text' })
+  end
   for _, keys in ipairs({
     'i', 'I', 'a', 'A', 'o', 'O', 's', 'S', 'c', 'C', 'd', 'D', 'x', 'X',
     'r', 'R', 'p', 'P', 'J', '~', '.', '>', '<', '=', 'gu', 'gU', 'g~',

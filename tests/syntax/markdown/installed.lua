@@ -36,7 +36,7 @@ local function check()
       '| Key | Description |', '| --- | --- |',
       '| Enter | **literal cell** ' .. string.rep('long cell content ', 100) .. '|', '',
       '```mermaid', 'graph LR', '  A[Source] -->|render| B[Preview]', '```', '',
-      'Source navigation remains native.',
+      '[DFS deployment guide](../../source/deployment/mooncake-store-deployment-guide.md#descriptor-based-dfs-storage).',
     })
     vim.g.preview_test_source = vim.api.nvim_get_current_buf()
     vim.g.preview_test_window = vim.api.nvim_get_current_win()
@@ -89,6 +89,28 @@ local function check()
     end, 20), 'Command input stalled on a rendered link')
     evaluate([[vim.g.preview_command_entered = nil]])
   end
+  -- Actual input must leave the concealed destination in one keypress, with
+  -- the attached UI showing movement rather than only a changed source byte.
+  evaluate([[
+    local preview = require('config.syntax.markdown.preview')
+    local position = assert(preview.display_position(vim.api.nvim_get_current_win(), { 17, 0 }))
+    vim.api.nvim_win_set_cursor(0, position)
+    vim.cmd('normal! $zz')
+  ]])
+  vim.wait(100)
+  local link_screen_column = evaluate([[return vim.fn.screencol()]])
+  vim.rpcnotify(child, 'nvim_input', 'h')
+  assert(vim.wait(1000, function()
+    return evaluate([[return vim.api.nvim_win_get_cursor(0)[2] == 20]])
+  end, 10), 'Left movement stalled in the DFS link destination')
+  assert(evaluate([[return vim.fn.screencol()]]) == link_screen_column - 1,
+    'Left movement did not visibly leave the end of the DFS link')
+  vim.rpcnotify(child, 'nvim_input', '<Left>')
+  assert(vim.wait(1000, function()
+    return evaluate([[return vim.api.nvim_win_get_cursor(0)[2] == 19]])
+  end, 10), 'Left arrow did not continue through the visible link label')
+  assert(evaluate([[return vim.fn.screencol()]]) == link_screen_column - 2,
+    'Left arrow stalled visually inside the link label')
   evaluate([[
     local rendered = vim.api.nvim_get_current_buf()
     vim.api.nvim_win_set_cursor(0, { 3, 47 })

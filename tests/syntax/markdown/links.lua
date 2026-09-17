@@ -12,6 +12,9 @@ local lines = {
   '| Feature | Description |', '|---|---|',
   '| [Replica support](replicas.md#L2) | ' .. string.rep('wrapped content ', 30) .. '|', '',
   '[Replica support](../docs/replicas.md#L2)',
+  '前 [部署指南](../../source/deployment/guide.md#descriptor-based-dfs-storage).',
+  '[Only link](https://example.com/a/long/destination)',
+  '`[literal](destination)`',
 }
 vim.fn.writefile(lines, source_path)
 vim.fn.writefile({ '# Replicas', 'Replica details' }, target_path)
@@ -21,6 +24,39 @@ vim.bo.filetype = 'markdown'
 local window = vim.api.nvim_get_current_win()
 local rendered = preview.open(source)
 local source_tick = vim.api.nvim_buf_get_changedtick(source)
+vim.treesitter.start(rendered)
+vim.treesitter.get_parser(rendered):parse(true)
+vim.wo.conceallevel = 3
+vim.wo.concealcursor = 'nvic'
+local function move(row, column, keys, expected_column)
+  local position = assert(preview.display_position(window, { row, column }))
+  vim.api.nvim_win_set_cursor(window, position)
+  vim.api.nvim_feedkeys(vim.keycode(keys), 'xt', false)
+  assert(vim.deep_equal(vim.api.nvim_win_get_cursor(window), { position[1], expected_column }),
+    keys .. ' stopped on concealed link text: ' .. vim.inspect(vim.api.nvim_win_get_cursor(window)))
+end
+local unicode_end = assert(lines[10]:find(']', 1, true)) - 1
+move(10, #lines[10] - 1, 'h', unicode_end - 3)
+move(10, #lines[10] - 1, '<Left>', unicode_end - 3)
+move(10, #lines[10] - 1, '2h', unicode_end - 6)
+move(10, unicode_end - 3, 'l', #lines[10] - 1)
+move(10, unicode_end - 3, '<Right>', #lines[10] - 1)
+move(10, unicode_end - 6, '2l', #lines[10] - 1)
+move(10, #lines[10] - 1, 'vh', unicode_end - 3)
+assert(vim.api.nvim_get_mode().mode == 'v', 'Horizontal preview motion ended Visual selection')
+vim.api.nvim_feedkeys(vim.keycode('<Esc>'), 'xt', false)
+move(11, #lines[11] - 1, 'h', 9)
+move(11, 9, 'l', 9)
+move(11, 1, 'h', 1)
+move(12, 12, 'h', 11) -- Link-like text inside code remains ordinary text.
+vim.wo.conceallevel = 0
+move(10, #lines[10] - 1, 'h', #lines[10] - 2)
+vim.wo.conceallevel = 3
+vim.wo.concealcursor = ''
+move(10, #lines[10] - 1, 'h', #lines[10] - 2)
+vim.treesitter.stop(rendered)
+vim.wo.concealcursor = 'nvic'
+move(10, #lines[10] - 1, 'h', #lines[10] - 2)
 local choice = 2
 rawset(vim.fn, 'confirm', function() return choice end)
 

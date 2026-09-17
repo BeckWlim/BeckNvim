@@ -296,6 +296,10 @@ Every replacement row is an actual buffer line, so cursor movement,
 selection, yank, and mouse scrolling in the preview use native Neovim behavior. There are no hidden
 source rows reserving extra height, virtual continuation blocks, cursor parking, or wheel-motion
 fallbacks. `Enter` keeps its native next-line movement in the rendered buffer.
+Preview `h` / `l` and left/right arrows skip concealed Tree-sitter ranges while retaining
+native character motion and Visual selections. Counts measure visible characters; link destinations
+therefore do not consume extra keypresses. The adapter reads the active highlight queries for the
+current line and leaves source mode and unconcealed text to native movement.
 `q`, `<C-q>`, and `<Space>mp` return to the corresponding source position in the
 same pane. The source window's options and view are restored when leaving the rendered view.
 Common Normal-mode edit keys share one source-position transition, including from wrapped table

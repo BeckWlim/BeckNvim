@@ -8,7 +8,7 @@ system while keeping native Neovim and plugin behavior wherever practical.
 
 - **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
 - **Git review:** search remote branches, inspect commits, detach HEAD for deeper review, and read pull requests in floating dialogs.
-- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, with source editing in place and refreshes when external file changes are detected.
+- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, move through links without stepping through hidden URLs, and edit source in place with refreshes when external file changes are detected.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
   Inside tmux, its local palette hook makes the pane and status bar follow the editor theme;
   see [tmux theme integration](docs/architecture.md#tmux-theme-integration).
