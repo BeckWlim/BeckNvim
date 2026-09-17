@@ -8,13 +8,7 @@ system while keeping native Neovim and plugin behavior wherever practical.
 
 - **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
 - **Git review:** search remote branches, inspect commits, detach HEAD for deeper review, and read pull requests in floating dialogs.
-- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, with source editing in place and refreshes when external file changes are detected. Use `gx` on prose or table links to open files relative to the source document.
-  Common edit keys work on the source and return to preview in Normal mode; `<Space>mp` selects persistent raw source.
-  Save with `:w` or `:update`, and undo/redo with `u` / `<C-r>` directly from preview.
-  Prose edits reuse cached tables and diagrams; only changed objects or layouts need rendering again.
-  Providers reserve layout before background rendering, using previous diagram dimensions to reduce movement.
-  Use `<Space>o` / `<Space>p` to jump back and forward through rendered documents within the current Neovim run.
-  Mermaid render failures show a single-line warning and leave the source readable and editable.
+- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, with source editing in place and refreshes when external file changes are detected.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
   Inside tmux, its local palette hook makes the pane and status bar follow the editor theme;
   see [tmux theme integration](docs/architecture.md#tmux-theme-integration).
