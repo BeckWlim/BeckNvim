@@ -3,8 +3,10 @@
 From the repository root:
 
 ```bash
-bash scripts/record-demos.sh          # regenerate all four GIFs
-bash scripts/record-demos.sh markdown # regenerate one demo
+bash scripts/record-demos.sh          # regenerate all five GIFs
+bash scripts/record-demos.sh markdown # regenerate table and Mermaid demos
+bash scripts/record-demos.sh table    # regenerate only the table demo
+bash scripts/record-demos.sh mermaid  # regenerate only the Mermaid demo
 ```
 
 The output goes to `examples/media/`. Git, symbol search, and homepage recordings use a disposable
@@ -52,8 +54,17 @@ Alternatively, change `Set FontFamily` in [`tapes/common.tape`](tapes/common.tap
 | --- | --- |
 | [`tapes/search.tape`](tapes/search.tape) | `<Space>fw`: search `submitTransfer`, `MasterService`, and the `PeerLiveness` enum; navigate previews and open definitions |
 | [`tapes/git.tape`](tapes/git.tape) | Search the placement branch, inspect a commit, detach HEAD, search `#3704`, read its PR dialog |
-| [`tapes/markdown.tape`](tapes/markdown.tape) | Explore a large diagram, narrow the pane with the file tree, edit a transport label |
+| [`tapes/table.tape`](tapes/table.tape) | Navigate wrapped cell text, select and copy a word, quick-edit a value, undo/redo, and save |
+| [`tapes/mermaid.tape`](tapes/mermaid.tape) | Navigate and copy a flowchart label, edit the short source, quick-edit prose, and save |
 | [`tapes/themes.tape`](tapes/themes.tape) | Browse homepage projects/files, apply Paper Light and TokyoNight, open a recent file |
+
+The [table sample](fixtures/project/docs/table.md) and
+[Mermaid sample](fixtures/project/docs/mermaid.md) each fit on one screen at the recording size.
+The table demonstrates word wrapping, splitting an oversized identifier, alignment, inline code,
+and a link; the five-node flowchart demonstrates
+node shapes, a decision, labeled branches, and a merge. Both scenes select visible text and show
+the copied word. Table edits return to preview on Esc; diagram labels use the source toggle,
+followed by a quick prose edit that returns to preview automatically.
 
 The Mooncake recordings were prepared from local commit
 `4078caa3690d37a40257751e5816b2c9d8858863`. The runner records your local HEAD and prints its hash;
@@ -65,8 +76,9 @@ It hides diagnostics because the clone has no generated C++ headers or compilati
 All search results, diffs, PR content, homepage rendering, and diagram layouts use the actual
 BeckNvim implementations. Plugins and parsers are reused from the installed configuration.
 
-[`tapes/common.tape`](tapes/common.tape) controls size, font, and timing. Edit scene tapes to change
-keystrokes or pauses. Git uses screen waits for detached HEAD and PR loading; startup is hidden.
+[`tapes/common.tape`](tapes/common.tape) controls default size, font, and timing. The two Markdown
+scenes use a 1200 × 900 canvas with a larger font. Edit scene tapes to change keystrokes or pauses.
+Git uses screen waits for detached HEAD and PR loading; startup is hidden.
 Increase initial sleeps on slower machines. The runner verifies the detached commit before
 publishing the Git GIF to `examples/media/`.
 

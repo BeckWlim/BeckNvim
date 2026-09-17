@@ -571,7 +571,10 @@ local function render_table(parsed_table, width)
     end
   end
   decoration(string.rep('─', total_width), table_highlights.rule, parsed_table.end_row - 1)
-  return { start_row = parsed_table.start_row, end_row = parsed_table.end_row, rows = rows }
+  return {
+    start_row = parsed_table.start_row, end_row = parsed_table.end_row, rows = rows,
+    layout = { width = parsed_table.start_column + total_width, height = #rows, estimated = false },
+  }
 end
 
 M.name = 'table'
@@ -586,16 +589,29 @@ function M.project(context)
   local query = table_query()
   if not query then return {} end
   local blocks = {}
+  local objects = cached and cached.objects or {}
+  local retained = {}
   for _, node in query:iter_captures(context.root, context.buf, 0, -1) do
     if not node:has_error() then
-      local parsed_table = parse_table(context.buf, node)
-      if parsed_table then blocks[#blocks + 1] = render_table(parsed_table, context.width) end
+      local start_row, start_column = node:range()
+      local key = markdown_features.block_key(vim.treesitter.get_node_text(node, context.buf), { layout, start_column })
+      local block = markdown_features.cached_projection(objects, key, start_row, function()
+        local parsed_table = parse_table(context.buf, node)
+        return parsed_table and render_table(parsed_table, context.width) or nil
+      end)
+      if block then
+        blocks[#blocks + 1] = block
+        retained[key] = objects[key]
+      end
     end
   end
   if context.cache then
-    context.cache.tables = { changedtick = changedtick, layout = layout, blocks = blocks }
+    context.cache.tables = { changedtick = changedtick, layout = layout, blocks = blocks, objects = retained }
   end
   return blocks
 end
+
+-- Tables measure and render synchronously from the same cached cell layout.
+M.layout = M.project
 
 return M

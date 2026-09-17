@@ -14,6 +14,7 @@ local M = {
 local markdown_features = require('config.syntax.markdown_features')
 
 local states_by_buffer = {}
+local element_namespace = vim.api.nvim_create_namespace('markdown_mermaid_elements')
 local block_query
 local block_query_resolved = false
 local styled_support_by_executable = {}
@@ -96,14 +97,7 @@ local function block_from_node(buffer, node, width)
   local content_start = content_node:range()
   local content_end = line_end_exclusive(content_node)
   local block_end = line_end_exclusive(node)
-  local key = table.concat({
-    block_start,
-    block_end,
-    content_start,
-    content_end,
-    width,
-    vim.fn.sha256(source),
-  }, ':')
+  local key = markdown_features.block_key(source, { width })
   return {
     block_end = block_end,
     block_start = block_start,
@@ -269,7 +263,7 @@ local function stop_request(request)
   end
 end
 
-local function retire_state(state)
+local function retire_state(state, keep_layout)
   state.generation = state.generation + 1
   for _, request in pairs(state.jobs) do
     stop_request(request)
@@ -277,20 +271,24 @@ local function retire_state(state)
   state.active = 0
   state.jobs = {}
   state.queue = {}
+  if not keep_layout and vim.api.nvim_buf_is_valid(state.buffer) then
+    vim.api.nvim_buf_clear_namespace(state.buffer, element_namespace, 0, -1)
+  end
 end
 
-local function new_state(changedtick, width, generation)
+local function new_state(buffer, changedtick, width, generation, settings)
   return {
+    buffer = buffer,
     active = 0,
     arrow_position = M.arrow_position == 'middle' and 'middle' or 'end',
     blocks = {},
     changedtick = changedtick,
     generation = generation,
     jobs = {},
-    known = {},
-    known_count = 0,
+    projections = {},
     queue = {},
     results = {},
+    settings = settings,
     width = width,
   }
 end
@@ -298,18 +296,97 @@ end
 local function state_for(buffer, width)
   local changedtick = vim.api.nvim_buf_get_changedtick(buffer)
   local arrow_position = M.arrow_position == 'middle' and 'middle' or 'end'
+  local settings = { M.command, M.max_rendered_lines, M.max_source_bytes,
+    M.max_output_bytes, M.max_rendered_chunks, M.timeout_ms, M.max_blocks }
   local current_state = states_by_buffer[buffer]
-  if current_state and current_state.changedtick == changedtick and current_state.width == width
-      and current_state.arrow_position == arrow_position then
+  if current_state and current_state.width == width
+      and current_state.arrow_position == arrow_position and vim.deep_equal(current_state.settings, settings) then
     return current_state
   end
   if current_state then
-    retire_state(current_state)
+    for _, block in ipairs(current_state.blocks) do
+      local result = current_state.results[block.key]
+      if result and result.status == 'rendered' then block.fallback, block.fallback_key = result, block.key end
+    end
+    retire_state(current_state, true)
+    current_state.results = {}
+    current_state.projections = {}
+    current_state.width = width
+    current_state.arrow_position = arrow_position
+    current_state.settings = settings
+    return current_state
   end
-  local generation = current_state and current_state.generation or 0
-  local next_state = new_state(changedtick, width, generation + 1)
+  local next_state = new_state(buffer, changedtick, width, 1, settings)
   states_by_buffer[buffer] = next_state
   return next_state
+end
+
+local function reconcile_blocks(buffer, state, root)
+  local parsed_query = query()
+  local blocks = {}
+  local previous_by_row = {}
+  for _, previous in ipairs(state.blocks) do
+    if previous.anchor then
+      local position = vim.api.nvim_buf_get_extmark_by_id(buffer, element_namespace, previous.anchor, { details = true })
+      if #position > 0 then
+        local row = position[1]
+        local candidates = previous_by_row[row] or {}
+        candidates[#candidates + 1] = { block = previous, end_row = position[3].end_row }
+        previous_by_row[row] = candidates
+      end
+    end
+  end
+  if parsed_query then
+    for _, node in parsed_query:iter_captures(root, buffer, 0, -1) do
+      local block = block_from_node(buffer, node, state.width)
+      if block then
+        blocks[#blocks + 1] = block
+      end
+    end
+  end
+  local plan = markdown_features.plan_elements(blocks, state.results, state.jobs, M.max_blocks)
+  local retained_anchors = {}
+  for _, block in ipairs(blocks) do
+    if plan.by_key[block.key] then
+      local candidates = previous_by_row[block.block_start] or {}
+      local previous = #candidates == 1 and candidates[1] or nil
+      if previous and previous.end_row == block.block_end then
+        block.anchor = previous.block.anchor
+        local result = state.results[previous.block.key]
+        if result and result.status == 'rendered' then
+          block.fallback, block.fallback_key = result, previous.block.key
+        else
+          block.fallback, block.fallback_key = previous.block.fallback, previous.block.fallback_key
+        end
+      end
+      block.anchor = vim.api.nvim_buf_set_extmark(buffer, element_namespace, block.block_start, 0, {
+        id = block.anchor, end_row = block.block_end, end_col = 0,
+        right_gravity = true, end_right_gravity = false,
+      })
+      retained_anchors[block.anchor] = true
+    end
+  end
+  for _, previous in ipairs(state.blocks) do
+    if previous.anchor and not retained_anchors[previous.anchor] then
+      vim.api.nvim_buf_del_extmark(buffer, element_namespace, previous.anchor)
+    end
+  end
+  for key, request in pairs(state.jobs) do
+    if not plan.by_key[key] then
+      stop_request(request)
+      state.jobs[key] = nil
+      state.active = state.active - 1
+    else
+      request.block = plan.by_key[key]
+    end
+  end
+  for key in pairs(state.results) do
+    if not plan.by_key[key] then state.results[key] = nil end
+  end
+  state.queue = plan.render
+  state.elements = plan.by_key
+  state.blocks = blocks
+  state.changedtick = vim.api.nvim_buf_get_changedtick(buffer)
 end
 
 ---@return string?
@@ -353,9 +430,20 @@ local function finish_request(buffer, state, request, completed_process)
   if states_by_buffer[buffer] ~= state
       or state.generation ~= request.generation
       or not vim.api.nvim_buf_is_valid(buffer)
-      or vim.api.nvim_buf_get_changedtick(buffer) ~= state.changedtick
       or state.jobs[request.block.key] ~= request then
     return
+  end
+  if vim.api.nvim_buf_get_changedtick(buffer) ~= state.changedtick then
+    -- A completion may arrive while the source is being edited and preview is
+    -- hidden. Revalidate object identities before accepting it or starting work.
+    local parser = vim.treesitter.get_parser(buffer, 'markdown')
+    local tree = parser:parse()[1]
+    if not tree then return end
+    reconcile_blocks(buffer, state, tree:root())
+    if state.jobs[request.block.key] ~= request then
+      if state.requires_layout then request_render(buffer) else pump(buffer, state) end
+      return
+    end
   end
   request.process = nil
 
@@ -384,6 +472,9 @@ local function finish_request(buffer, state, request, completed_process)
   state.active = math.max(0, state.active - 1)
   state.results[request.block.key] = rendered_lines and {
     lines = rendered_lines,
+    width = request.block.width,
+    height = #rendered_lines + 1,
+    source = request.block.source,
     status = 'rendered',
   } or {
     status = completed_process.code == 124 and 'timeout' or 'failed',
@@ -476,11 +567,16 @@ local function start_request(buffer, state, block)
 end
 
 pump = function(buffer, state)
+  if state.requires_layout and state.layout_tick ~= state.changedtick then return false end
+  local settled = false
   while states_by_buffer[buffer] == state
       and state.active < M.max_concurrent
       and #state.queue > 0 do
-    start_request(buffer, state, table.remove(state.queue, 1))
+    local block = table.remove(state.queue, 1)
+    start_request(buffer, state, block)
+    settled = settled or state.results[block.key] ~= nil
   end
+  return settled
 end
 
 local function line_chunks(line)
@@ -493,16 +589,46 @@ local function line_chunks(line)
   return { { line == '' and ' ' or line, style_highlights.default } }
 end
 
-local function enqueue(state, block)
-  if state.results[block.key] or state.jobs[block.key] or state.known[block.key] then
-    return
+-- Provider-owned estimation. Large replacements keep the last measured height;
+-- smaller changes scale it with the available width, not with source line count.
+function M.estimate_layout(source, width, previous)
+  if not previous then return { width = width, height = 4, estimated = true, basis = 'initial' } end
+  local old_source = previous.source
+  local prefix = 0
+  local common_limit = math.min(#source, #old_source)
+  while prefix < common_limit and source:byte(prefix + 1) == old_source:byte(prefix + 1) do prefix = prefix + 1 end
+  local suffix = 0
+  while suffix < common_limit - prefix
+      and source:byte(#source - suffix) == old_source:byte(#old_source - suffix) do suffix = suffix + 1 end
+  local changed_fraction = 1 - (prefix + suffix) / math.max(1, #source, #old_source)
+  local height = previous.height
+  if changed_fraction <= 0.5 then
+    height = math.max(2, math.ceil((previous.height - 1) * previous.width / math.max(1, width)) + 1)
   end
-  if state.known_count >= M.max_blocks then
-    return
+  return {
+    width = width, height = math.min(M.max_rendered_lines + 1, height), estimated = true,
+    basis = changed_fraction > 0.5 and 'previous' or 'scaled',
+  }
+end
+
+local function bounded_chunks(chunks, width)
+  local fitted = {}
+  local remaining = width
+  for _, chunk in ipairs(chunks) do
+    if remaining <= 0 then break end
+    local text = chunk[1]
+    local count = vim.fn.strchars(text)
+    local low, high = 0, count
+    while low < high do
+      local middle = math.ceil((low + high) / 2)
+      if vim.fn.strdisplaywidth(vim.fn.strcharpart(text, 0, middle)) <= remaining then low = middle else high = middle - 1 end
+    end
+    local clipped = vim.fn.strcharpart(text, 0, low)
+    fitted[#fitted + 1] = { clipped, chunk[2] }
+    remaining = remaining - vim.fn.strdisplaywidth(clipped)
+    if low < count then break end
   end
-  state.known[block.key] = true
-  state.known_count = state.known_count + 1
-  state.queue[#state.queue + 1] = block
+  return fitted
 end
 
 function M.parse(context)
@@ -511,16 +637,21 @@ function M.parse(context)
   local width = context.width and math.max(1, math.floor(context.width * M.width_ratio))
     or content_width(context.buf)
   local state = state_for(context.buf, width)
-  local blocks = {}
-  for _, node in parsed_query:iter_captures(context.root, context.buf, 0, -1) do
-    local block = block_from_node(context.buf, node, width)
-    if block then
-      blocks[#blocks + 1] = block
-      enqueue(state, block)
-    end
+  reconcile_blocks(context.buf, state, context.root)
+  state.requires_layout = context.defer_render ~= nil
+  if context.defer_render then
+    local generation = state.generation
+    local changedtick = state.changedtick
+    context.defer_render(function()
+      if states_by_buffer[context.buf] == state and vim.api.nvim_buf_is_valid(context.buf)
+          and state.generation == generation and vim.api.nvim_buf_get_changedtick(context.buf) == changedtick then
+        state.layout_tick = changedtick
+        if pump(context.buf, state) then request_render(context.buf) end
+      end
+    end)
+  else
+    pump(context.buf, state)
   end
-  state.blocks = blocks
-  pump(context.buf, state)
   return {}
 end
 
@@ -528,41 +659,75 @@ function M.stage(buffer)
   local state = states_by_buffer[buffer]
   if not state then return {} end
   local blocks = {}
+  local retained = {}
   for _, block in ipairs(state.blocks) do
     local result = state.results[block.key]
-    if result and result.status == 'rendered' then
-      local rows = { {
-        chunks = { { '󰙅 ', 'RenderMarkdownMermaidIcon' }, { 'mermaid', 'RenderMarkdownMermaidLabel' } },
-        source_row = block.block_start,
-      } }
-      local source_count = block.content_end - block.content_start
-      local diagram_width = markdown_features.chunks_width(rows[1].chunks)
-      for index, line in ipairs(result.lines) do
-        local chunks = line_chunks(line)
-        diagram_width = math.max(diagram_width, markdown_features.chunks_width(chunks))
-        rows[#rows + 1] = {
-          chunks = chunks,
-          source_row = block.content_start + math.min(source_count - 1,
-            math.floor((index - 1) * source_count / #result.lines)),
-        }
-      end
-      -- Fill one rectangle for the title and diagram, retaining semantic spans.
-      for _, row in ipairs(rows) do
-        local chunks = row.chunks
-        local padding_width = diagram_width - markdown_features.chunks_width(chunks)
-        if padding_width > 0 then
-          chunks[#chunks + 1] = { string.rep(' ', padding_width), style_highlights.default }
+    local pending = result == nil and state.elements[block.key] ~= nil
+    local displayed_result = result or block.fallback
+    if (displayed_result and displayed_result.status == 'rendered') or pending then
+      local phase = pending and ('pending:' .. (block.fallback_key or 'new')) or 'ready'
+      local key = table.concat({ block.key, phase, block.block_end - block.block_start,
+        block.content_start - block.block_start, block.content_end - block.content_start }, ':')
+      local projected = markdown_features.cached_projection(state.projections, key, block.block_start, function()
+        local rows = { {
+          chunks = { { '󰙅 ', 'RenderMarkdownMermaidIcon' },
+            { pending and 'mermaid ↻' or 'mermaid', 'RenderMarkdownMermaidLabel' } },
+          source_row = block.block_start,
+        } }
+        local source_count = block.content_end - block.content_start
+        local rendered_lines = displayed_result and displayed_result.lines or {}
+        local layout = pending and M.estimate_layout(block.source, block.width, block.fallback)
+          or { width = block.width, height = #rendered_lines + 1, estimated = false }
+        local diagram_width = markdown_features.chunks_width(rows[1].chunks)
+        for index = 1, layout.height - 1 do
+          local line = rendered_lines[index] or (index == 1 and not displayed_result
+            and (block.width >= 10 and 'Rendering…' or '…') or '')
+          local chunks = pending and bounded_chunks(line_chunks(line), block.width) or line_chunks(line)
+          if pending then
+            local padding = math.max(0, block.width - markdown_features.chunks_width(chunks))
+            chunks[#chunks + 1] = { string.rep(' ', padding), style_highlights.default }
+          end
+          diagram_width = math.max(diagram_width, markdown_features.chunks_width(chunks))
+          rows[#rows + 1] = {
+            chunks = chunks,
+            source_row = block.content_start + math.min(source_count - 1,
+              math.floor((index - 1) * source_count / (layout.height - 1))),
+          }
         end
-      end
-      blocks[#blocks + 1] = { start_row = block.block_start, end_row = block.block_end, rows = rows }
+        -- Fill one rectangle for the title and diagram, retaining semantic spans.
+        for _, row in ipairs(rows) do
+          local chunks = row.chunks
+          local padding_width = diagram_width - markdown_features.chunks_width(chunks)
+          if padding_width > 0 then
+            chunks[#chunks + 1] = { string.rep(' ', padding_width), style_highlights.default }
+          end
+        end
+        return {
+          start_row = block.block_start, end_row = block.block_end, rows = rows, pending = pending,
+          layout = vim.tbl_extend('force', layout, { width = diagram_width }),
+        }
+      end)
+      blocks[#blocks + 1] = projected
+      retained[key] = state.projections[key]
     end
   end
+  state.projections = retained
   return blocks
 end
 
 function M.project(context)
   M.parse(context)
   return M.stage(context.buf)
+end
+
+-- Return provider-owned geometry and deferred work. Layout never starts jobs.
+function M.layout(context)
+  local tasks = {}
+  local layout_context = vim.tbl_extend('force', context, {
+    defer_render = function(task) tasks[#tasks + 1] = task end,
+  })
+  M.parse(layout_context)
+  return M.stage(context.buf), tasks
 end
 
 function M.detach(buffer)

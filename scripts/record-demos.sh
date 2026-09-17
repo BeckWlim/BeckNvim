@@ -3,9 +3,10 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/record-demos.sh [all|search|git|markdown|themes]
+Usage: bash scripts/record-demos.sh [all|search|git|markdown|table|mermaid|themes]
 
-Record four highlights and write GIFs to examples/media/.
+Record five highlights and write GIFs to examples/media/.
+Use markdown to record both the table and Mermaid scenes.
 Uses a disposable clone of ~/code/Mooncake for Git, symbols, and the homepage.
 Requires VHS, ttyd, FFmpeg/ffprobe, Git, Neovim, and installed BeckNvim plugins.
 Set BECKNVIM_DEMO_PROJECT to another local Mooncake checkout.
@@ -18,8 +19,9 @@ EOF
 
 case "${1:-all}" in
   -h|--help) usage; exit 0 ;;
-  all) scenes=(search git markdown themes) ;;
-  search|git|markdown|themes) scenes=("$1") ;;
+  all) scenes=(search git table mermaid themes) ;;
+  markdown) scenes=(table mermaid) ;;
+  search|git|table|mermaid|themes) scenes=("$1") ;;
   *) usage >&2; exit 2 ;;
 esac
 [[ $# -le 1 ]] || { usage >&2; exit 2; }
@@ -48,7 +50,7 @@ notes="$BECKNVIM_DEMO_WORK/WorkspaceNotes"
 cp -R "$BECKNVIM_DEMO_ROOT/examples/fixtures/project" "$notes"
 git -C "$notes" -c init.templateDir= init -q -b main
 
-if [[ "${scenes[*]}" != markdown ]]; then
+if [[ " ${scenes[*]} " =~ \ (search|git|themes)\  ]]; then
   source_project="${BECKNVIM_DEMO_PROJECT:-$HOME/code/Mooncake}"
   git -C "$source_project" rev-parse --show-toplevel >/dev/null || {
     echo 'Set BECKNVIM_DEMO_PROJECT to a local Mooncake checkout.' >&2
@@ -77,7 +79,7 @@ fi
 mkdir -p "$BECKNVIM_DEMO_ROOT/examples/media"
 for scene in "${scenes[@]}"; do
   export BECKNVIM_DEMO_SCENE="$scene"
-  if [[ "$scene" == markdown ]]; then
+  if [[ "$scene" == table || "$scene" == mermaid ]]; then
     export BECKNVIM_DEMO_CWD="$notes"
   else
     export BECKNVIM_DEMO_CWD="$project"

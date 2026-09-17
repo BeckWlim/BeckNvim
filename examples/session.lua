@@ -12,7 +12,8 @@ vim.v.oldfiles = {
   mooncake .. 'mooncake-transfer-engine/src/transfer_engine.cpp',
   mooncake .. 'mooncake-store/include/master_service.h',
   mooncake .. 'README.md',
-  notes .. 'docs/architecture.md',
+  notes .. 'docs/table.md',
+  notes .. 'docs/mermaid.md',
   notes .. 'src/cache.lua',
   notes .. 'README.md',
 }

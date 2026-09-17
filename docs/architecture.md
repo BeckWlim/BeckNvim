@@ -258,12 +258,31 @@ read-only Markdown detail panels. Each contiguous run of copied prose becomes a 
 parse region in the preview, so generated table cells and diagram labels cannot be reinterpreted as
 Markdown syntax. Refreshes rebuild those regions when replacement rows change.
 
+The integration boundary is deliberate: upstream owns ordinary headings, lists, links, quotes,
+code styling, concealment, visible-range rendering, and its own caches/events. Our engine owns the
+source/preview lifecycle, source maps, generated table/diagram rows, and background Termaid work.
+The supported `ignore` option excludes editable source, and `pipe_table.enabled = false` prevents
+duplicate table rendering. The engine does not call or replace upstream's private manager, cache,
+or scheduler. Updating preview text lets the plugin handle ordinary Markdown through its normal
+events; retained object rows do not imply that upstream never redraws prose.
+
 `config.syntax.markdown` assembles feature providers. `config.syntax.markdown_features` defines their
 shared projection contract: a provider returns non-overlapping source ranges and replacement rows,
 each with highlighted text chunks and a source position. Optional byte spans map table characters
 back to the original cell, including concealed links, inline code, UTF-8, and wrapped continuations.
 The compositor preserves ordinary source lines between those ranges. Providers do not mutate the
 source buffer, create windows, or manage cursor state.
+The same shared layer keys each rendered object by content and layout, caches its projection, and
+remaps source rows when the object moves. Its element planner builds the current key-to-element map
+and queues only entries missing from both completed results and active jobs. Providers own their
+rendering work and prune entries absent from the current document. Source positions are separate
+from cache identity, so inserting prose above a table or diagram preserves its rendered content.
+Providers expose `layout(context)`, returning replacement blocks with `{ width, height, estimated }`
+geometry and deferred render tasks. The shared engine composes the text and measured reservations;
+the preview commits only changed intervals, then dispatches background work on the next event-loop
+turn. The provider owns measurement and estimation. Tables return exact cached cell layouts.
+Mermaid returns its completed canvas or a pending reservation and starts no process during layout.
+The engine owns placement and dispatch, rather than guessing feature dimensions.
 
 `config.syntax.markdown.preview` owns the pane, its scratch buffer, refresh subscriptions, semantic
 highlights, and source navigation. A shared current-row extmark places the editor's `CursorLine`
@@ -279,9 +298,27 @@ source rows reserving extra height, virtual continuation blocks, cursor parking,
 fallbacks. `Enter` keeps its native next-line movement in the rendered buffer.
 `q`, `<C-q>`, and `<Space>mp` return to the corresponding source position in the
 same pane. The source window's options and view are restored when leaving the rendered view.
-`i` uses the same source-position transition and enters Insert mode, including from wrapped table
-cells and diagram rows. Editing stays in the source buffer; yanking from the rendered view copies
+Common Normal-mode edit keys share one source-position transition, including from wrapped table
+cells and diagram rows. The adapter replays native keys with the original count and register, so
+Neovim owns operator motions, repeat, and undo history in the raw buffer. `ModeChanged` back to Normal
+mode and `TextChanged` after immediate edits schedule the existing default-preview path, restoring
+preview at the edited source position. Source window restoration is shared with explicit raw mode.
+The preview buffer is hidden during the edit; the session retains its caches, refresh subscription,
+and valid Mermaid jobs. Returning to preview reuses that buffer and reconciles the current elements.
+The callback checks the current buffer, window, mode, and source preference before opening, so it
+cannot interrupt Insert mode, temporary Normal mode (`<C-o>`), or an explicit source selection.
+`Esc` and `<C-c>` both return to preview; explicit source mode stays raw after either key.
+Returning to preview leaves edits unsaved. Editing stays in the source buffer; yanking from the rendered view copies
 displayed text.
+The raw buffer owns file identity, contents, undo history, and saved state. Preview `u` / `<C-r>` run
+native undo/redo in that buffer and refresh the existing projection. Visual selections and yanks
+remain display operations; source Ex commands beyond writing are used in explicit raw mode.
+The non-editable preview uses `acwrite` and a session-owned `BufWriteCmd`: `:w` delegates to a native
+write in the source buffer while keeping the preview and cursor in place. Nested source write hooks,
+file encoding, readonly/external-change checks, and an explicit `:w!` retain native behavior.
+Only a successful source write clears its modified state; generated display rows are never saved
+by the whole-buffer write handler. The preview mirrors source modified state through `BufModifiedSet`
+and refresh, allowing conditional saves such as `:update` to reach unsaved source edits.
 
 The shared `config.ui.open_target` opener resolves preview link positions through the existing
 source-position map, including links concealed inside wrapped table cells. Local paths, same-file
@@ -306,13 +343,15 @@ Source edits, external reloads, diagram completions, and window resizing coalesc
 been idle for 120 ms. Completed background renders therefore do not interrupt continuous movement
 or scrolling. The current source position is retained
 through a source extmark, including edits above the selection; rebuilds restore the corresponding
-preview position. Each session caches unchanged table projections by source revision and layout.
-Refreshes replace only the changed row interval and preserve surrounding semantic marks; prose
+preview position. Each session caches individual table projections by content and layout.
+The shared row-diff engine compares displayed chunks and styles separately from source maps.
+Refreshes patch disjoint changed intervals and preserve the buffers and semantic marks of unchanged
+objects, including objects between two separate prose edits; prose
 parsing follows Neovim's visible-range requests. Refreshes stop the preview highlighter before
 replacing lines and restart it after
 rebuilding parse regions. This prevents synchronous redraws from consuming stale highlight iterators
 when independently completed Mermaid diagrams change row positions.
-Returning to source unsubscribes pending refreshes, retires feature jobs, and deletes
+Explicitly closing the preview to remain in source unsubscribes pending refreshes, retires feature jobs, and deletes
 the rendered scratch buffer. A closed session rejects scheduled work even if a new preview opens for the
 same source. Preview construction is limited to 10,000 source lines and one MiB. Missing Markdown
 parsers fall back to a source-only preview.
@@ -349,10 +388,23 @@ color mapping. It emits the same replacement-row contract as tables. The preview
 opening fence; diagram rows map proportionally to source content rows because Termaid's output does
 not carry source-byte metadata. Native preview navigation never changes diagram layout.
 
-Each source generation attempts at most eight diagrams, runs no more than two jobs concurrently,
+Each document snapshot admits at most eight distinct diagrams, runs no more than two jobs concurrently,
 and gives every job an eight-second timeout. Output is capped at one MiB, 4,096 fitted rows, and
-65,536 styled chunks. Edits, width changes, and preview teardown retire jobs and reject stale results.
+65,536 styled chunks. The element map reuses completed results and active jobs for unchanged diagram
+content, including after prose edits or movement. Changed or removed diagrams retire only their own
+jobs. Width, renderer-setting changes, and preview teardown retire the affected state. A completion
+that arrives before the next preview refresh reparses the source and checks the current element map
+before publishing, so an edited or deleted diagram cannot publish stale output.
 Completed jobs request a coalesced refresh through the shared feature layer.
+
+Mermaid source extmarks associate a changed element with its last successful render. While an update
+is pending, that canvas stays visible with an updating marker; a narrower pane clips its temporary
+display to the available width. The provider estimates height from the previous measured height and
+the ratio of previous/current width budgets. If more than half the source bytes fall outside a shared
+prefix and suffix, it keeps the previous height instead of scaling. Estimates always use the last
+completed result, so repeated resizing does not accumulate estimation error. New diagrams with no
+history reserve four rows. A completed render supplies exact dimensions and replaces only its own
+display interval; estimates reduce layout movement but cannot guarantee the final height.
 
 The adapter requests Termaid's strict-width reflow mode and its versioned `styled-json` contract.
 It budgets 85 percent of the preview's usable width and computes initial spacing before launching:

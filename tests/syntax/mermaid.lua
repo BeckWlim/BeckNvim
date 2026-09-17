@@ -289,8 +289,9 @@ assert(not message_history():find('Mermaid line ', 1, true),
 mermaid.detach(buffer)
 refreshes = 0
 process_requests = {}
+local renderer_available = true
 mermaid.find_executable = function()
-  return '/test/bin/termaid'
+  return renderer_available and '/test/bin/termaid' or nil
 end
 assert(#mermaid.parse(context) == 0, 'A fresh Mermaid render was not pending')
 vim.api.nvim_buf_set_name(buffer, '/tmp/termaid-errors.md')
@@ -409,6 +410,103 @@ end, 1), 'Mermaid render queue did not start the next bounded job')
 
 mermaid.detach(budget_buffer)
 vim.api.nvim_buf_delete(budget_buffer, { force = true })
+
+-- Content identities survive prose edits and movement, including completions
+-- that arrive before the edited document is projected again.
+local incremental_buffer = fixture({
+  'Prose', '', '```mermaid', 'graph LR', 'A --> B', '```', '',
+  '```mermaid', 'graph LR', 'C --> D', '```', '', 'Tail',
+})
+process_requests = {}
+local function project_incremental()
+  local current_tree = assert(vim.treesitter.get_parser(incremental_buffer, 'markdown'):parse()[1])
+  return mermaid.project({ buf = incremental_buffer, root = current_tree:root(), width = 100 })
+end
+local initial_tree = assert(vim.treesitter.get_parser(incremental_buffer, 'markdown'):parse()[1])
+local reserved_diagrams, layout_tasks = mermaid.layout({ buf = incremental_buffer, root = initial_tree:root(), width = 100 })
+assert(#process_requests == 0 and #reserved_diagrams == 2
+  and reserved_diagrams[1].layout.estimated and reserved_diagrams[1].layout.height == #reserved_diagrams[1].rows,
+  'Provider layout started rendering before returning a measured reservation')
+local frame_committed = false
+markdown_features.dispatch(layout_tasks, function() return frame_committed end)
+frame_committed = true
+assert(vim.wait(100, function() return #process_requests == 2 end, 1), 'Committed layout did not dispatch diagram jobs')
+assert(#process_requests == 2, 'Incremental fixture did not queue both diagrams')
+local kills_before_prose = killed_processes
+vim.api.nvim_buf_set_lines(incremental_buffer, 0, 1, false, { 'Changed prose while rendering' })
+local refreshes_before_completion = refreshes
+process_requests[1].callback({ code = 0, stdout = 'first diagram' })
+process_requests[2].callback({ code = 0, stdout = 'second diagram' })
+assert(vim.wait(100, function() return refreshes == refreshes_before_completion + 2 end, 1),
+  'Unrelated edits discarded in-flight Mermaid results')
+local initial_diagrams = project_incremental()
+assert(#initial_diagrams == 2 and #process_requests == 2 and killed_processes == kills_before_prose,
+  'Prose-only edits canceled or restarted diagram jobs')
+vim.api.nvim_buf_set_lines(incremental_buffer, 0, 0, false, { 'Inserted before diagrams' })
+local moved_diagrams = project_incremental()
+assert(#process_requests == 2 and moved_diagrams[2].start_row == initial_diagrams[2].start_row + 1
+  and moved_diagrams[2].rows[2].source_row == initial_diagrams[2].rows[2].source_row + 1
+  and moved_diagrams[2].rows[2].chunks == initial_diagrams[2].rows[2].chunks,
+  'Moving a Mermaid block rerendered it or lost its source mapping')
+vim.api.nvim_buf_set_lines(incremental_buffer, 5, 6, false, { 'A --> Changed' })
+local pending_diagrams = project_incremental()
+assert(#process_requests == 3 and #pending_diagrams == 2
+  and pending_diagrams[2].rows[2].chunks == initial_diagrams[2].rows[2].chunks,
+  'Editing one diagram invalidated the other diagram')
+assert(pending_diagrams[1].pending and pending_diagrams[1].layout.estimated
+  and pending_diagrams[1].layout.height == initial_diagrams[1].layout.height
+  and pending_diagrams[1].rows[2].chunks[1][1] == initial_diagrams[1].rows[2].chunks[1][1],
+  'Updating a diagram lost its last completed canvas or reserved height')
+process_requests[3].callback({ code = 0, stdout = 'updated first diagram' })
+assert(vim.wait(100, function() return not mermaid.stage(incremental_buffer)[1].pending end, 1),
+  'Changed diagram did not settle alongside its cached neighbor')
+vim.api.nvim_buf_set_lines(incremental_buffer, 8, 12, false, {})
+assert(#project_incremental() == 1 and #process_requests == 3, 'Deleted diagram retained a stale projection')
+local before_resize = project_incremental()[1]
+local resize_tree = assert(vim.treesitter.get_parser(incremental_buffer, 'markdown'):parse()[1])
+local resized_reservations, resize_tasks = mermaid.layout({ buf = incremental_buffer, root = resize_tree:root(), width = 50 })
+assert(resized_reservations[1].pending and resized_reservations[1].layout.basis == 'scaled'
+  and resized_reservations[1].layout.height > before_resize.layout.height and #process_requests == 3,
+  'Narrowing the pane did not reserve scaled cached geometry before dispatch')
+local baseline_scale = { width = 80, height = 11, source = 'graph LR\nA --> B' }
+local scaled_layout = mermaid.estimate_layout(baseline_scale.source, 40, baseline_scale)
+local replaced_layout = mermaid.estimate_layout(string.rep('Entirely different document\n', 20), 40, baseline_scale)
+assert(scaled_layout.height == 21 and scaled_layout.basis == 'scaled'
+  and replaced_layout.height == 11 and replaced_layout.basis == 'previous',
+  'Large replacements speculatively scaled the last measured height')
+vim.api.nvim_buf_set_lines(incremental_buffer, 5, 6, false, { string.rep('A --> EntirelyNewNode; ', 30) })
+local replacement_tree = assert(vim.treesitter.get_parser(incremental_buffer, 'markdown'):parse()[1])
+local replacement_layout = mermaid.layout({ buf = incremental_buffer, root = replacement_tree:root(), width = 50 })
+assert(replacement_layout[1].layout.basis == 'previous'
+  and replacement_layout[1].layout.height == before_resize.layout.height and #process_requests == 3,
+  'A large diagram replacement did not retain its last completed dimensions')
+vim.api.nvim_buf_set_lines(incremental_buffer, 5, 6, false, { 'A --> Newer' })
+markdown_features.dispatch(resize_tasks, function() return true end)
+vim.wait(20)
+assert(#process_requests == 3, 'Stale layout dispatched work for an obsolete source revision')
+local function layout_incremental()
+  local current_tree = assert(vim.treesitter.get_parser(incremental_buffer, 'markdown'):parse()[1])
+  return mermaid.layout({ buf = incremental_buffer, root = current_tree:root(), width = 50 })
+end
+local _, newer_tasks = layout_incremental()
+markdown_features.dispatch(newer_tasks, function() return true end)
+assert(vim.wait(100, function() return #process_requests == 4 end, 1))
+vim.api.nvim_buf_set_lines(incremental_buffer, 5, 6, false, { 'A --> Newest' })
+process_requests[4].callback({ code = 0, stdout = 'obsolete result' })
+vim.wait(20)
+assert(#process_requests == 4, 'A stale completion launched replacement work before the next layout commit')
+local _, newest_tasks = layout_incremental()
+markdown_features.dispatch(newest_tasks, function() return true end)
+assert(vim.wait(100, function() return #process_requests == 5 end, 1))
+mermaid.detach(incremental_buffer)
+renderer_available = false
+local unavailable_layout, unavailable_tasks = layout_incremental()
+assert(unavailable_layout[1].pending, 'Missing-renderer fixture has no initial reservation')
+markdown_features.dispatch(unavailable_tasks, function() return true end)
+assert(vim.wait(100, function() return #mermaid.stage(incremental_buffer) == 0 end, 1),
+  'Unavailable renderer left a permanent loading reservation')
+mermaid.detach(incremental_buffer)
+vim.api.nvim_buf_delete(incremental_buffer, { force = true })
 mermaid.find_executable = original.find_executable
 mermaid.max_concurrent = original.max_concurrent
 mermaid.start_process = original.start_process

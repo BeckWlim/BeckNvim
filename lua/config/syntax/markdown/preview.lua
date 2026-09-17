@@ -91,6 +91,19 @@ local function parse_prose(buffer, rows)
   parser:set_included_regions(regions)
 end
 
+local function restore_source(session, position)
+  set_buffer(session.window, session.source)
+  for name, value in pairs(session.source_options) do vim.wo[session.window][name] = value end
+  vim.api.nvim_win_call(session.window, function() vim.fn.winrestview(session.source_view) end)
+  vim.api.nvim_win_set_cursor(session.window, position)
+end
+
+local function sync_modified(session)
+  if vim.api.nvim_buf_is_valid(session.source) and vim.api.nvim_buf_is_valid(session.buffer) then
+    vim.bo[session.buffer].modified = vim.bo[session.source].modified
+  end
+end
+
 local function close(session, buffer_wiping)
   if sessions[session.source] ~= session then return end
   local returning_to_source = live(session) and not buffer_wiping and not session.source_gone
@@ -108,17 +121,12 @@ local function close(session, buffer_wiping)
   end
   if vim.api.nvim_win_is_valid(session.window)
       and vim.api.nvim_win_get_buf(session.window) == session.buffer then
-    if not buffer_wiping then
+    if returning_to_source then
+      restore_source(session, position)
+    elseif not buffer_wiping then
       local replacement = not session.source_gone and vim.api.nvim_buf_is_valid(session.source)
         and session.source or vim.api.nvim_create_buf(true, false)
       set_buffer(session.window, replacement)
-    end
-    if returning_to_source then
-      for name, value in pairs(session.source_options) do vim.wo[session.window][name] = value end
-    end
-    if returning_to_source and position and vim.api.nvim_win_get_buf(session.window) == session.source then
-      vim.api.nvim_win_call(session.window, function() vim.fn.winrestview(session.source_view) end)
-      vim.api.nvim_win_set_cursor(session.window, position)
     end
   end
   if vim.api.nvim_buf_is_valid(session.source) then
@@ -171,49 +179,49 @@ function M.refresh(source)
   local previous_position = #anchor_position == 2
     and { anchor_position[1] + 1, anchor_position[2] } or source_position(session)
   local view = vim.api.nvim_win_call(session.window, vim.fn.winsaveview)
-  local projected_rows = project(session)
+  local projected_rows, render_tasks = project(session)
+  local function dispatch()
+    features.dispatch(render_tasks, function() return sessions[source] == session end)
+  end
   session.changedtick = vim.api.nvim_buf_get_changedtick(session.source)
-  local first_changed = 1
-  while first_changed <= #session.rows and first_changed <= #projected_rows
-      and vim.deep_equal(session.rows[first_changed], projected_rows[first_changed]) do
-    first_changed = first_changed + 1
-  end
-  if first_changed > #session.rows and first_changed > #projected_rows then return end
-  local old_end = #session.rows == 0 and vim.api.nvim_buf_line_count(session.buffer) or #session.rows
-  local new_end = #projected_rows
-  while old_end >= first_changed and new_end >= first_changed
-      and vim.deep_equal(session.rows[old_end], projected_rows[new_end]) do
-    old_end, new_end = old_end - 1, new_end - 1
-  end
-  local lines = {}
-  for index = first_changed, new_end do
-    local row = projected_rows[index]
-    local parts = {}
-    for _, chunk in ipairs(row.chunks) do parts[#parts + 1] = chunk[1] end
-    lines[#lines + 1] = table.concat(parts)
-  end
+  local ranges = features.changed_ranges(session.rows, projected_rows)
+  if #session.rows == 0 and #ranges > 0 then ranges[1].old_count = vim.api.nvim_buf_line_count(session.buffer) end
   session.rows = projected_rows
+  if #ranges == 0 then sync_modified(session); dispatch(); return end
   -- A buffer replacement can synchronously redraw. Retire the old highlight
   -- iterators before changing lines whose Markdown parse regions are moving.
   local highlighted = vim.treesitter.highlighter.active[session.buffer] ~= nil
   if highlighted then vim.treesitter.stop(session.buffer) end
-  vim.api.nvim_buf_clear_namespace(session.buffer, namespace, first_changed - 1, old_end)
   vim.bo[session.buffer].modifiable = true
-  vim.api.nvim_buf_set_lines(session.buffer, first_changed - 1, old_end, false, lines)
+  for index = #ranges, 1, -1 do
+    local range = ranges[index]
+    local lines = {}
+    for row_index = range.new_start + 1, range.new_start + range.new_count do
+      local parts = {}
+      for _, chunk in ipairs(projected_rows[row_index].chunks) do parts[#parts + 1] = chunk[1] end
+      lines[#lines + 1] = table.concat(parts)
+    end
+    if range.old_count > 0 then
+      vim.api.nvim_buf_clear_namespace(session.buffer, namespace, range.old_start, range.old_start + range.old_count)
+    end
+    vim.api.nvim_buf_set_lines(session.buffer, range.old_start, range.old_start + range.old_count, false, lines)
+  end
   vim.bo[session.buffer].modifiable = false
-  vim.bo[session.buffer].modified = false
+  sync_modified(session)
   parse_prose(session.buffer, projected_rows)
   if highlighted then vim.treesitter.start(session.buffer) end
-  for index = first_changed, new_end do
-    local row = projected_rows[index]
-    local column = 0
-    for _, chunk in ipairs(row.chunks) do
-      if chunk[2] and #chunk[1] > 0 then
-        vim.api.nvim_buf_set_extmark(session.buffer, namespace, index - 1, column, {
-          end_col = column + #chunk[1], hl_group = chunk[2], priority = 200,
-        })
+  for _, range in ipairs(ranges) do
+    for index = range.new_start + 1, range.new_start + range.new_count do
+      local row = projected_rows[index]
+      local column = 0
+      for _, chunk in ipairs(row.chunks) do
+        if chunk[2] and #chunk[1] > 0 then
+          vim.api.nvim_buf_set_extmark(session.buffer, namespace, index - 1, column, {
+            end_col = column + #chunk[1], hl_group = chunk[2], priority = 200,
+          })
+        end
+        column = column + #chunk[1]
       end
-      column = column + #chunk[1]
     end
   end
   local target = features.preview_position(projected_rows, previous_position[1] - 1, previous_position[2])
@@ -221,6 +229,7 @@ function M.refresh(source)
   vim.api.nvim_win_set_cursor(session.window, target)
   remember_source_position(session)
   highlight_cursor(session)
+  dispatch()
 end
 
 local function schedule_refresh(session)
@@ -237,6 +246,36 @@ local function schedule_refresh(session)
     M.refresh(session.source)
   end
   vim.defer_fn(apply_when_idle, 80)
+end
+
+local function schedule_preview(source, window)
+  vim.schedule(function()
+    if vim.api.nvim_buf_is_valid(source) and vim.api.nvim_win_is_valid(window)
+        and vim.api.nvim_get_current_win() == window
+        and vim.api.nvim_win_get_buf(window) == source
+        and vim.api.nvim_get_mode().mode == 'n'
+        and not vim.b[source].markdown_preview_disabled then
+      M.open(source)
+    end
+  end)
+end
+
+local function edit_source(session, keys)
+  if not live(session) then return end
+  local count = vim.v.count > 0 and tostring(vim.v.count) or ''
+  local register = vim.v.register
+  if session.changedtick ~= vim.api.nvim_buf_get_changedtick(session.source) then M.refresh(session.source) end
+  local position = clamp_source_position(session.source, source_position(session))
+  -- Suppress automatic preview entry while restoring the source. Native keys
+  -- then own counts, registers, motions, repeat, and the source undo history.
+  vim.b[session.source].markdown_preview_disabled = true
+  restore_source(session, position)
+  vim.cmd('normal! zv')
+  vim.b[session.source].markdown_preview_disabled = false
+  vim.api.nvim_feedkeys(vim.keycode('"' .. register .. count .. keys), 'ni', false)
+  -- Also return after a native command that makes no change (for example x on
+  -- an empty line). Pending operators and Insert mode remain in the source.
+  schedule_preview(session.source, session.window)
 end
 
 function M.open(source)
@@ -267,6 +306,7 @@ function M.open(source)
   vim.bo[source].bufhidden = 'hide'
   vim.b[source].markdown_preview_disabled = false
   local buffer = vim.api.nvim_create_buf(false, true)
+  vim.bo[buffer].buftype = 'acwrite'
   -- Native jump entries refer to this buffer. Keep it until an explicit source
   -- transition or source/window teardown so forward jumps retain their target.
   vim.bo[buffer].bufhidden = 'hide'
@@ -284,16 +324,41 @@ function M.open(source)
   }
   sessions[source] = session
   sessions_by_preview[buffer] = session
+  vim.api.nvim_create_autocmd('BufWriteCmd', {
+    group = session.group, buffer = buffer, nested = true,
+    callback = function(event)
+      -- Write the original Markdown through Neovim, preserving its encoding,
+      -- write hooks, readonly/conflict checks, and explicit bang/options.
+      local preview_name = vim.api.nvim_buf_get_name(buffer)
+      local destination = event.match ~= preview_name and event.file ~= preview_name
+        and (' ' .. vim.fn.fnameescape(event.file)) or ''
+      local command = 'write' .. (vim.v.cmdbang == 1 and '!' or '') .. vim.v.cmdarg .. destination
+      vim.api.nvim_buf_call(source, function() vim.cmd(command) end)
+      sync_modified(session)
+    end,
+    desc = 'Save the Markdown source while keeping its rendered preview open',
+  })
   preview_options(session)
   features.subscribe(source, function() schedule_refresh(session) end)
   local close_preview = function() close(session) end
   require('config.ui.float').bind_close({ buffer = buffer, close = close_preview, description = 'Return to Markdown source' })
   vim.keymap.set({ 'n', 'x' }, '<C-q>', close_preview, { buffer = buffer, silent = true })
-  vim.keymap.set('n', 'i', function()
-    if not live(session) then return end
-    jump_to_source(session)
-    vim.cmd('startinsert')
-  end, { buffer = buffer, silent = true, desc = 'Edit Markdown source at cursor' })
+  for _, keys in ipairs({
+    'i', 'I', 'a', 'A', 'o', 'O', 's', 'S', 'c', 'C', 'd', 'D', 'x', 'X',
+    'r', 'R', 'p', 'P', 'J', '~', '.', '>', '<', '=', 'gu', 'gU', 'g~',
+  }) do
+    vim.keymap.set('n', keys, function() edit_source(session, keys) end,
+      { buffer = buffer, silent = true, desc = 'Edit Markdown source at cursor' })
+  end
+  for _, keys in ipairs({ 'u', '<C-r>' }) do
+    vim.keymap.set('n', keys, function()
+      local command_keys = tostring(vim.v.count1) .. vim.keycode(keys)
+      vim.api.nvim_buf_call(source, function()
+        vim.api.nvim_cmd({ cmd = 'normal', args = { command_keys }, bang = true }, {})
+      end)
+      M.refresh(source)
+    end, { buffer = buffer, silent = true, desc = 'Undo/redo Markdown source' })
+  end
   vim.keymap.set('n', '<Space>mp', close_preview, { buffer = buffer, desc = 'Return to Markdown source' })
   vim.api.nvim_create_autocmd('BufWinLeave', {
     group = session.group, buffer = buffer, callback = function()
@@ -319,6 +384,9 @@ function M.open(source)
   })
   vim.api.nvim_create_autocmd({ 'TextChanged', 'TextChangedI', 'BufWritePost', 'FileChangedShellPost' }, {
     group = session.group, buffer = source, callback = function() schedule_refresh(session) end,
+  })
+  vim.api.nvim_create_autocmd('BufModifiedSet', {
+    group = session.group, buffer = source, callback = function() sync_modified(session) end,
   })
   vim.api.nvim_create_autocmd('CursorMoved', {
     group = session.group, buffer = buffer, callback = function()
@@ -382,26 +450,26 @@ end
 
 function M.setup()
   local group = vim.api.nvim_create_augroup('markdown_default_preview', { clear = true })
-  vim.api.nvim_create_autocmd({ 'FileType', 'BufWinEnter' }, {
+  local function render_when_normal(event)
+    local buffer = event.buf
+    local window = vim.api.nvim_get_current_win()
+    if vim.bo[buffer].filetype ~= 'markdown' or vim.bo[buffer].buftype ~= ''
+        or vim.b[buffer].markdown_preview_source
+        or vim.api.nvim_win_get_buf(window) ~= buffer then return end
+    vim.wo[window].conceallevel = 0
+    if vim.b[buffer].markdown_preview_disabled then return end
+    schedule_preview(buffer, window)
+  end
+  vim.api.nvim_create_autocmd({ 'FileType', 'BufWinEnter', 'TextChanged' }, {
     group = group,
-    callback = function(event)
-      local buffer = event.buf
-      local window = vim.api.nvim_get_current_win()
-      if vim.bo[buffer].filetype ~= 'markdown' or vim.bo[buffer].buftype ~= ''
-          or vim.b[buffer].markdown_preview_source
-          or vim.api.nvim_win_get_buf(window) ~= buffer then return end
-      vim.wo[window].conceallevel = 0
-      if vim.b[buffer].markdown_preview_disabled then return end
-      vim.schedule(function()
-        if vim.api.nvim_buf_is_valid(buffer) and vim.api.nvim_win_is_valid(window)
-            and vim.api.nvim_get_current_win() == window
-            and vim.api.nvim_win_get_buf(window) == buffer
-            and not vim.b[buffer].markdown_preview_disabled then
-          M.open(buffer)
-        end
-      end)
-    end,
+    callback = render_when_normal,
     desc = 'Show Markdown files rendered by default in their current pane',
+  })
+  vim.api.nvim_create_autocmd('ModeChanged', {
+    group = group,
+    pattern = '*:n',
+    callback = render_when_normal,
+    desc = 'Return to rendered Markdown after a quick edit',
   })
 end
 

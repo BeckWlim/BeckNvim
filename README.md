@@ -9,6 +9,10 @@ system while keeping native Neovim and plugin behavior wherever practical.
 - **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
 - **Git review:** search remote branches, inspect commits, detach HEAD for deeper review, and read pull requests in floating dialogs.
 - **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, with source editing in place and refreshes when external file changes are detected. Use `gx` on prose or table links to open files relative to the source document.
+  Common edit keys work on the source and return to preview in Normal mode; `<Space>mp` selects persistent raw source.
+  Save with `:w` or `:update`, and undo/redo with `u` / `<C-r>` directly from preview.
+  Prose edits reuse cached tables and diagrams; only changed objects or layouts need rendering again.
+  Providers reserve layout before background rendering, using previous diagram dimensions to reduce movement.
   Use `<Space>o` / `<Space>p` to jump back and forward through rendered documents within the current Neovim run.
   Mermaid render failures show a single-line warning and leave the source readable and editable.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
@@ -25,9 +29,18 @@ system while keeping native Neovim and plugin behavior wherever practical.
 
 ![Mooncake remote branch search, detached commit review, and PR dialog](examples/media/git.gif)
 
-**Markdown:** a complex Mermaid diagram reflows as the pane narrows, with source editing in place.
+**Markdown tables:** long descriptions wrap at word boundaries, oversized identifiers split to fit,
+and neighboring cells stay aligned. Move through wrapped lines, select and copy a word, then
+quick-edit a status and undo/redo. The full [table sample](examples/fixtures/project/docs/table.md)
+fits on one page.
 
-![Complex Mermaid rendering at different pane widths and source editing](examples/media/markdown.gif)
+![Long table cells wrapping beside aligned short cells, with cursor movement, copying, and quick editing](examples/media/table.gif)
+
+**Mermaid:** a [five-node flowchart](examples/fixtures/project/docs/mermaid.md) shows node shapes,
+a decision, labeled branches, and a shared result on one page. Navigate and copy a label, edit its
+source, then quick-edit surrounding prose.
+
+![Mermaid flowchart navigation, copying, and editing on one page](examples/media/mermaid.gif)
 
 **Homepage and themes:** browse recent projects and files, then preview light and dark palettes.
 

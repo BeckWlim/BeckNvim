@@ -53,12 +53,22 @@ already active.
 
 Markdown files open with prose, tables, and diagrams rendered by default. Source mode shows all
 Markdown punctuation for editing. `Enter` moves to the next line while keeping the preview rendered.
-`i` returns to the source position beneath the cursor and enters Insert mode immediately.
+Common Normal-mode edit keys (`i`/`I`, `a`/`A`, `o`/`O`, `c`, `d`, `s`, `x`, `r` and their uppercase
+forms, `p`/`P`, `J`, `~`, `.`, `>`, `<`, `=`, `gu`, `gU`, `g~`) first restore the source at the mapped
+cursor position. Counts, registers, and operator motions apply to raw Markdown. Returning to Normal
+mode restores preview, keeping edits unsaved; this includes `Esc` or `<C-c>` after Insert mode.
+Use `u` / `<C-r>` to undo/redo source edits while remaining in preview, and `:w` or `:update` to save
+the underlying Markdown file. Visual selections and yanks refer to displayed text; switch to raw
+source with `<Space>mp` before editing a visual selection or using other source Ex commands.
+Temporary Normal mode with `<C-o>` stays in the editing buffer.
 `q`, `<C-q>`, or `<Space>mp` returns to source in the same pane; `<Space>mp` renders it again.
+Explicit source mode stays raw after editing until you toggle it back.
 Movement, selection, scrolling,
 and copying displayed text use normal Neovim behavior. Tables and diagrams refresh after source edits
 and preview resizing, applying background updates after navigation pauses briefly. Pinned section
 titles and `<Space>cc` also work in the rendered view.
+Quick edits reuse the preview buffer and unchanged objects. Pending diagrams retain their previous
+canvas and reserve provider-estimated space while background rendering finishes.
 Rendered rows keep your editor line-number settings, and `<Space>h` opens the dashboard from either
 Markdown mode.
 

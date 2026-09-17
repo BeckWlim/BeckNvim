@@ -45,4 +45,31 @@ vim.api.nvim_buf_set_lines(buffer, 2, 3, false, { '| changed | value |' })
 local edited_tree = vim.treesitter.get_parser(buffer, 'markdown'):parse()[1]
 assert(markdown_table.project({ buf = buffer, root = edited_tree:root(), width = 60, cache = cache }) ~= resized_blocks,
   'Table cache ignored source edits')
+vim.api.nvim_buf_set_lines(buffer, 0, -1, false, {
+  'Before', '', '| One | Value |', '|---|---|', '| first | value |', '',
+  '| Two | Value |', '|---|---|', '| second | value |', '', 'After',
+})
+local function project_tables(width)
+  local current_tree = assert(vim.treesitter.get_parser(buffer, 'markdown'):parse()[1])
+  return markdown_table.project({ buf = buffer, root = current_tree:root(), width = width, cache = cache })
+end
+local initial_tables = project_tables(60)
+vim.api.nvim_buf_set_lines(buffer, 0, 1, false, { 'Updated prose' })
+local prose_tables = project_tables(60)
+assert(prose_tables[1] == initial_tables[1] and prose_tables[2] == initial_tables[2],
+  'Prose-only edits rebuilt table objects')
+vim.api.nvim_buf_set_lines(buffer, 4, 5, false, { '| updated first | value |' })
+local changed_tables = project_tables(60)
+assert(changed_tables[1] ~= initial_tables[1] and changed_tables[2] == initial_tables[2],
+  'Editing one table invalidated the other table')
+vim.api.nvim_buf_set_lines(buffer, 0, 0, false, { 'Inserted above' })
+local moved_tables = project_tables(60)
+assert(moved_tables[2].start_row == changed_tables[2].start_row + 1
+  and moved_tables[2].rows[2].source_row == changed_tables[2].rows[2].source_row + 1
+  and moved_tables[2].rows[2].chunks == changed_tables[2].rows[2].chunks,
+  'An insertion above a table rebuilt its content or lost its source mapping')
+local wider_tables = project_tables(90)
+assert(wider_tables[1].rows[2].chunks ~= moved_tables[1].rows[2].chunks
+  and wider_tables[2].rows[2].chunks ~= moved_tables[2].rows[2].chunks,
+  'Resizing reused table layouts for the old width')
 vim.api.nvim_buf_delete(buffer, { force = true })

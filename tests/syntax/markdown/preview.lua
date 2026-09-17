@@ -93,15 +93,26 @@ assert(vim.api.nvim_get_current_buf() == source, 'Automatic preview overrode the
 assert(not vim.api.nvim_buf_is_valid(preview_buffer), 'Source toggle retained the old preview buffer')
 assert(vim.wo[window].colorcolumn == '80,160', 'Source toggle lost its editing column guides')
 preview.toggle()
+local quick_edit_preview = vim.api.nvim_get_current_buf()
 vim.api.nvim_win_set_cursor(window, { target_row, target_column })
 vim.api.nvim_feedkeys(vim.keycode('iEDIT<Esc>'), 'xt', false)
-assert(vim.api.nvim_get_current_buf() == source and vim.api.nvim_get_current_win() == window,
-  'Insert did not switch from preview to source in the same pane')
+assert(vim.wait(200, function() return vim.b.markdown_preview_source == source end, 5),
+  'Leaving Insert mode did not automatically restore the rendered preview')
+assert(vim.api.nvim_get_current_buf() == quick_edit_preview, 'Quick edit replaced the retained preview buffer')
+assert(vim.api.nvim_get_current_win() == window and not vim.bo.modifiable and vim.bo[source].modified,
+  'Quick edit changed panes, left preview editable, or discarded unsaved changes')
 local original_table_line = source_lines[source_target[1]]
 local expected_table_line = original_table_line:sub(1, source_target[2])
   .. 'EDIT' .. original_table_line:sub(source_target[2] + 1)
 assert(vim.api.nvim_buf_get_lines(source, source_target[1] - 1, source_target[1], false)[1] == expected_table_line,
   'Typing from a wrapped preview cell did not insert at its mapped source byte')
+local _, edited_position = preview.source_location(window)
+assert(edited_position and edited_position[1] == source_target[1], 'Automatic preview lost the edited source row')
+vim.api.nvim_feedkeys(vim.keycode('<Space>mp'), 'xt', false)
+vim.api.nvim_feedkeys(vim.keycode('iRAW<Esc>'), 'xt', false)
+vim.wait(50)
+assert(vim.api.nvim_get_current_buf() == source and vim.b[source].markdown_preview_disabled,
+  'Leaving Insert mode overrode explicitly selected raw source')
 vim.api.nvim_buf_set_lines(source, source_target[1] - 1, source_target[1], false, { original_table_line })
 vim.api.nvim_buf_set_lines(source, 6, 7, false, { 'changed prose after table' })
 preview.toggle()
@@ -110,6 +121,15 @@ assert(reopened ~= source and #vim.api.nvim_list_wins() == window_count,
   'Render toggle opened an extra pane')
 assert(vim.api.nvim_buf_get_lines(reopened, -2, -1, false)[1] == 'changed prose after table',
   'Reopening the rendered view did not reflect source edits')
+local display_namespace = vim.api.nvim_get_namespaces().markdown_preview
+local table_marks = vim.api.nvim_buf_get_extmarks(reopened, display_namespace, 0, -1, {})
+vim.api.nvim_buf_set_lines(source, 0, 1, false, { 'Changed prose before table' })
+vim.api.nvim_buf_set_lines(source, 6, 7, false, { 'Another change after table' })
+preview.refresh(source)
+assert(vim.deep_equal(table_marks, vim.api.nvim_buf_get_extmarks(reopened, display_namespace, 0, -1, {})),
+  'Prose changes on both sides repainted unchanged table highlights')
+vim.api.nvim_buf_set_lines(source, 6, 7, false, { 'changed prose after table' })
+preview.refresh(source)
 vim.api.nvim_win_set_cursor(window, { vim.api.nvim_buf_line_count(reopened), 0 })
 vim.api.nvim_exec_autocmds('CursorMoved', { buffer = reopened })
 vim.treesitter.start(reopened)
@@ -231,4 +251,61 @@ vim.api.nvim_set_current_buf(original_buffer)
 vim.api.nvim_buf_delete(external_source, { force = true })
 vim.fn.delete(external_path)
 vim.o.autoread = saved_autoread
+
+-- :write targets raw Markdown, with native write hooks and failure handling.
+local write_path = vim.fn.tempname() .. ' source.md'
+vim.fn.writefile({ '# Original', '', '| Key | Value |', '|---|---|', '| item | original |' }, write_path)
+vim.api.nvim_cmd({ cmd = 'edit', args = { write_path } }, {})
+local write_source = vim.api.nvim_get_current_buf()
+vim.bo[write_source].filetype = 'markdown'
+vim.api.nvim_buf_set_lines(write_source, 4, 5, false, { '| item | unsaved edit |' })
+local write_preview = preview.open(write_source)
+assert(vim.bo[write_preview].modified, 'Preview did not mirror unsaved source state')
+local write_cursor = vim.api.nvim_win_get_cursor(window)
+local write_events = {}
+local write_group = vim.api.nvim_create_augroup('markdown_preview_write_test', { clear = true })
+vim.api.nvim_create_autocmd({ 'BufWritePre', 'BufWritePost' }, {
+  group = write_group, buffer = write_source,
+  callback = function(event)
+    write_events[#write_events + 1] = event.event
+    assert(vim.api.nvim_get_current_buf() == write_source, 'Write hook did not run in the source buffer')
+  end,
+})
+vim.cmd('write')
+assert(vim.deep_equal(vim.fn.readfile(write_path), vim.api.nvim_buf_get_lines(write_source, 0, -1, false)),
+  'Writing from preview saved rendered rows instead of raw Markdown')
+assert(vim.deep_equal(write_events, { 'BufWritePre', 'BufWritePost' }) and not vim.bo[write_source].modified,
+  'Preview write skipped source hooks or left the saved source modified')
+assert(not vim.bo[write_preview].modified, 'Saved preview still reports unsaved changes')
+assert(vim.api.nvim_get_current_buf() == write_preview and not vim.bo[write_preview].modifiable
+  and vim.deep_equal(vim.api.nvim_win_get_cursor(window), write_cursor),
+  'Writing changed the preview buffer, editability, or cursor')
+vim.api.nvim_buf_set_lines(write_source, 0, 1, false, { '# Unsaved readonly edit' })
+vim.bo[write_source].readonly = true
+local readonly_written, readonly_error = pcall(vim.cmd, 'write')
+assert(not readonly_written and tostring(readonly_error):find('E45', 1, true)
+  and vim.bo[write_source].modified and vim.fn.readfile(write_path)[1] == '# Original',
+  'Preview write bypassed readonly protection or lost unsaved edits on failure')
+assert(vim.api.nvim_get_current_buf() == write_preview, 'Failed write left the preview')
+vim.cmd('write!')
+assert(not vim.bo[write_source].modified and vim.fn.readfile(write_path)[1] == '# Unsaved readonly edit',
+  'Explicit forced preview write did not reach the source')
+vim.bo[write_source].readonly = false
+vim.api.nvim_buf_set_lines(write_source, 0, 1, false, { '# Update from preview' })
+preview.refresh(write_source)
+vim.cmd('update')
+assert(not vim.bo[write_source].modified and not vim.bo[write_preview].modified
+  and vim.fn.readfile(write_path)[1] == '# Update from preview',
+  'Update skipped the dirty source behind the preview')
+local copy_path = vim.fn.tempname() .. ' raw copy.md'
+vim.api.nvim_cmd({ cmd = 'write', args = { copy_path } }, {})
+assert(vim.deep_equal(vim.fn.readfile(copy_path), vim.api.nvim_buf_get_lines(write_source, 0, -1, false))
+  and vim.api.nvim_buf_get_name(write_source) == write_path and vim.api.nvim_get_current_buf() == write_preview,
+  'Writing a named copy from preview changed the source identity or exported rendered rows')
+vim.fn.delete(copy_path)
+vim.api.nvim_del_augroup_by_id(write_group)
+preview.toggle()
+vim.api.nvim_set_current_buf(original_buffer)
+vim.api.nvim_buf_delete(write_source, { force = true })
+vim.fn.delete(write_path)
 for name, value in pairs(original_options) do vim.wo[name] = value end

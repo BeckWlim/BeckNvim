@@ -46,7 +46,9 @@ local function check()
   ]])
   assert(vim.wait(10000, function()
     return evaluate([[
-      return vim.b.markdown_preview_source ~= nil
+      local source = vim.b.markdown_preview_source
+      local blocks = source and require('config.syntax.mermaid').stage(source) or {}
+      return #blocks > 0 and not blocks[1].pending
         and table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'):find('󰙅 mermaid', 1, true) ~= nil
     ]])
   end, 100), 'Real Mermaid render did not complete')
@@ -333,6 +335,26 @@ local function check()
     vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(0), 7 })
     vim.g.preview_insert_line = vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 16, 17, false)[1]
   ]])
+  assert(vim.wait(10000, function()
+    return evaluate([[
+      local blocks = require('config.syntax.mermaid').stage(vim.g.preview_test_source)
+      local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
+      return #blocks > 0 and not blocks[1].pending and not text:find('mermaid ↻', 1, true)
+    ]])
+  end, 50), 'Quick-edit fixture did not finish its initial render')
+  evaluate([[
+    vim.g.quick_edit_preview = vim.api.nvim_get_current_buf()
+    vim.g.quick_edit_marks = vim.api.nvim_buf_get_extmarks(0,
+      vim.api.nvim_get_namespaces().markdown_preview, 0, -1, {})
+    local mermaid = require('config.syntax.mermaid')
+    local start_process = mermaid.start_process
+    vim.g.quick_edit_render_jobs = 0
+    mermaid.start_process = function(...)
+      vim.g.quick_edit_render_jobs = vim.g.quick_edit_render_jobs + 1
+      return start_process(...)
+    end
+    _G.restore_quick_edit_process = function() mermaid.start_process = start_process end
+  ]])
   vim.rpcnotify(child, 'nvim_input', 'i')
   vim.wait(100)
   assert(vim.rpcrequest(child, 'nvim_get_mode').mode == 'i', 'Preview i did not enter Insert mode')
@@ -345,12 +367,125 @@ local function check()
   vim.wait(100)
   evaluate([[
     local before = vim.g.preview_insert_line
-    local edited = vim.api.nvim_buf_get_lines(0, 16, 17, false)[1]
+    local edited = vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 16, 17, false)[1]
     assert(edited == before:sub(1, 7) .. 'EDIT' .. before:sub(8), 'Insert did not edit the source text')
-    assert(vim.api.nvim_get_current_buf() == vim.g.preview_test_source, 'Escape reopened the preview')
+    assert(vim.b.markdown_preview_source == vim.g.preview_test_source and not vim.bo.modifiable,
+      'Escape did not automatically return to rendered Markdown')
+    assert(vim.bo[vim.g.preview_test_source].modified, 'Automatic preview lost unsaved changes')
+    assert(vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview,
+      'Quick edit recreated the preview buffer')
+    assert(vim.g.quick_edit_render_jobs == 0, 'Prose-only quick edit restarted Termaid')
+    assert(vim.deep_equal(vim.g.quick_edit_marks, vim.api.nvim_buf_get_extmarks(0,
+      vim.api.nvim_get_namespaces().markdown_preview, 0, -1, {})),
+      'Prose-only quick edit replaced unchanged feature highlights')
+    _G.restore_quick_edit_process()
+    _G.restore_quick_edit_process = nil
     local messages = vim.api.nvim_exec2('messages', { output = true }).output
     assert(not messages:find('E21:', 1, true), messages)
   ]])
+  vim.rpcnotify(child, 'nvim_input', ':w<CR>')
+  assert(vim.wait(1000, function()
+    return evaluate([[return not vim.bo[vim.g.preview_test_source].modified]])
+  end, 10), 'Writing from the installed preview did not save the source')
+  evaluate([[
+    local source = vim.g.preview_test_source
+    assert(vim.deep_equal(vim.fn.readfile(vim.api.nvim_buf_get_name(source)),
+      vim.api.nvim_buf_get_lines(source, 0, -1, false)), 'Preview saved generated rows to the Markdown file')
+    assert(vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview
+      and not vim.bo.modifiable and not vim.api.nvim_get_mode().blocking,
+      'Saving left the preview, made it editable, or blocked input')
+    assert(require('config.ui.statusline').project_relative_path() == 'docs/production/report.md',
+      'Saving from preview left the unsaved indicator in the statusline')
+  ]])
+  -- The preview owns no editing history: source undo/redo and native editing
+  -- keys keep their counts, registers, operator motions, and retained view.
+  vim.rpcnotify(child, 'nvim_input', 'u')
+  assert(vim.wait(1000, function()
+    return evaluate([[return vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 16, 17, false)[1]
+      == vim.g.preview_insert_line and vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview]])
+  end, 10), 'Preview undo did not undo the source edit in place')
+  vim.rpcnotify(child, 'nvim_input', vim.keycode('<C-r>'))
+  assert(vim.wait(1000, function()
+    return evaluate([[return vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 16, 17, false)[1]
+      ~= vim.g.preview_insert_line and vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview]])
+  end, 10), 'Preview redo did not restore the source edit in place')
+  evaluate([[
+    vim.g.source_before_common_edit = vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 0, -1, false)
+    vim.fn.setreg('z', 'REGISTER', 'v')
+  ]])
+  for _, edit in ipairs({
+    { keys = '2x', prefix = nil },
+    { keys = '"zP', prefix = 'REGISTER' },
+    { keys = 'cwREPLACED<Esc>', prefix = 'REPLACED' },
+    { keys = 'OInserted<Esc>', prefix = 'Inserted' },
+    { keys = '.', prefix = 'Inserted' },
+  }) do
+    evaluate([[
+      vim.api.nvim_win_set_cursor(0,
+        require('config.syntax.markdown.preview').display_position(vim.api.nvim_get_current_win(), { 17, 0 }))
+    ]])
+    vim.rpcnotify(child, 'nvim_input', vim.keycode(edit.keys))
+    assert(vim.wait(1000, function()
+      return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview
+        and not vim.deep_equal(vim.g.source_before_common_edit,
+          vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 0, -1, false))]])
+    end, 10), 'Common edit did not change source and restore preview: ' .. edit.keys)
+    local edited_line = evaluate([[return vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 16, 17, false)[1] ]])
+    if edit.prefix then
+      assert(edited_line:sub(1, #edit.prefix) == edit.prefix, 'Edit lost its register/motion: ' .. edit.keys)
+    else
+      assert(edited_line == evaluate([[return vim.g.source_before_common_edit[17]:sub(3)]]),
+        'Native edit lost its count')
+    end
+    vim.rpcnotify(child, 'nvim_input', 'u')
+    assert(vim.wait(1000, function()
+      return evaluate([[return vim.deep_equal(vim.g.source_before_common_edit,
+        vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 0, -1, false))]])
+    end, 10), 'Common edit was not a source undo step: ' .. edit.keys)
+  end
+  evaluate([[
+    local blank_row
+    for index, line in ipairs(vim.g.source_before_common_edit) do
+      if line == '' then blank_row = index; break end
+    end
+    assert(blank_row, 'Common edit fixture needs an empty line')
+    vim.api.nvim_win_set_cursor(0,
+      require('config.syntax.markdown.preview').display_position(vim.api.nvim_get_current_win(), { blank_row, 0 }))
+  ]])
+  vim.rpcnotify(child, 'nvim_input', 'x')
+  vim.wait(100)
+  assert(evaluate([[return vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview
+    and vim.deep_equal(vim.g.source_before_common_edit,
+      vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 0, -1, false))]]),
+    'An edit with no change left the source exposed')
+  vim.rpcnotify(child, 'nvim_input', 'd')
+  assert(vim.wait(1000, function() return vim.rpcrequest(child, 'nvim_get_mode').mode == 'no' end, 10),
+    'Preview interrupted a pending source operator')
+  vim.rpcnotify(child, 'nvim_input', vim.keycode('<Esc>'))
+  assert(vim.wait(1000, function()
+    return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview]])
+  end, 10), 'Cancelling an operator did not restore preview')
+  vim.rpcnotify(child, 'nvim_input', 'i')
+  assert(vim.wait(1000, function() return vim.rpcrequest(child, 'nvim_get_mode').mode == 'i' end, 10))
+  vim.rpcnotify(child, 'nvim_input', vim.keycode('<C-o>'))
+  assert(vim.wait(1000, function() return vim.rpcrequest(child, 'nvim_get_mode').mode == 'niI' end, 10))
+  vim.wait(50)
+  assert(evaluate([[return vim.api.nvim_get_current_buf() == vim.g.preview_test_source]]),
+    'Temporary Normal mode interrupted the quick edit')
+  vim.rpcnotify(child, 'nvim_input', 'l')
+  assert(vim.wait(1000, function() return vim.rpcrequest(child, 'nvim_get_mode').mode == 'i' end, 10))
+  vim.rpcnotify(child, 'nvim_input', vim.keycode('<C-c>'))
+  assert(vim.wait(1000, function()
+    return evaluate([[return vim.b.markdown_preview_source == vim.g.preview_test_source]])
+  end, 10), 'Ctrl-C did not return the quick edit to preview')
+  vim.rpcnotify(child, 'nvim_input', vim.keycode('<Space>mp'))
+  assert(vim.wait(1000, function()
+    return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.preview_test_source]])
+  end, 10))
+  vim.rpcnotify(child, 'nvim_input', vim.keycode('iRAW<Esc>'))
+  vim.wait(100)
+  assert(evaluate([[return vim.api.nvim_get_current_buf() == vim.g.preview_test_source]]),
+    'Explicit raw mode was overridden after editing')
   -- Editing column guides must not leave stripes beyond fenced code blocks.
   vim.rpcrequest(child, 'nvim_ui_try_resize', 200, 40)
   evaluate([[

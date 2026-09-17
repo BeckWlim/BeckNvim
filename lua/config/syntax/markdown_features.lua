@@ -15,6 +15,70 @@ local M = {}
 local refresh_callbacks = {}
 local pending_refreshes = {}
 
+-- Cache visual work by object content and layout, independently of its location.
+-- Moving an object only remaps its source rows; chunks and byte spans are shared.
+function M.block_key(source, layout)
+  return vim.fn.sha256(source .. '\0' .. vim.json.encode(layout))
+end
+
+-- Build the current element map and plan only missing work. Positions belong
+-- to the current element; completed and in-flight work is identified by key.
+function M.plan_elements(elements, cached, running, limit)
+  local by_key, render = {}, {}
+  local count = 0
+  for _, element in ipairs(elements) do
+    if not by_key[element.key] and count < limit then
+      by_key[element.key] = element
+      count = count + 1
+      if not cached[element.key] and not running[element.key] then
+        render[#render + 1] = element
+      end
+    end
+  end
+  return { by_key = by_key, render = render }
+end
+
+function M.cached_projection(cache, key, start_row, render)
+  local block = cache[key]
+  if not block then
+    block = render()
+    if not block then return end
+    cache[key] = block
+  end
+  local offset = start_row - block.start_row
+  if offset == 0 then return block end
+  local rows = {}
+  for index, row in ipairs(block.rows) do
+    rows[index] = vim.tbl_extend('force', row, { source_row = row.source_row + offset })
+  end
+  return vim.tbl_extend('force', block, { start_row = start_row, end_row = block.end_row + offset, rows = rows })
+end
+
+-- Only visible content/styling participates in buffer patches. Source maps are
+-- replaced separately, so an insertion above an object does not repaint it.
+function M.changed_ranges(previous_rows, next_rows)
+  local function signatures(rows)
+    local lines = {}
+    for index, row in ipairs(rows) do
+      lines[index] = vim.json.encode({ row.chunks, row.identity == true })
+    end
+    return #lines > 0 and table.concat(lines, '\n') .. '\n' or ''
+  end
+  local ranges = {}
+  vim.text.diff(signatures(previous_rows), signatures(next_rows), {
+    algorithm = 'histogram',
+    on_hunk = function(old_start, old_count, new_start, new_count)
+      ranges[#ranges + 1] = {
+        old_start = old_count == 0 and old_start or old_start - 1,
+        old_count = old_count,
+        new_start = new_count == 0 and new_start or new_start - 1,
+        new_count = new_count,
+      }
+    end,
+  })
+  return ranges
+end
+
 function M.chunks_width(chunks)
   local width = 0
   for _, chunk in ipairs(chunks) do width = width + vim.fn.strdisplaywidth(chunk[1]) end
@@ -47,8 +111,11 @@ end
 
 function M.project(features, context)
   local replacements = {}
+  local tasks = {}
   for _, feature in ipairs(features) do
-    vim.list_extend(replacements, feature.project(context))
+    local blocks, render_tasks = (feature.layout or feature.project)(context)
+    vim.list_extend(replacements, blocks)
+    vim.list_extend(tasks, render_tasks or {})
   end
   table.sort(replacements, function(left, right) return left.start_row < right.start_row end)
   local source_lines = vim.api.nvim_buf_get_lines(context.buf, 0, -1, false)
@@ -72,7 +139,17 @@ function M.project(features, context)
     next_source_row = replacement.end_row
   end
   copy_until(#source_lines)
-  return rows
+  return rows, tasks
+end
+
+-- The owning preview calls this after committing the measured frame. Keeping
+-- dispatch separate prevents process completions from racing initial layout.
+function M.dispatch(tasks, valid)
+  if not tasks or #tasks == 0 then return end
+  vim.schedule(function()
+    if not valid() then return end
+    for _, task in ipairs(tasks) do task() end
+  end)
 end
 
 ---@param row MarkdownPreviewRow
