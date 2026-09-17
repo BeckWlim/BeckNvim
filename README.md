@@ -89,6 +89,9 @@ Run `./setup.sh --check` to check dependencies or `./setup.sh --help` for setup 
 To load plugins from local checkouts, configure [development mode](docs/development.md#local-plugin-development)
 in `~/.nvim`.
 
+Markdown preview features are provided by the [BeckWlim renderer fork](https://github.com/BeckWlim/render-markdown.nvim).
+Termaid is optional and activates automatically when available.
+
 ## Documentation
 
 - [Default keybindings](docs/keybindings.md)

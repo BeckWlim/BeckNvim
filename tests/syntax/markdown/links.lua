@@ -1,4 +1,4 @@
-local preview = require('config.syntax.markdown.preview')
+local preview = require('render-markdown.preview')
 local open_target = require('config.ui.open_target')
 local original_buffer = vim.api.nvim_get_current_buf()
 local original_confirm = vim.fn.confirm

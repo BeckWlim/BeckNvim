@@ -40,23 +40,15 @@ return {
     },
   },
   {
-    'MeanderingProgrammer/render-markdown.nvim',
+    'BeckWlim/render-markdown.nvim',
     ft = { 'markdown' },
     dependencies = {
-      'BeckWlim/termaid',
+      { 'BeckWlim/termaid', optional = true },
       'nvim-treesitter/nvim-treesitter',
       'nvim-tree/nvim-web-devicons',
     },
     opts = {
       debounce = 1,
-      ignore = function(buffer)
-        return vim.bo[buffer].buftype == '' and vim.b[buffer].markdown_preview_source == nil
-      end,
-      anti_conceal = { enabled = false },
-      file_types = { 'markdown' },
-      pipe_table = {
-        enabled = false,
-      },
       preset = 'lazy',
       render_modes = { 'n', 'c', 't', 'v', 'V', '\22' },
       win_options = {

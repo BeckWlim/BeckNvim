@@ -42,9 +42,4 @@ require("lazy").setup("plugins", {
     patterns = dev_patterns,
     fallback = false,
   },
-  performance = {
-    rtp = {
-      paths = vim.api.nvim_get_runtime_file("lua/config/syntax/after", true),
-    },
-  },
 })

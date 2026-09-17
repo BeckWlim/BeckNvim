@@ -306,7 +306,7 @@ end
 
 local function markdown_preview_sections(window)
   if not vim.b[vim.api.nvim_win_get_buf(window)].markdown_preview_source then return end
-  local preview = require('config.syntax.markdown.preview')
+  local preview = require('render-markdown')
   local source, position = preview.source_location(window)
   if not source or not position then return end
   local parser_ok, parser = pcall(vim.treesitter.get_parser, source, 'markdown')

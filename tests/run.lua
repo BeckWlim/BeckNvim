@@ -1,4 +1,5 @@
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
+dofile('tests/markdown_runtime.lua')
 
 for _, test_file in ipairs({
   'tests/user.lua',
@@ -28,14 +29,8 @@ for _, test_file in ipairs({
   'tests/startup/lazy.lua',
   'tests/syntax/folds.lua',
   'tests/syntax/highlights.lua',
-  'tests/syntax/markdown/table/cells.lua',
   'tests/syntax/markdown/configuration.lua',
-  'tests/syntax/markdown/features.lua',
-  'tests/syntax/markdown/jumps.lua',
-  'tests/syntax/markdown/preview.lua',
   'tests/syntax/markdown/links.lua',
-  'tests/syntax/markdown/table/rendering.lua',
-  'tests/syntax/mermaid.lua',
   'tests/syntax/selection.lua',
   'tests/syntax/treesitter.lua',
   'tests/syntax/treesitter_context.lua',

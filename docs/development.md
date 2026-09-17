@@ -37,6 +37,21 @@ Blank lines, `#` comments, quoted values, and an optional `export` prefix are su
 Assignments are read as data; shell commands and variable substitutions are not executed.
 Existing JSON settings remain supported.
 
+For the `BeckWlim/render-markdown.nvim` fork, enable development mode in `~/.nvim` and include
+its repository in the selection:
+
+```bash
+NVIM_DEV=true
+NVIM_DEV_PATH=~/.config
+NVIM_DEV_PLUGINS=BeckWlim/termaid,BeckWlim/render-markdown.nvim
+```
+
+This loads the renderer from `~/.config/render-markdown.nvim`. The plugin declaration leaves
+development mode unset so personal settings control it; without opt-in it uses a managed install.
+Restart Neovim after editing the renderer. Preview, table, and Mermaid implementation and unit tests
+live in the fork; BeckNvim retains configuration and editor-integration tests. In the renderer checkout,
+run `nvim --headless -u NONE -i NONE -l tests/preview/run.lua` or run `just test`.
+
 Termaid's build keeps its Python package editable in the selected checkout. After switching
 checkouts, run `:Lazy build termaid` if that checkout does not yet have its `.venv` dependencies.
 
@@ -46,7 +61,8 @@ Keep behavior in its owning module and preserve native plugin renderers. Update 
 documentation with user-visible behavior.
 
 Focused tests mirror production ownership under `tests/<subsystem>/`; tests for a nested feature
-use the same nesting, such as `config.syntax.markdown` under `tests/syntax/markdown/`.
+use the same nesting. Markdown engine unit tests live in the renderer fork;
+`tests/syntax/markdown/` covers BeckNvim integration.
 
 ```bash
 bash -n setup.sh

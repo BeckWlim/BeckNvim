@@ -294,7 +294,7 @@ assert(
 assert(vim.api.nvim_buf_is_valid(original_buffer), 'dashboard test lost its original buffer')
 vim.api.nvim_win_set_buf(dashboard_window, original_buffer)
 vim.api.nvim_buf_delete(code_buffer, { force = true })
-local markdown_preview = require('config.syntax.markdown.preview')
+local markdown_preview = require('render-markdown.preview')
 local markdown_source = vim.fn.bufadd(second_file)
 vim.fn.bufload(markdown_source)
 vim.api.nvim_set_current_buf(markdown_source)
@@ -302,7 +302,7 @@ vim.bo.filetype = 'markdown'
 vim.wo.number = true
 vim.wo.relativenumber = true
 local source_lines_before = vim.api.nvim_buf_get_lines(markdown_source, 0, -1, false)
-markdown_preview.setup()
+require('render-markdown').setup({ preview = { enabled = true } })
 markdown_preview.open(markdown_source)
 local generated_buffer = vim.api.nvim_get_current_buf()
 local homepage_buffer
