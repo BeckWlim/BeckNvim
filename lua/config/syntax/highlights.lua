@@ -445,20 +445,21 @@ function M.load_palette(colors)
   end
   vim.cmd('highlight clear')
   local muted = palette.blend(colors.background, colors.foreground, 0.65)
-  local selection = palette.blend(colors.background, colors.foreground, 0.12)
+  local cursor_line_background = palette.blend(colors.background, colors.foreground, 0.12)
+  local visual_background = palette.blend(colors.background, colors.foreground, 0.24)
   local definitions = {
     Normal = { fg = colors.foreground, bg = colors.background },
     NormalNC = { link = 'Normal' },
-    CursorLine = { bg = selection },
+    CursorLine = { bg = cursor_line_background },
     CursorColumn = { link = 'CursorLine' },
     ColorColumn = { bg = palette.blend(colors.background, colors.foreground, 0.06) },
-    Visual = { bg = selection },
+    Visual = { bg = visual_background },
     Search = { fg = colors.background, bg = colors.yellow },
     IncSearch = { fg = colors.background, bg = colors.orange, bold = true },
     CurSearch = { link = 'IncSearch' },
     LineNr = { fg = muted }, CursorLineNr = { fg = colors.foreground, bold = true },
     SignColumn = { bg = colors.background }, FoldColumn = { fg = muted },
-    Folded = { fg = muted, bg = selection },
+    Folded = { fg = muted, bg = cursor_line_background },
     NonText = { fg = muted }, EndOfBuffer = { fg = colors.background },
     WinSeparator = { fg = muted }, Whitespace = { fg = muted },
     Comment = { fg = muted, italic = true },
@@ -474,11 +475,11 @@ function M.load_palette(colors)
     Question = { fg = colors.green }, WarningMsg = { fg = colors.yellow },
     ErrorMsg = { fg = colors.red }, Error = { fg = colors.red },
     Todo = { fg = colors.orange, bold = true },
-    MatchParen = { bg = selection, bold = true, underline = true },
-    StatusLine = { fg = colors.foreground, bg = selection },
+    MatchParen = { bg = cursor_line_background, bold = true, underline = true },
+    StatusLine = { fg = colors.foreground, bg = cursor_line_background },
     StatusLineNC = { fg = muted, bg = colors.background },
     TabLine = { fg = muted, bg = colors.background },
-    TabLineSel = { fg = colors.foreground, bg = selection, bold = true },
+    TabLineSel = { fg = colors.foreground, bg = cursor_line_background, bold = true },
     TabLineFill = { bg = colors.background },
     DiagnosticError = { fg = colors.red }, DiagnosticWarn = { fg = colors.yellow },
     DiagnosticInfo = { fg = colors.blue }, DiagnosticHint = { fg = colors.purple },

@@ -199,6 +199,31 @@ for _, mode in ipairs({ 'dark', 'light' }) do
   assert(palette.contrast(resolved.foreground, resolved.background) >= 4.5, 'Unreadable fallback palette')
   assert((resolved.background > 0x808080) == (mode == 'light'), 'Fallback ignores light/dark mode')
 end
+-- Custom palettes distinguish selected text from the active row in both variants.
+for _, base in ipairs({
+  { background = 0x272822, foreground = 0xF8F8F2 },
+  { background = 0xE6E3DB, foreground = 0x45433F },
+}) do
+  highlights.load_palette(vim.tbl_extend('force', base, {
+    red = 0x99394B, green = 0x4E652F, yellow = 0x786022,
+    blue = 0x355D7A, purple = 0x765477, orange = 0x96512B,
+  }))
+  local cursor_background = hl('CursorLine').bg
+  local visual_background = hl('Visual').bg
+  assert(visual_background ~= cursor_background,
+    'Visual selection shares the cursor line background')
+  assert(palette.contrast(visual_background, base.background)
+      > palette.contrast(cursor_background, base.background),
+    'Selected text must stand out from the cursor line')
+  assert(palette.contrast(base.foreground, visual_background) >= 4.5,
+    'Selected text has insufficient contrast')
+  vim.api.nvim_set_hl(0, 'CursorLine', { bg = base.background })
+  highlights.apply()
+  assert(hl('Visual').bg == visual_background, 'Cursor line recolored the visual selection')
+  vim.api.nvim_set_hl(0, 'Visual', { bg = 0x778899 })
+  highlights.apply()
+  assert(hl('CursorLine').bg == base.background, 'Visual selection recolored the cursor line')
+end
 -- Explicit overrides are applied last on every theme change.
 highlights.setup({ overrides = function(colors)
   return { RenderMarkdownMermaidEdge = { fg = colors.syntax.special, bg = colors.block, bold = true } }

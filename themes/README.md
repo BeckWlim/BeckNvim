@@ -71,6 +71,9 @@ The highlight owner applies this base schema to editor syntax, diagnostics, Git,
 colors. All project surfaces derive from it, including completion, search, file tree, statusline,
 Markdown, and Mermaid. Pinned context uses a subtle grey tint of the editor background, with
 readable text and a contrasting boundary; it has no fixed panel background.
+Custom palettes give Visual-mode selected text a stronger background than the current line.
+`Visual` and `CursorLine` are separate highlight bindings; either can be customized in the
+override callback below without changing the other.
 
 To include another upstream theme, add its declaration to `lua/plugins/theme.lua`, let lazy.nvim
 install it, and create a preset referencing its colorscheme. To share a new bundled preset, put it

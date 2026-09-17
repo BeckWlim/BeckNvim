@@ -67,6 +67,10 @@ local function check()
       if name == 'paper-light' then
         assert(vim.o.background == 'light' and normal.bg == 0xE6E3DB,
           'Paper Light did not load its softer light background')
+        local visual = vim.api.nvim_get_hl(0, { name = 'Visual', link = false })
+        local cursor_line = vim.api.nvim_get_hl(0, { name = 'CursorLine', link = false })
+        assert(visual.bg ~= cursor_line.bg and contrast(normal.fg, visual.bg) >= 4.5,
+          'Paper Light visual selection must be distinct from the cursor line and readable')
         for _, group in ipairs({ 'String', 'Function', 'Type', 'Statement', 'Number', 'Special' }) do
           assert(contrast(vim.api.nvim_get_hl(0, { name = group, link = false }).fg, normal.bg) >= 4.5,
             'Paper Light syntax is unreadable: ' .. group)
