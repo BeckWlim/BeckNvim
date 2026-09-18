@@ -52,7 +52,8 @@ Restart Neovim after editing the renderer. Preview, table, and Mermaid implement
 live in the fork; BeckNvim retains configuration and editor-integration tests. In the renderer checkout,
 run `nvim --headless -u NONE -i NONE -l tests/preview/run.lua` or run `just test`.
 
-Termaid's build keeps its Python package editable in the selected checkout. After switching
+Termaid's build keeps its Python package editable in the selected checkout, using `uv` when
+available or `python3 -m venv` and the environment's `pip` otherwise. After switching
 checkouts, run `:Lazy build termaid` if that checkout does not yet have its `.venv` dependencies.
 
 ## Validation
@@ -67,7 +68,6 @@ use the same nesting. Markdown engine unit tests live in the renderer fork;
 ```bash
 bash -n setup.sh
 bash -n tests/setup.sh
-bash -n tests/setup_runtime.sh
 bash tests/setup.sh
 XDG_CACHE_HOME=/tmp/nvim-test-cache XDG_STATE_HOME=/tmp/nvim-test-state \
   nvim --headless -u NONE -i NONE -l tests/run.lua
@@ -92,4 +92,11 @@ nvim --headless -u NONE -i NONE -l tests/ui/dashboard_installed.lua
 nvim --headless -u NONE -i NONE -l tests/search/telescope_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/visuals_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/treesitter_installed.lua
+```
+
+Verify startup, ordinary file editing, and Markdown's Mermaid fallback with optional runtimes
+removed from `PATH` (uses installed plugins and temporary editor data; performs no downloads):
+
+```bash
+nvim --headless -u NONE -i NONE -l tests/startup/optional_installed.lua
 ```

@@ -74,17 +74,35 @@ cd ~/.config/nvim
 ./setup.sh
 ```
 
-Setup installs missing external tools and reuses compatible ones already installed. Follow any
-PATH instructions it prints, reopen your terminal, and start Neovim:
+Setup installs missing core external tools and checks whether Node.js/npm and Python are available.
+It does not install runtime managers or runtimes. Follow any PATH instructions it prints, reopen
+your terminal, and start Neovim:
 
 ```bash
 nvim
 ```
 
-On first launch, lazy.nvim installs missing plugins and builds Termaid for Mermaid diagrams;
-Mason installs configured language servers.
+On first launch, lazy.nvim installs missing plugins and builds Termaid for Mermaid diagrams when
+Python is available. Startup requests no LSP installation. Choose every language server explicitly
+in `:Mason`:
+press `i` to install, `X` to uninstall, and `?` for help. Restart Neovim after removing a server to
+stop any existing client. Startup enables installed servers and does not download or restore removed
+servers.
+
+Termaid uses uv when available, or Python's `venv` and `pip` otherwise. `--skip-system` disables
+core operating-system package installation. Setup reports missing Node.js/npm or Python without
+installing them; install suitable versions yourself when the corresponding feature is needed.
 
 Run `./setup.sh --check` to check dependencies or `./setup.sh --help` for setup options.
+The check reports missing Node.js/npm and Python with a nonzero exit status, while a normal setup
+continues after warning so core Neovim can be installed.
+
+Neovim still opens and edits files without these optional runtimes. Without a usable Termaid build,
+Markdown shows the original Mermaid source. Install the Shell and Vim servers through `:Mason`
+after installing Node.js/npm; running them only requires Node.js. Python hierarchy indexing needs
+system Python or a project virtual environment. Mason's basedpyright installation requires Python,
+while native C/C++, Lua, and Markdown servers do not require Node.js/npm.
+After installing missing runtimes, restart Neovim; use `:Lazy build termaid` to retry its build.
 
 To load plugins from local checkouts, configure [development mode](docs/development.md#local-plugin-development)
 in `~/.nvim`.

@@ -130,10 +130,8 @@ function M.setup()
   })
   configure_basedpyright()
   configure_clangd()
-  require('mason-lspconfig').setup({
-    ensure_installed = { 'bashls', 'basedpyright', 'clangd', 'lua_ls', 'marksman', 'vimls' },
-    automatic_enable = true,
-  })
+  -- Mason owns server installation and activation. Keep its defaults here.
+  require('mason-lspconfig').setup()
 end
 
 function M.toggle_third_party_checks()

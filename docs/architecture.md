@@ -265,7 +265,13 @@ The fork owns executable discovery, validation, caching, concurrency, and cancel
 
 The Termaid spec builds an editable Python environment inside its selected checkout. Use
 `:Lazy build termaid` after changing checkouts or to retry a build; `:Lazy update termaid` advances
-the locked revision. `setup.sh` provides Python and `uv`, while lazy.nvim owns the Termaid build.
+the locked revision. `setup.sh` checks Python and uv without installing either runtime. Lazy.nvim
+owns the Termaid build, using uv when available or Python's `venv` and `pip` otherwise. Both paths
+install into the checkout's `.venv` and keep the package editable.
+The build job probes Python and skips successfully when its runtime prerequisites are unavailable;
+the editor main loop performs no Python probe. A skipped or failed build leaves Mermaid source
+visible through the renderer's existing fallback. Restart Neovim after adding runtimes and run
+`:Lazy build termaid` to retry.
 An explicit `opts.preview.mermaid.command` overrides discovery; set
 `opts.preview.mermaid.enabled = false` to disable diagrams. Arrow placement is configured with
 `opts.preview.mermaid.arrow_position = 'middle'` (the default is `'end'`).
@@ -747,7 +753,14 @@ focused fixture to `config.search.workspace_symbols` and
 Project-root authority belongs to `config/project.lua`. Git repository roots outrank attached LSP
 roots; LSP roots outrank `.venv`, language manifest, and build-file fallbacks. Consumers must use
 this shared policy instead of maintaining their own marker order. Language-server startup markers
-remain with `config/lsp/init.lua`. Mason installation coverage is maintained in the same LSP module.
+remain with `config/lsp/init.lua`. Language-server installation and removal belong to Mason's native
+UI (`:Mason`). Mason's defaults keep installation explicit, so every server—including `bashls` and
+`vimls`—is installed only through a Mason action. Mason automatically enables servers that are
+already installed; it does not restore removed servers. Existing basedpyright environments carry
+their own runtime. Native clangd, Lua, and Markdown servers retain normal activation after
+installation. Python hierarchy indexing reports a
+feature-level error when neither system Python nor a project virtual environment exists, preserving
+any completed index.
 The statusline resolves Markdown previews to their source buffer before requesting the project
 identity and project-relative file path. Modified and read-only indicators also follow that source,
 so changing between rendered and editable views preserves the file's footer identity.
