@@ -9,6 +9,7 @@ return {
   {
     'HiPhish/rainbow-delimiters.nvim',
     dependencies = { 'nvim-treesitter/nvim-treesitter' },
+    event = { 'BufReadPost', 'BufNewFile' },
     submodules = false,
     config = function()
       require('config.syntax.visuals').setup_rainbow()
@@ -32,6 +33,7 @@ return {
   },
   {
     'numToStr/Comment.nvim',
+    event = { 'BufReadPost', 'BufNewFile' },
     opts = {},
   },
   {
@@ -57,6 +59,7 @@ return {
   },
   {
     'lewis6991/gitsigns.nvim',
+    event = { 'BufReadPost', 'BufNewFile' },
     opts = {
       signs = {
         add = { text = '+' },

@@ -1,13 +1,19 @@
 return {
   {
     'nvim-lualine/lualine.nvim',
+    event = 'VeryLazy',
     config = function()
       require('config.ui.statusline').setup()
     end,
   },
   {
     'nvim-tree/nvim-tree.lua',
-    event = 'VimEnter',
+    cmd = {
+      'NvimTreeToggle',
+      'NvimTreeOpen',
+      'NvimTreeFocus',
+      'NvimTreeFindFile',
+    },
     dependencies = { 'nvim-tree/nvim-web-devicons' },
     opts = {
       on_attach = require('config.ui.filetree').on_attach,
@@ -29,6 +35,7 @@ return {
   },
   {
     'akinsho/toggleterm.nvim',
+    event = 'VeryLazy',
     opts = {
       open_mapping = [[<C-t>]],
       start_in_insert = true,
@@ -68,6 +75,7 @@ return {
   {
     'nvim-treesitter/nvim-treesitter-context',
     dependencies = { 'nvim-treesitter/nvim-treesitter' },
+    event = { 'BufReadPost', 'BufNewFile' },
     config = function()
       require('config.syntax.treesitter_context').setup()
       require('config.syntax.visuals').setup_scopes()

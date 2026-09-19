@@ -9,11 +9,14 @@ return {
       'hrsh7th/cmp-nvim-lsp',
     },
     config = function()
-      require('config.lsp').setup()
+      vim.schedule(function()
+        require('config.lsp').setup()
+      end)
     end,
   },
   {
     'hrsh7th/nvim-cmp',
+    event = 'InsertEnter',
     dependencies = {
       'hrsh7th/cmp-nvim-lsp',
       'hrsh7th/cmp-path',

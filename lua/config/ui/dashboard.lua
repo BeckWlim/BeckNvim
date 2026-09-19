@@ -574,6 +574,34 @@ local function schedule_initial_render(state)
   end)
 end
 
+local function schedule_recent_projects(state, context_path)
+  -- The old-file list is optional dashboard enrichment. Do not make the first
+  -- homepage paint wait for a synchronous stat and project-root walk for every
+  -- ShaDa entry, which is especially expensive on WSL and network filesystems.
+  vim.defer_fn(function()
+    if dashboard_states[state.bufnr] ~= state then
+      return
+    end
+    local selected_entry = selected_project(state)
+    local selected_root = selected_entry and selected_entry.root
+    local refreshed_projects = M.collect(nil, context_path)
+    state.projects = refreshed_projects
+    state.project_index = refreshed_projects.current_index or 1
+    if selected_root then
+      for project_index, project_entry in ipairs(refreshed_projects) do
+        if project_entry.root == selected_root then
+          state.project_index = project_index
+          break
+        end
+      end
+    end
+    if state.mode == 'files' then
+      state.file_index = math.min(state.file_index, #selected_files(state))
+    end
+    render(state)
+  end, 20)
+end
+
 function M.activate_project(project_path)
   return require('config.project').activate(project_path)
 end
@@ -842,7 +870,7 @@ function M.attach(bufnr, winid, projects, context)
   local dashboard_context = context or requested_context or context_from_buffer(bufnr)
   requested_context = nil
   local context_path = dashboard_context.file_path or dashboard_context.root
-  local dashboard_projects = projects or M.collect(nil, context_path)
+  local dashboard_projects = projects or M.collect({}, context_path)
   local state = {
     bufnr = bufnr,
     winid = winid,
@@ -856,6 +884,9 @@ function M.attach(bufnr, winid, projects, context)
   dashboard_states[bufnr] = state
   attach_mappings(state)
   schedule_initial_render(state)
+  if not projects then
+    schedule_recent_projects(state, context_path)
+  end
 
   vim.api.nvim_create_autocmd('BufWipeout', {
     buffer = bufnr,

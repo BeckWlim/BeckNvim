@@ -775,13 +775,19 @@ nvim-tree's root and window-local directory.
 startup options suppress Neovim's built-in intro (`shortmess+=I`) so it cannot flash before the
 project homepage. The local
 `dashboard.theme.project` module delegates its compact rendering and navigation to
-`config.ui.dashboard`; recent files come from `vim.v.oldfiles`, are grouped through the shared project
-authority policy, and are capped before rendering. Activating a project updates the dashboard
+`config.ui.dashboard`; the first paint contains the current project, while optional recent-file
+enrichment runs after that paint. Recent files come from `vim.v.oldfiles`, are grouped through the
+shared project authority policy, and are capped before rendering. Activating a project updates the dashboard
 window's local working directory and context in place; an existing file tree follows the same root
 without being opened or focused. The dashboard restores editor window options on `BufWinLeave`, not
 ordinary `BufLeave`, so switching to Git mode does not expose a line-number gutter on the preserved
 homepage. Its registered window-state resolver still lets Git panes and returned files inherit the
 underlying editor line-number intent.
+
+Startup-only modules remain small: keymaps retain deferred module callbacks for feature-owned
+actions, and plugins that serve files, insert mode, or explicit commands load on their first relevant
+event. LSP and completion setup are deferred past the initial editor paint, so opening a file can
+show its buffer before Mason, server configuration, and completion implementation are loaded.
 
 `config.ui.folder_picker` owns the shared project switcher used by `<Space>fp` and the homepage's
 folder action. Its Telescope finder searches bounded directory paths asynchronously from the system
