@@ -881,7 +881,7 @@ end
 
 function M.open()
   if vim.b.markdown_preview_source then
-    require('config.syntax.markdown.preview').leave()
+    require('render-markdown').leave_preview()
   end
   local current_buffer = vim.api.nvim_get_current_buf()
   local current_window = vim.api.nvim_get_current_win()

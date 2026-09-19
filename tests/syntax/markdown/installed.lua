@@ -5,20 +5,34 @@ vim.fn.mkdir(project_directory .. '/.git', 'p')
 vim.fn.mkdir(project_directory .. '/docs/production', 'p')
 vim.fn.writefile({ '# Replicas', 'Replica details' }, project_directory .. '/docs/production/replicas.md')
 local child = vim.fn.jobstart({
-  vim.v.progpath, '--headless', '--embed', '-n', '-u', 'init.lua', '-i', 'NONE',
+  vim.v.progpath, '--headless', '--embed', '-n', '-u', vim.env.NVIM_TEST_INIT or 'init.lua', '-i', 'NONE',
 }, { rpc = true })
 local function evaluate(source)
   return vim.rpcrequest(child, 'nvim_exec_lua', source, {})
 end
 local function check()
   evaluate([[
+    require('lazy').load({ plugins = { 'render-markdown.nvim' } })
+    local lazy_config = require('lazy.core.config')
+    local renderer = assert(lazy_config.plugins['render-markdown.nvim'], 'Markdown renderer is not configured')
+    assert(renderer.url:find('BeckWlim/render-markdown.nvim', 1, true),
+      'Markdown renderer is not using the BeckWlim fork')
+    local development_selected = false
+    for _, pattern in ipairs(lazy_config.options.dev.patterns) do
+      if renderer.url:find(pattern, 1, true) then development_selected = true end
+    end
+    assert((renderer.dev == true) == development_selected,
+      'Markdown renderer did not respect personal development settings')
+    local checkout_parent = development_selected and lazy_config.options.dev.path or lazy_config.options.root
+    assert(renderer.dir == vim.fs.normalize(checkout_parent .. '/render-markdown.nvim'),
+      'Markdown renderer did not resolve its selected checkout')
     local highlights = assert(vim.treesitter.query.get('markdown', 'highlights'))
     assert(vim.list_contains(highlights.captures, 'markup.table.markdown'),
       'Relocated Markdown table query was not loaded during startup')
     assert(vim.list_contains(highlights.captures, 'markup.heading'),
       'Custom Markdown query replaced the standard highlights')
     local plugin = assert(require('lazy.core.config').plugins.termaid, 'Termaid is not managed by lazy.nvim')
-    assert(require('config.syntax.mermaid').find_executable() == plugin.dir .. '/.venv/bin/termaid',
+    assert(require('render-markdown.preview.mermaid').find_executable() == plugin.dir .. '/.venv/bin/termaid',
       'Markdown renderer is not using the managed Termaid build')
   ]])
   vim.rpcrequest(child, 'nvim_ui_attach', 120, 36, { rgb = true })
@@ -47,7 +61,7 @@ local function check()
   assert(vim.wait(10000, function()
     return evaluate([[
       local source = vim.b.markdown_preview_source
-      local blocks = source and require('config.syntax.mermaid').stage(source) or {}
+      local blocks = source and require('render-markdown.preview.mermaid').stage(source) or {}
       return #blocks > 0 and not blocks[1].pending
         and table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n'):find('󰙅 mermaid', 1, true) ~= nil
     ]])
@@ -92,7 +106,7 @@ local function check()
   -- Actual input must leave the concealed destination in one keypress, with
   -- the attached UI showing movement rather than only a changed source byte.
   evaluate([[
-    local preview = require('config.syntax.markdown.preview')
+    local preview = require('render-markdown.preview')
     local position = assert(preview.display_position(vim.api.nvim_get_current_win(), { 17, 0 }))
     vim.api.nvim_win_set_cursor(0, position)
     vim.cmd('normal! $zz')
@@ -353,13 +367,13 @@ local function check()
     assert(#vim.api.nvim_list_wins() == vim.g.preview_test_windows)
   ]])
   evaluate([[
-    require('config.syntax.markdown.preview').toggle()
+    require('render-markdown.preview').toggle()
     vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(0), 7 })
     vim.g.preview_insert_line = vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 16, 17, false)[1]
   ]])
   assert(vim.wait(10000, function()
     return evaluate([[
-      local blocks = require('config.syntax.mermaid').stage(vim.g.preview_test_source)
+      local blocks = require('render-markdown.preview.mermaid').stage(vim.g.preview_test_source)
       local text = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
       return #blocks > 0 and not blocks[1].pending and not text:find('mermaid ↻', 1, true)
     ]])
@@ -368,7 +382,7 @@ local function check()
     vim.g.quick_edit_preview = vim.api.nvim_get_current_buf()
     vim.g.quick_edit_marks = vim.api.nvim_buf_get_extmarks(0,
       vim.api.nvim_get_namespaces().markdown_preview, 0, -1, {})
-    local mermaid = require('config.syntax.mermaid')
+    local mermaid = require('render-markdown.preview.mermaid')
     local start_process = mermaid.start_process
     vim.g.quick_edit_render_jobs = 0
     mermaid.start_process = function(...)
@@ -444,7 +458,7 @@ local function check()
   }) do
     evaluate([[
       vim.api.nvim_win_set_cursor(0,
-        require('config.syntax.markdown.preview').display_position(vim.api.nvim_get_current_win(), { 17, 0 }))
+        require('render-markdown.preview').display_position(vim.api.nvim_get_current_win(), { 17, 0 }))
     ]])
     vim.rpcnotify(child, 'nvim_input', vim.keycode(edit.keys))
     assert(vim.wait(1000, function()
@@ -472,7 +486,7 @@ local function check()
     end
     assert(blank_row, 'Common edit fixture needs an empty line')
     vim.api.nvim_win_set_cursor(0,
-      require('config.syntax.markdown.preview').display_position(vim.api.nvim_get_current_win(), { blank_row, 0 }))
+      require('render-markdown.preview').display_position(vim.api.nvim_get_current_win(), { blank_row, 0 }))
   ]])
   vim.rpcnotify(child, 'nvim_input', 'x')
   vim.wait(100)
@@ -544,7 +558,7 @@ local function check()
     ]])
   end
   evaluate([[
-    require('config.syntax.markdown.preview').toggle()
+    require('render-markdown.preview').toggle()
     assert(vim.wo.colorcolumn == '80,160', 'Returning to source lost column guides')
   ]])
   vim.rpcrequest(child, 'nvim_ui_try_resize', 120, 36)
@@ -667,7 +681,7 @@ local function check()
   end
   -- Keep the UI attached so render failures exercise normal hit-enter behavior.
   evaluate([[
-    local mermaid = require('config.syntax.mermaid')
+    local mermaid = require('render-markdown.preview.mermaid')
     local buffer = vim.api.nvim_create_buf(false, true)
     vim.api.nvim_buf_set_name(buffer, vim.g.preview_test_project .. '/invalid-diagram.md')
     local original_line_limit = mermaid.max_rendered_lines

@@ -19,8 +19,7 @@ lua/
 │   ├── lsp/                      init.lua (servers), completion.lua, type_information.lua,
 │   │                             diagnostics.lua, detail_window.lua
 │   ├── syntax/                   treesitter.lua (parser bootstrap), treesitter_context.lua,
-│   │                             markdown.lua, markdown/{table,preview}.lua, markdown_features.lua,
-│   │                             mermaid.lua, visuals.lua, highlights.lua, folds.lua
+│   │                             selection.lua, visuals.lua, highlights.lua, folds.lua
 │   ├── type_hierarchy/           Recursive class and implementation pickers
 │   ├── translation/              Translation query UI and backend providers
 │   ├── python/                   Python environment and hierarchy indexing
@@ -69,11 +68,6 @@ lua/
 | `config/lsp/diagnostics.lua` | Diagnostic float and document diagnostic picker wiring |
 | `config/lsp/detail_window.lua` | Shared focus, same-key close, and copy behavior for detail windows |
 | `config/syntax/` | Parser installation and highlighting bootstrap (`treesitter.lua`), identifier selection and navigation (`selection.lua`), Treesitter pinned context, scope and rainbow visuals, highlight policy, and folds |
-| `config/syntax/mermaid.lua` | Mermaid discovery, bounded Termaid jobs, validated semantic output, and preview rows |
-| `config/syntax/markdown.lua` | Markdown feature assembly and preview command |
-| `config/syntax/markdown/table.lua` | Table parsing, independent cell wrapping, semantic rows, and source-byte maps |
-| `config/syntax/markdown/preview.lua` | Preview pane lifecycle, real display lines, refreshes, and navigation to source |
-| `config/syntax/markdown_features.lua` | Shared source-range projection contract, source-position mapping, and refresh subscriptions |
 | `config/type_hierarchy/` | Recursive class and implementation pickers: `init.lua` dispatches by filetype, `python.lua` owns the indexed AST paths and Python source parsing, `lsp.lua` owns the live-request paths, `core.lua` owns shared picker plumbing and walk bookkeeping |
 | `config/translation/` | Translation query window (`init.lua`) plus backend construction and response parsing (`providers.lua`) |
 | `config/python/environment.lua` | Python interpreter and environment resolution |
@@ -191,9 +185,8 @@ changes and never uses `--force` or changes tmux's global defaults.
 
 ### Tree-sitter query extensions
 
-Custom Tree-sitter query extensions live in `lua/config/syntax/after/queries/`. The lazy.nvim
-bootstrap registers `lua/config/syntax/after` as an additional runtime path, preserving standard
-query discovery and `; extends` behavior. The Markdown query adds the table highlight capture.
+The renderer fork owns its Markdown table query under `after/queries/markdown/`, using
+standard runtime discovery and `; extends`. BeckNvim needs no custom query runtime registration.
 
 ## Asynchronous I/O Policy
 
@@ -244,216 +237,44 @@ context; the winbar accepts a completion only for the current selection, buffer 
 
 ## Markdown Rendering
 
-`render-markdown.nvim` owns ordinary presentation in the rendered buffer. Native window
-wrapping handles prose; tables and Mermaid never change source-window options or conceal long source
-lines beneath replacement overlays. Markdown files open rendered by default in their existing pane.
-The `<Space>mp` command switches that pane between a read-only rendered buffer and its editable
-source, without creating or closing windows. Explicitly choosing source keeps it visible until the
-next toggle. Headings, lists, links, tables, and diagrams share the rendered state, including the row
-under the cursor. Rendered Markdown hides editing column guides and restores the source's
-`colorcolumn` setting on return, so no guide appears beside a code block.
-Source mode exposes Markdown punctuation throughout the document. The prose
-renderer uses its supported `ignore` callback to skip editable files while retaining presentation in
-read-only Markdown detail panels. Each contiguous run of copied prose becomes a separate Tree-sitter
-parse region in the preview, so generated table cells and diagram labels cannot be reinterpreted as
-Markdown syntax. Refreshes rebuild those regions when replacement rows change.
+`plugins/extra.lua` selects `BeckWlim/render-markdown.nvim`, whose default pipeline provides the
+source-mapped preview. The plugin uses a managed install by default;
+`~/.nvim` can select `~/.config/render-markdown.nvim` through the standard development settings.
+The fork owns prose rendering, table projection, Mermaid jobs, source maps, incremental updates,
+preview buffers, source editing, save delegation, and hidden-source file checks. BeckNvim contains
+no second Markdown engine. See the fork's [preview architecture](https://github.com/BeckWlim/render-markdown.nvim/blob/main/doc/projected-preview.md)
+for the provider contract, lifecycle, limits, and standalone tests.
 
-The integration boundary is deliberate: upstream owns ordinary headings, lists, links, quotes,
-code styling, concealment, visible-range rendering, and its own caches/events. Our engine owns the
-source/preview lifecycle, source maps, generated table/diagram rows, and background Termaid work.
-The supported `ignore` option excludes editable source, and `pipe_table.enabled = false` prevents
-duplicate table rendering. The engine does not call or replace upstream's private manager, cache,
-or scheduler. Updating preview text lets the plugin handle ordinary Markdown through its normal
-events; retained object rows do not imply that upstream never redraws prose.
+Markdown files open rendered in the existing pane. `<Space>mp` calls the plugin's `preview()` API
+to switch between source and rendered text. Tables wrap into real lines; selection and yanking
+copy displayed text. Edit keys return to the mapped source position; leaving the edit restores
+preview. Writes, undo, and redo operate on the source. Explicit source mode remains raw.
 
-`config.syntax.markdown` assembles feature providers. `config.syntax.markdown_features` defines their
-shared projection contract: a provider returns non-overlapping source ranges and replacement rows,
-each with highlighted text chunks and a source position. Optional byte spans map table characters
-back to the original cell, including concealed links, inline code, UTF-8, and wrapped continuations.
-The compositor preserves ordinary source lines between those ranges. Providers do not mutate the
-source buffer, create windows, or manage cursor state.
-The same shared layer keys each rendered object by content and layout, caches its projection, and
-remaps source rows when the object moves. Its element planner builds the current key-to-element map
-and queues only entries missing from both completed results and active jobs. Providers own their
-rendering work and prune entries absent from the current document. Source positions are separate
-from cache identity, so inserting prose above a table or diagram preserves its rendered content.
-Providers expose `layout(context)`, returning replacement blocks with `{ width, height, estimated }`
-geometry and deferred render tasks. The shared engine composes the text and measured reservations;
-the preview commits only changed intervals, then dispatches background work on the next event-loop
-turn. The provider owns measurement and estimation. Tables return exact cached cell layouts.
-Mermaid returns its completed canvas or a pending reservation and starts no process during layout.
-The engine owns placement and dispatch, rather than guessing feature dimensions.
+The host integrations use the plugin's public `source_location()`, `display_position()`, and
+`leave_preview()` APIs for link opening, pinned heading context, and dashboard transitions.
+The documented `b:markdown_preview_source` marker lets the statusline use the original file identity.
+`config.syntax.highlights` retains BeckNvim's palette overrides for the plugin's semantic highlight
+groups. Read-only Markdown detail buffers continue to use the ordinary upstream renderer.
 
-`config.syntax.markdown.preview` owns the pane, its scratch buffer, refresh subscriptions, semantic
-highlights, and source navigation. A shared current-row extmark places the editor's `CursorLine`
-background above table and diagram backgrounds while preserving semantic foreground colors.
-The generated buffer uses manual folds so source fold callbacks cannot run against replaced rows.
-Its displayed rows retain the editor's absolute and relative line-number preferences.
-It has no shortcut winbar. The existing `config.syntax.treesitter_context` adapter resolves section
-ancestors in the source document and maps their headings into preview coordinates, so the native
-pinned-context window and `<Space>cc` work across generated tables and diagrams.
-Every replacement row is an actual buffer line, so cursor movement,
-selection, yank, and mouse scrolling in the preview use native Neovim behavior. There are no hidden
-source rows reserving extra height, virtual continuation blocks, cursor parking, or wheel-motion
-fallbacks. `Enter` keeps its native next-line movement in the rendered buffer.
-Preview `h` / `l` and left/right arrows skip concealed Tree-sitter ranges while retaining
-native character motion and Visual selections. Counts measure visible characters; link destinations
-therefore do not consume extra keypresses. The adapter reads the active highlight queries for the
-current line and leaves source mode and unconcealed text to native movement.
-`q`, `<C-q>`, and `<Space>mp` return to the corresponding source position in the
-same pane. The source window's options and view are restored when leaving the rendered view.
-Common Normal-mode edit keys share one source-position transition, including from wrapped table
-cells and diagram rows. The adapter replays native keys with the original count and register, so
-Neovim owns operator motions, repeat, and undo history in the raw buffer. `ModeChanged` back to Normal
-mode and `TextChanged` after immediate edits schedule the existing default-preview path, restoring
-preview at the edited source position. Source window restoration is shared with explicit raw mode.
-The preview buffer is hidden during the edit; the session retains its caches, refresh subscription,
-and valid Mermaid jobs. Returning to preview reuses that buffer and reconciles the current elements.
-The callback checks the current buffer, window, mode, and source preference before opening, so it
-cannot interrupt Insert mode, temporary Normal mode (`<C-o>`), or an explicit source selection.
-`Esc` and `<C-c>` both return to preview; explicit source mode stays raw after either key.
-Returning to preview leaves edits unsaved. Editing stays in the source buffer; yanking from the rendered view copies
-displayed text.
-The raw buffer owns file identity, contents, undo history, and saved state. Preview `u` / `<C-r>` run
-native undo/redo in that buffer and refresh the existing projection. Visual selections and yanks
-remain display operations; source Ex commands beyond writing are used in explicit raw mode.
-The non-editable preview uses `acwrite` and a session-owned `BufWriteCmd`: `:w` delegates to a native
-write in the source buffer while keeping the preview and cursor in place. Nested source write hooks,
-file encoding, readonly/external-change checks, and an explicit `:w!` retain native behavior.
-Only a successful source write clears its modified state; generated display rows are never saved
-by the whole-buffer write handler. The preview mirrors source modified state through `BufModifiedSet`
-and refresh, allowing conditional saves such as `:update` to reach unsaved source edits.
+## Optional Mermaid Dependency
 
-The shared `config.ui.open_target` opener resolves preview link positions through the existing
-source-position map, including links concealed inside wrapped table cells. Local paths, same-file
-fragments, and project membership use the source file's name. Link lookup preserves the rendered
-buffer so cancelling an open or returning through native jump history retains the reading position.
+`plugins/termaid.lua` declares `BeckWlim/termaid`; the renderer references it as an optional lazy.nvim
+dependency. Declaring Termaid opts it in without making it mandatory for the renderer. The preview
+uses an available executable automatically and leaves original Mermaid fences visible when absent.
+The fork owns executable discovery, validation, caching, concurrency, and cancellation.
 
-Source/preview buffer switches use `keepjumps`, so rendering does not add source entries or reset
-the native jump index. Navigating to another file keeps the rendered buffer hidden; `<Space>o`
-and `<Space>p` (native `<C-o>` / `<C-i>`) retain their destinations and displayed cursor positions.
-Revisiting the source reuses its preview in the same window. Reentering the preview restores its
-window options and refreshes after the native jump has placed the cursor. Explicit source mode,
-source deletion, or closing the owning window retires the preview and its subscriptions.
-
-`<Space>h` retires the preview through its mapped source transition before opening the dashboard.
-The dashboard therefore captures the file's project context and editor options from the source
-buffer; revisiting the file restores its rendered preference.
-
-The startup file checks also check hidden source buffers behind visible Markdown previews on focus,
-buffer entry, and cursor idle events. Neovim's normal `autoread` and unsaved-change handling apply;
-the preview subscribes to `FileChangedShellPost` so external reloads refresh tables and Mermaid too.
-Source edits, external reloads, diagram completions, and window resizing coalesce into a refresh after navigation has
-been idle for 120 ms. Completed background renders therefore do not interrupt continuous movement
-or scrolling. The current source position is retained
-through a source extmark, including edits above the selection; rebuilds restore the corresponding
-preview position. Each session caches individual table projections by content and layout.
-The shared row-diff engine compares displayed chunks and styles separately from source maps.
-Refreshes patch disjoint changed intervals and preserve the buffers and semantic marks of unchanged
-objects, including objects between two separate prose edits; prose
-parsing follows Neovim's visible-range requests. Refreshes stop the preview highlighter before
-replacing lines and restart it after
-rebuilding parse regions. This prevents synchronous redraws from consuming stale highlight iterators
-when independently completed Mermaid diagrams change row positions.
-Explicitly closing the preview to remain in source unsubscribes pending refreshes, retires feature jobs, and deletes
-the rendered scratch buffer. A closed session rejects scheduled work even if a new preview opens for the
-same source. Preview construction is limited to 10,000 source lines and one MiB. Missing Markdown
-parsers fall back to a source-only preview.
-
-## Markdown Table Feature
-
-`config.syntax.markdown.table` owns table parsing, column measurement, cell wrapping, and source-byte
-mapping. It does not participate in prose wrapping. If all columns fit, a table stays intrinsic and
-compact; otherwise width allocation caps short columns at their required width and redistributes
-remaining capacity among columns that overflow. Every continuation is emitted as a real preview row.
-Labels, centered headers, separators, subtle inter-row rules, and inline-code colors retain the
-existing table presentation. One left and two right inner-margin cells keep text away from edges.
-
-Tables can use the complete available width through 80 columns. In wider panes, their cap grows
-with the view toward 80 percent of its width. Source indentation and display-cell widths determine
-layout; UTF-8 byte offsets are retained separately for navigation. Switching to source from a rendered
-table character therefore returns to its original cell rather than to a guessed display column.
-
-## Markdown Mermaid Feature
-
-`plugins/termaid.lua` declares `BeckWlim/termaid` on `main`. lazy.nvim installs the revision in
-`lazy-lock.json`; `:Lazy update termaid` advances it to the latest branch commit and rebuilds it.
-It is a dependency of `render-markdown.nvim`, so lazy.nvim marks it loaded when Markdown rendering
-loads. Before that, the Lazy UI can show it under Not Loaded even though its CLI is already built.
-The asynchronous shell build uses `uv` to create a private `.venv` inside the checkout and install
-that local source. `setup.sh` supplies Python and `uv`; it does not install or validate Termaid itself.
-Use `:Lazy build termaid` to retry a failed build. Restart Neovim after updating to refresh rendered
-diagrams. The renderer resolves the executable from lazy.nvim's configured plugin directory, so a
-separate Termaid on `PATH` cannot override the locked revision. An explicit
-`require('config.syntax.mermaid').command` path or alternate command name still overrides this default.
-
-`config.syntax.mermaid` owns fence discovery, bounded Termaid jobs, output validation, and semantic
-color mapping. It emits the same replacement-row contract as tables. The preview label maps to the
-opening fence; diagram rows map proportionally to source content rows because Termaid's output does
-not carry source-byte metadata. Native preview navigation never changes diagram layout.
-
-Each document snapshot admits at most eight distinct diagrams, runs no more than two jobs concurrently,
-and gives every job an eight-second timeout. Output is capped at one MiB, 4,096 fitted rows, and
-65,536 styled chunks. The element map reuses completed results and active jobs for unchanged diagram
-content, including after prose edits or movement. Changed or removed diagrams retire only their own
-jobs. Width, renderer-setting changes, and preview teardown retire the affected state. A completion
-that arrives before the next preview refresh reparses the source and checks the current element map
-before publishing, so an edited or deleted diagram cannot publish stale output.
-Completed jobs request a coalesced refresh through the shared feature layer.
-
-Mermaid source extmarks associate a changed element with its last successful render. While an update
-is pending, that canvas stays visible with an updating marker; a narrower pane clips its temporary
-display to the available width. The provider estimates height from the previous measured height and
-the ratio of previous/current width budgets. If more than half the source bytes fall outside a shared
-prefix and suffix, it keeps the previous height instead of scaling. Estimates always use the last
-completed result, so repeated resizing does not accumulate estimation error. New diagrams with no
-history reserve four rows. A completed render supplies exact dimensions and replaces only its own
-display interval; estimates reduce layout movement but cannot guarantee the final height.
-
-The adapter requests Termaid's strict-width reflow mode and its versioned `styled-json` contract.
-It budgets 85 percent of the preview's usable width and computes initial spacing before launching:
-one gap cell per 40 budgeted columns, clamped to 1–4, horizontal padding capped at 2, and no empty
-padding rows inside nodes. Termaid's default grid shares height within each row and width within
-each column. Additional same-layer size matching is capped and best effort; unrelated layers keep
-their content-based heights and widths. Neovim does not request diagram-wide uniform node sizes.
-Resizing recalculates the spacing and width budget.
-During fitting, node boxes and connection layout take priority over transition sentences.
-Termaid wraps labels into clear space within the existing width budget and bounds return
-corridors independently of sentence length. Labels try existing diagram space before extending
-the right edge, and return labels prefer the outside margin. Labels that still cannot fit use
-numbered references such as `[1]`, with their complete text listed below the diagram. References
-follow source edge order; entries include endpoint names when a reference needs a less direct
-position or cannot be placed safely.
-Set `require('config.syntax.mermaid').arrow_position = 'middle'` to request arrowheads on clear
-middle segments; `'end'` is the default. Short routes retain endpoint heads when needed.
-Changing this setting invalidates cached diagrams on the next render and cancels stale jobs.
-Termaid owns graph layout, label wrapping, and best-effort crossing avoidance. It reserves an outer return
-lane when needed, so node boxes may start to the right of a return line and its label; the lane
-counts toward the same width budget. Unrelated crossing lines use a small `x`, while connected
-branches retain junction characters such as `├` and `┬`. Diagrams use the editor's normal text cells and font size.
-Sibling edge labels may share a row when their text fits without collision. Sequence participant
-boxes share the header row height, with capped width matching; fitted scope headings wrap to the
-measured frame interior instead of the participant-label limit.
-Neovim validates returned display widths and maps styles through `config.syntax.highlights`.
-Mermaid accents derive from the shared theme palette's syntax colors, mixed with secondary text to reduce
-saturation. Connections share one accent hue, with quieter lines and brighter, bold arrowheads
-(muted cyan in the default theme). Connection and node labels share the editor foreground
-(grey-white by default), separating readable text from routing lines. Node borders use a subdued
-String accent. Scope borders and headings use the palette's border and secondary text roles, including sequence
-`par`, `opt`, and branch headings. Mermaid diagrams use the table background across a solid rectangle:
-the title, short rows, and empty rows are padded to a shared width using display-cell widths.
-Table headers likewise include their icon and label in the full-width fill. Each feature's icon
-and label share a distinct semantic accent: Function for tables and Number for Mermaid, adjusted
-for contrast without grey blending. This matches the filled headers of fenced code blocks. Theme reloads
-recalculate accents; explicit bold and italic labels retain their formatting. Older
-executables that reject styled output, and malformed styled responses, receive one bounded plain
-fallback. Missing executables, failed renders, and oversized diagrams leave their original fences
-visible in the preview. No rendered diagram is split after routing its connectors.
-When Termaid exits unsuccessfully, its existing process completion callback shows a single-line
-warning with the opening fence line and exit status, leaving the source readable and editable.
-Timeouts report the configured duration. Warnings remain in `:messages`; stderr is not displayed.
-Successful compatibility retries and stale or canceled jobs stay quiet; cached failures do not log
-again on redraw. Failure reporting adds no polling or listeners.
+The Termaid spec builds an editable Python environment inside its selected checkout. Use
+`:Lazy build termaid` after changing checkouts or to retry a build; `:Lazy update termaid` advances
+the locked revision. `setup.sh` checks Python and uv without installing either runtime. Lazy.nvim
+owns the Termaid build, using uv when available or Python's `venv` and `pip` otherwise. Both paths
+install into the checkout's `.venv` and keep the package editable.
+The build job probes Python and skips successfully when its runtime prerequisites are unavailable;
+the editor main loop performs no Python probe. A skipped or failed build leaves Mermaid source
+visible through the renderer's existing fallback. Restart Neovim after adding runtimes and run
+`:Lazy build termaid` to retry.
+An explicit `opts.preview.mermaid.command` overrides discovery; set
+`opts.preview.mermaid.enabled = false` to disable diagrams. Arrow placement is configured with
+`opts.preview.mermaid.arrow_position = 'middle'` (the default is `'end'`).
 
 ## Project Definition Search
 
@@ -932,7 +753,14 @@ focused fixture to `config.search.workspace_symbols` and
 Project-root authority belongs to `config/project.lua`. Git repository roots outrank attached LSP
 roots; LSP roots outrank `.venv`, language manifest, and build-file fallbacks. Consumers must use
 this shared policy instead of maintaining their own marker order. Language-server startup markers
-remain with `config/lsp/init.lua`. Mason installation coverage is maintained in the same LSP module.
+remain with `config/lsp/init.lua`. Language-server installation and removal belong to Mason's native
+UI (`:Mason`). Mason's defaults keep installation explicit, so every server—including `bashls` and
+`vimls`—is installed only through a Mason action. Mason automatically enables servers that are
+already installed; it does not restore removed servers. Existing basedpyright environments carry
+their own runtime. Native clangd, Lua, and Markdown servers retain normal activation after
+installation. Python hierarchy indexing reports a
+feature-level error when neither system Python nor a project virtual environment exists, preserving
+any completed index.
 The statusline resolves Markdown previews to their source buffer before requesting the project
 identity and project-relative file path. Modified and read-only indicators also follow that source,
 so changing between rendered and editable views preserves the file's footer identity.

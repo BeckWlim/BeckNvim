@@ -22,7 +22,6 @@ local function python_executable(root)
   if environment then
     return environment.python
   end
-  return 'python3'
 end
 
 local function new_index_document()
@@ -102,9 +101,17 @@ local function start_build(root, state, serve_stale_document)
   state.error_message = ''
   state.generation = state.generation + 1
   local active_generation = state.generation
+  local python_command = python_executable(root)
+  if not python_command then
+    state.status = serve_stale_document and ready_document_available and 'ready' or 'error'
+    state.error_message = state.status == 'ready' and ''
+      or 'Python hierarchy indexing requires python3 or a project virtual environment'
+    notify_callbacks(state)
+    return
+  end
   local started_at = vim.uv.hrtime()
   local command = {
-    python_executable(root),
+    python_command,
     script_path(),
     root,
   }

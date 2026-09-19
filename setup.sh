@@ -5,10 +5,7 @@ set -Eeuo pipefail
 readonly BECKNVIM_USER_BIN="${HOME}/.local/bin"
 readonly BECKNVIM_USER_OPT="${HOME}/.local/opt"
 readonly BECKNVIM_MINIMUM_NODE_VERSION='22.0.0'
-readonly BECKNVIM_NODE_MAJOR='24'
-readonly BECKNVIM_NVM_VERSION='0.40.7'
 readonly BECKNVIM_MINIMUM_PYTHON_VERSION='3.10.0'
-readonly BECKNVIM_PYTHON_VERSION='3.13'
 readonly BECKNVIM_MINIMUM_NVIM_VERSION='0.12.0'
 readonly BECKNVIM_NVIM_VERSION='0.12.2'
 readonly BECKNVIM_MINIMUM_TREE_SITTER_VERSION='0.26.1'
@@ -19,19 +16,22 @@ BECKNVIM_INSTALL_SYSTEM=1
 BECKNVIM_INSTALL_CLIPBOARD=1
 BECKNVIM_TEMP_DIR=''
 BECKNVIM_FAILURES=0
-BECKNVIM_ORIGINAL_PATH="${PATH}"
 
 usage() {
   cat <<'EOF'
 Usage: ./setup.sh [options]
 
-Install and validate the external tools used by BeckNvim.
+Install and validate BeckNvim's core external tools.
 
 Options:
   --check           Validate dependencies without changing the system
   --skip-system     Do not install operating-system packages
   --skip-clipboard  Do not install X11 or Wayland clipboard providers
   -h, --help        Show this help
+
+The setup checks Node.js/npm and Python for optional LSP and Termaid features.
+It does not install runtime managers or language runtimes. Install LSP servers
+explicitly through :Mason. Termaid uses uv when available, otherwise Python.
 EOF
 }
 
@@ -58,28 +58,14 @@ trap cleanup EXIT
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --check)
-      BECKNVIM_MODE='check'
-      ;;
-    --skip-system)
-      BECKNVIM_INSTALL_SYSTEM=0
-      ;;
-    --skip-clipboard)
-      BECKNVIM_INSTALL_CLIPBOARD=0
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      usage >&2
-      die "unknown option: $1"
-      ;;
+    --check) BECKNVIM_MODE='check' ;;
+    --skip-system) BECKNVIM_INSTALL_SYSTEM=0 ;;
+    --skip-clipboard) BECKNVIM_INSTALL_CLIPBOARD=0 ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; die "unknown option: $1" ;;
   esac
   shift
 done
-
-export PATH="${BECKNVIM_USER_BIN}:${PATH}"
 
 run_as_root() {
   if [[ ${EUID} -eq 0 ]]; then
@@ -256,53 +242,6 @@ node_compatible() {
     && npm --version >/dev/null 2>&1
 }
 
-activate_nvm_node() (
-  # nvm is sourced only in this subshell because it does not support strict
-  # shell options. Keep the installer's own error handling and bindings intact.
-  set +e
-  set +u
-  local node_path_file="$1"
-  source "${NVM_DIR}/nvm.sh" --no-use || exit 1
-  if nvm use --silent default && node_compatible; then
-    log 'Reusing the default Node.js runtime managed by nvm'
-  else
-    nvm install "${BECKNVIM_NODE_MAJOR}" || exit 1
-    nvm alias default "${BECKNVIM_NODE_MAJOR}" || exit 1
-  fi
-  node_compatible || exit 1
-  command -v node > "${node_path_file}"
-)
-
-ensure_node() {
-  if node_compatible; then
-    log "Node.js $(node_version) and npm $(npm --version) already satisfy the configuration"
-    return
-  fi
-
-  export NVM_DIR="${NVM_DIR:-${HOME}/.nvm}"
-  if [[ ! -s "${NVM_DIR}/nvm.sh" ]]; then
-    local installer="${BECKNVIM_TEMP_DIR}/nvm-install.sh"
-    log "Installing nvm ${BECKNVIM_NVM_VERSION} in ${NVM_DIR}"
-    download "https://raw.githubusercontent.com/nvm-sh/nvm/v${BECKNVIM_NVM_VERSION}/install.sh" \
-      "${installer}"
-    mkdir -p "${NVM_DIR}"
-    NODE_VERSION='' bash "${installer}"
-  fi
-
-  local node_path_file="${BECKNVIM_TEMP_DIR}/node-path"
-  log "Ensuring Node.js ${BECKNVIM_NODE_MAJOR} through nvm"
-  activate_nvm_node "${node_path_file}" || die 'nvm could not provide a compatible Node.js and npm'
-  local installed_node_path
-  IFS= read -r installed_node_path < "${node_path_file}"
-  [[ "${installed_node_path}" == /* && -x "${installed_node_path}" ]] \
-    || die 'nvm did not provide an executable Node.js path'
-  export PATH="${installed_node_path%/*}:${PATH}"
-  hash -r
-  node_compatible || die 'Node.js or npm is unavailable after nvm installation'
-  log "Node.js $(node_version) and npm $(npm --version) are ready"
-  log "Open a new shell, or source ${NVM_DIR}/nvm.sh before launching nvim"
-}
-
 tree_sitter_version() {
   tree-sitter --version 2>/dev/null | sed -n 's/^tree-sitter \([0-9.]*\).*$/\1/p'
 }
@@ -396,127 +335,11 @@ ensure_neovim() {
   hash -r
 }
 
-ensure_uv() {
-  if uv --version >/dev/null 2>&1; then
-    log "uv already available at $(command -v uv)"
-    return
-  fi
-
-  local installer="${BECKNVIM_TEMP_DIR}/uv-install.sh"
-  log "Installing uv in ${BECKNVIM_USER_BIN}"
-  download 'https://astral.sh/uv/install.sh' "${installer}"
-  UV_INSTALL_DIR="${BECKNVIM_USER_BIN}" UV_NO_MODIFY_PATH=1 sh "${installer}"
-  hash -r
-  command -v uv >/dev/null 2>&1 || die 'uv installation did not provide an executable'
-}
-
 python_compatible() {
   local python_command="${1:-python3}"
   "${python_command}" -c \
     'import sys, venv, ensurepip; sys.exit(sys.version_info[:3] < tuple(map(int, sys.argv[1].split("."))))' \
     "${BECKNVIM_MINIMUM_PYTHON_VERSION}" >/dev/null 2>&1
-}
-
-system_package_installed() {
-  local manager="$1"
-  local package_name="$2"
-  case "${manager}" in
-    apt-get) [[ "$(dpkg-query -W -f='${Status}' "${package_name}" 2>/dev/null)" == 'install ok installed' ]] ;;
-    dnf|zypper) rpm -q "${package_name}" >/dev/null 2>&1 ;;
-    pacman) pacman -Q "${package_name}" >/dev/null 2>&1 ;;
-    brew) [[ -n "$(brew list --versions "${package_name}" 2>/dev/null)" ]] ;;
-  esac
-}
-
-install_python_build_packages() {
-  if [[ ${BECKNVIM_INSTALL_SYSTEM} -eq 0 ]]; then
-    log 'Skipping Python build packages; using the existing build environment'
-    return
-  fi
-  local manager
-  manager="$(system_package_manager)"
-  local -a build_packages=()
-  case "${manager}" in
-    apt-get)
-      build_packages=(build-essential patch libssl-dev zlib1g-dev libbz2-dev libreadline-dev
-        libsqlite3-dev libncursesw5-dev xz-utils libffi-dev liblzma-dev)
-      ;;
-    dnf)
-      build_packages=(gcc make patch openssl-devel zlib-devel bzip2-devel readline-devel
-        sqlite-devel ncurses-devel xz xz-devel libffi-devel)
-      ;;
-    pacman) build_packages=(base-devel openssl zlib bzip2 readline sqlite ncurses xz libffi) ;;
-    zypper)
-      build_packages=(gcc make patch openssl-devel zlib-devel libbz2-devel readline-devel
-        sqlite3-devel ncurses-devel xz xz-devel libffi-devel)
-      ;;
-    brew) build_packages=(openssl@3 readline sqlite3 xz zlib bzip2 libffi pkgconfig) ;;
-  esac
-  local package_name
-  local -a missing_packages=()
-  for package_name in "${build_packages[@]}"; do
-    if ! system_package_installed "${manager}" "${package_name}"; then
-      missing_packages+=("${package_name}")
-    fi
-  done
-  [[ ${#missing_packages[@]} -gt 0 ]] || return 0
-  if [[ "${manager}" == 'apt-get' ]]; then
-    run_as_root apt-get update
-  fi
-  install_package_batch "${manager}" "${missing_packages[@]}"
-}
-
-ensure_pyenv() {
-  export PYENV_ROOT="${PYENV_ROOT:-${HOME}/.pyenv}"
-  export PATH="${PYENV_ROOT}/bin:${PATH}"
-  if pyenv --version >/dev/null 2>&1; then
-    return
-  fi
-  local installer="${BECKNVIM_TEMP_DIR}/pyenv-install.sh"
-  log "Installing pyenv in ${PYENV_ROOT}"
-  download 'https://pyenv.run' "${installer}"
-  bash "${installer}"
-  hash -r
-  pyenv --version >/dev/null 2>&1 || die 'pyenv installation did not provide an executable'
-}
-
-ensure_python() {
-  if python_compatible; then
-    log "$(python3 --version) with venv support already satisfies the configuration"
-    return
-  fi
-
-  local python_link="${BECKNVIM_USER_BIN}/python3"
-  if [[ -e "${python_link}" && ! -L "${python_link}" ]]; then
-    die "refusing to replace the regular file ${python_link}"
-  fi
-  ensure_pyenv
-  local existing_python_version=''
-  existing_python_version="$(pyenv latest "${BECKNVIM_PYTHON_VERSION}" 2>/dev/null || true)"
-  local selected_python_version=''
-  if [[ -n "${existing_python_version}" ]] \
-    && python_compatible "${PYENV_ROOT}/versions/${existing_python_version}/bin/python3"; then
-    selected_python_version="${existing_python_version}"
-    log "Reusing Python ${selected_python_version} managed by pyenv"
-  else
-    install_python_build_packages
-    log "Installing Python ${BECKNVIM_PYTHON_VERSION} through pyenv; compiling may take several minutes"
-    # Resolve the latest patch known to pyenv, then reuse it on subsequent runs.
-    selected_python_version="$(pyenv latest --known "${BECKNVIM_PYTHON_VERSION}")"
-    pyenv install --skip-existing --verbose "${selected_python_version}" \
-      || die "pyenv could not install Python ${selected_python_version}"
-  fi
-  local installed_python_prefix
-  installed_python_prefix="$(pyenv prefix "${selected_python_version}")"
-  local installed_python_path
-  installed_python_path="${installed_python_prefix}/bin/python3"
-  [[ "${installed_python_path}" == /* && -x "${installed_python_path}" ]] \
-    || die 'pyenv did not provide an executable Python path'
-  python_compatible "${installed_python_path}" || die 'installed Python does not satisfy the configuration'
-  ln -sfn "${installed_python_path}" "${python_link}"
-  hash -r
-  python_compatible || die "add ${BECKNVIM_USER_BIN} to PATH to use the installed Python"
-  log "$(python3 --version) with venv support is ready"
 }
 
 ensure_tree_sitter() {
@@ -589,46 +412,56 @@ check_clipboard() {
   fi
 }
 
+check_runtime_dependencies() {
+  local runtime_failures=0
+  if command -v python3 >/dev/null 2>&1; then
+    check_version 'Python' "$(python3 -c 'import platform; print(platform.python_version())')" \
+      "${BECKNVIM_MINIMUM_PYTHON_VERSION}" 'Termaid fallback and Python tooling'
+    if ! python_compatible; then
+      warn 'python3 must meet the minimum version and provide venv and ensurepip'
+      runtime_failures=$((runtime_failures + 1))
+    fi
+  else
+    warn 'missing python3 (Termaid fallback and Python tooling)'
+    runtime_failures=$((runtime_failures + 1))
+  fi
+
+  if node_compatible; then
+    log "Node.js $(node_version) and npm $(npm --version) are available for Node-based LSP servers"
+  else
+    warn 'Node.js >= 22 with npm is unavailable; install Node.js manually for Node-based LSP servers'
+    runtime_failures=$((runtime_failures + 1))
+  fi
+
+  if command -v uv >/dev/null 2>&1; then
+    log "uv is available for Termaid: $(command -v uv)"
+  else
+    log 'uv is unavailable; Termaid will use Python venv and pip when Python is available'
+  fi
+  return "${runtime_failures}"
+}
+
 run_checks() {
   BECKNVIM_FAILURES=0
   check_command 'git' 'plugin and repository workflows'
   check_command 'rg' 'Telescope and workspace search'
   check_command 'curl' 'translation and HTTP-backed features'
   check_command 'unzip' 'plugin and tool extraction'
-  if command -v python3 >/dev/null 2>&1; then
-    check_version 'Python' "$(python3 -c 'import platform; print(platform.python_version())')" \
-      "${BECKNVIM_MINIMUM_PYTHON_VERSION}" 'Python hierarchy and project analysis'
-    if ! python_compatible; then
-      warn 'python3 must meet the minimum version and provide venv and ensurepip (Mason Python packages)'
-      BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
-    fi
-  else
-    warn 'missing python3 (Python hierarchy and project analysis)'
-    BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
-  fi
-  check_version 'Node.js' "$(node_version || true)" "${BECKNVIM_MINIMUM_NODE_VERSION}" \
-    'Mason language servers and parser generation'
-  check_command 'npm' 'Node-backed Mason packages'
   check_command 'make' 'native Telescope sorter compilation'
   check_command 'cmake' 'CMake project workflow'
   check_command 'ninja' 'CMake Ninja builds'
-  if command -v gcc >/dev/null 2>&1; then
-    log "Found C compiler: $(command -v gcc)"
-  elif command -v cc >/dev/null 2>&1; then
-    log "Found C compiler: $(command -v cc)"
+  if command -v gcc >/dev/null 2>&1 || command -v cc >/dev/null 2>&1; then
+    log "Found C compiler: $(command -v gcc || command -v cc)"
   else
     warn 'missing a C compiler (native plugins and Treesitter parsers)'
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
   fi
-  if command -v g++ >/dev/null 2>&1; then
-    log "Found C++ compiler: $(command -v g++)"
-  elif command -v c++ >/dev/null 2>&1; then
-    log "Found C++ compiler: $(command -v c++)"
+  if command -v g++ >/dev/null 2>&1 || command -v c++ >/dev/null 2>&1; then
+    log "Found C++ compiler: $(command -v g++ || command -v c++)"
   else
     warn 'missing a C++ compiler (Treesitter parser tooling)'
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
   fi
-
   if command -v nvim >/dev/null 2>&1; then
     check_version 'Neovim' "$(nvim_version)" "${BECKNVIM_MINIMUM_NVIM_VERSION}" \
       'the pinned nvim-treesitter main branch'
@@ -636,7 +469,6 @@ run_checks() {
     warn 'missing nvim (editor runtime)'
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
   fi
-
   if command -v tree-sitter >/dev/null 2>&1; then
     check_version 'Tree-sitter CLI' "$(tree_sitter_version)" \
       "${BECKNVIM_MINIMUM_TREE_SITTER_VERSION}" 'parser installation'
@@ -644,45 +476,41 @@ run_checks() {
     warn 'missing tree-sitter (parser installation)'
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))
   fi
-
-  check_command 'uv' 'lazy.nvim Termaid builds'
   check_clipboard
-
   if [[ ${BECKNVIM_FAILURES} -gt 0 ]]; then
-    warn "dependency validation found ${BECKNVIM_FAILURES} problem(s)"
+    warn "core dependency validation found ${BECKNVIM_FAILURES} problem(s)"
     return 1
   fi
-  log 'All required external dependencies are available'
+  log 'Core Neovim dependencies are available'
+
+  if ! check_runtime_dependencies; then
+    warn 'optional runtime requirements are incomplete; Neovim remains usable and Mason/Termaid features will be limited'
+    [[ "${BECKNVIM_MODE}" != 'check' ]] || return 1
+  fi
 }
 
 main() {
   if [[ "${BECKNVIM_MODE}" == 'check' ]]; then
     run_checks
-    exit 0
+    exit $?
   fi
 
   BECKNVIM_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/becknvim-setup.XXXXXX")"
   mkdir -p "${BECKNVIM_USER_BIN}" "${BECKNVIM_USER_OPT}"
-
   if [[ ${BECKNVIM_INSTALL_SYSTEM} -eq 1 ]]; then
     install_system_packages
   else
     log 'Skipping operating-system package installation'
   fi
-
-  ensure_node
-  ensure_python
   ensure_neovim
   ensure_tree_sitter
-  ensure_uv
-  run_checks
-
-  if [[ ":${BECKNVIM_ORIGINAL_PATH}:" != *":${BECKNVIM_USER_BIN}:"* ]]; then
+  run_checks || true
+  if [[ ":${PATH}:" != *":${BECKNVIM_USER_BIN}:"* ]]; then
     warn "add ${BECKNVIM_USER_BIN} to PATH before starting Neovim from a new shell"
   fi
   warn 'install a Nerd Font manually and select it in the terminal application'
   log 'Setup complete'
-  log 'Open nvim; lazy.nvim and Mason will install missing plugins and language servers'
+  log 'Open nvim; use :Mason to install or remove language servers'
 }
 
 # Parse the entrypoint and exit together so edits during installation cannot

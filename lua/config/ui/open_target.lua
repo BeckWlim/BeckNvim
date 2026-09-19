@@ -24,7 +24,7 @@ local function inline_markdown_destination_at_cursor()
   local window = vim.api.nvim_get_current_win()
   local source, position
   if vim.b.markdown_preview_source then
-    source, position = require('config.syntax.markdown.preview').source_location(window)
+    source, position = require('render-markdown').source_location(window)
   end
   local cursor_position = position or vim.api.nvim_win_get_cursor(window)
   local buffer = source or vim.api.nvim_get_current_buf()
