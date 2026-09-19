@@ -39,7 +39,7 @@ lua/
 | `config/ui/palette.lua` | Shared semantic palette resolved from the selected colorscheme, light/dark fallbacks, contrast, and background tints |
 | `config/ui/tmux.lua` | Asynchronous pane palette publication through tmux's application hook and editor owner lifecycle |
 | `config/ui/dashboard.lua` | Bounded project drawer, project-relative MRU state, and dashboard actions |
-| `config/ui/folder_picker.lua` | Reusable Telescope directory browsing, path input, completion, and adaptive sizing |
+| `config/ui/folder_picker.lua` | Telescope project switching, bounded system-folder search, and asynchronous file-tree previews |
 | `config/ui/filetree.lua` | Nvim-tree mappings, authoritative root synchronization, window-switching Tab preservation, and project-boundary confirmation |
 | `config/ui/open_target.lua` | Shared URL routing/handoff and confirmed local-file navigation for global and feature-owned actions |
 | `config/ui/terminal.lua` | ToggleTerm-local escape from terminal input to scrollable Normal mode |
@@ -782,6 +782,20 @@ without being opened or focused. The dashboard restores editor window options on
 ordinary `BufLeave`, so switching to Git mode does not expose a line-number gutter on the preserved
 homepage. Its registered window-state resolver still lets Git panes and returned files inherit the
 underlying editor line-number intent.
+
+`config.ui.folder_picker` owns the shared project switcher used by `<Space>fp` and the homepage's
+folder action. Its Telescope finder searches bounded directory paths asynchronously from the system
+root, cancels stale `find` jobs as the prompt changes, and caps streamed results. The selected folder
+uses a real Telescope previewer that renders a bounded, read-only file tree through a cancellable
+child process. The preview loads each folder's direct children on demand; focused-preview Enter
+toggles expansion and collapse, so nested content remains reachable without a fixed preview depth.
+Absolute, home-relative, and relative path prefixes are expanded into their own search
+scope, so entering `<prefix>/` lists its direct project folders without depending on the current file.
+The initial `.` and `..` entries are prompt shortcuts: confirming one rewrites the scope to the current
+or parent directory and keeps the picker open.
+Confirming a result delegates to `config.project.activate`; when the dashboard is the
+active pane, its project drawer refreshes in place, while the file-tree subscriber follows the same
+authoritative root transition from any other pane.
 
 Project audits share project context through `config.project`; each audit module owns its own task
 or diagnostic state.

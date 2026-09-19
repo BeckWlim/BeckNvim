@@ -2,6 +2,47 @@ local M = {}
 local sync_lifecycle = 0
 local pending_roots_by_tabpage = {}
 
+local tree_glyphs = {
+  arrow_closed = '',
+  arrow_open = '',
+  folder = '',
+  folder_open = '',
+  folder_empty = '',
+  folder_empty_open = '',
+  symlink = '',
+  default = '',
+}
+
+function M.preview_node_icon(name, kind, expanded, has_children)
+  if kind == 'd' then
+    local arrow = expanded and tree_glyphs.arrow_open or tree_glyphs.arrow_closed
+    local folder_icon
+    if has_children then
+      folder_icon = expanded and tree_glyphs.folder_open or tree_glyphs.folder
+    else
+      folder_icon = expanded and tree_glyphs.folder_empty_open or tree_glyphs.folder_empty
+    end
+    local highlight = expanded and 'NvimTreeOpenedFolderIcon' or 'NvimTreeFolderIcon'
+    return arrow .. ' ' .. folder_icon, highlight
+  end
+  if kind == 'l' then
+    return '  ' .. tree_glyphs.symlink, 'NvimTreeSymlinkIcon'
+  end
+  local loaded, devicons = pcall(require, 'nvim-web-devicons')
+  if loaded then
+    local extension = vim.fn.fnamemodify(name, ':e')
+    local icon, highlight = devicons.get_icon(name, extension, { default = true })
+    if icon then
+      return '  ' .. icon, highlight or 'NvimTreeFileIcon'
+    end
+  end
+  return '  ' .. tree_glyphs.default, 'NvimTreeFileIcon'
+end
+
+function M.preview_node_glyph(name, kind, expanded, has_children)
+  return M.preview_node_icon(name, kind, expanded, has_children)
+end
+
 function M.sync_root(root, tabpage)
   local normalized_root = vim.fs.normalize(root)
   local api_loaded, api = pcall(require, 'nvim-tree.api')

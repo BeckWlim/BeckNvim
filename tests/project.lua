@@ -107,6 +107,8 @@ assert(
   project.repository_provider(git_root) == 'git',
   'a repository without a recognized remote did not use the generic Git provider'
 )
+vim.fn.writefile({ 'ref: refs/heads/dev' }, vim.fs.joinpath(git_root, '.git', 'HEAD'))
+assert(project.branch_name(git_root) == 'dev', 'Git branch metadata did not resolve HEAD')
 
 local provider_remotes = {
   github = 'git@github.com:example/project.git',

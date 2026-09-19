@@ -1,5 +1,6 @@
 local M = {}
 local repository_provider_cache = {}
+local branch_name_cache = {}
 local root_generation = 0
 local activation_variable = 'project_root_activation'
 
@@ -219,6 +220,30 @@ local function git_config_path(root)
   return vim.fs.joinpath(vim.fs.normalize(absolute_git_directory), 'config')
 end
 
+local function git_head_path(root)
+  local normalized_root = vim.fs.normalize(root)
+  local git_marker = vim.fs.joinpath(normalized_root, '.git')
+  local marker_stat = vim.uv.fs_stat(git_marker)
+  if not marker_stat then
+    return
+  end
+  if marker_stat.type == 'directory' then
+    return vim.fs.joinpath(git_marker, 'HEAD')
+  end
+  if marker_stat.type ~= 'file' then
+    return
+  end
+  local marker_lines = vim.fn.readfile(git_marker, '', 1)
+  local git_directory = marker_lines[1] and marker_lines[1]:match('^gitdir:%s*(.+)%s*$')
+  if not git_directory then
+    return
+  end
+  local absolute_git_directory = git_directory:match('^/')
+      and git_directory
+    or vim.fs.joinpath(normalized_root, git_directory)
+  return vim.fs.joinpath(vim.fs.normalize(absolute_git_directory), 'HEAD')
+end
+
 local function provider_from_config(config_path)
   if not config_path or not vim.uv.fs_stat(config_path) then
     return 'git'
@@ -272,6 +297,25 @@ end
 
 function M.provider_icon(provider)
   return M.provider_icons[provider] or M.provider_icons.workspace
+end
+
+function M.branch_name(root)
+  local normalized_root = vim.fs.normalize(root)
+  if branch_name_cache[normalized_root] ~= nil then
+    return branch_name_cache[normalized_root] or nil
+  end
+  local head_path = git_head_path(normalized_root)
+  if not head_path or not vim.uv.fs_stat(head_path) then
+    branch_name_cache[normalized_root] = false
+    return
+  end
+  local head_line = vim.fn.readfile(head_path, '', 1)[1] or ''
+  local branch = head_line:match('^ref:%s*refs/heads/(.+)$')
+  if not branch and head_line ~= '' then
+    branch = 'detached'
+  end
+  branch_name_cache[normalized_root] = branch or false
+  return branch
 end
 
 return M

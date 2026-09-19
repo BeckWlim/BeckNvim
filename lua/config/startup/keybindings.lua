@@ -102,6 +102,7 @@ end
 
 local function map_finders()
   local workspace_symbols = require('config.search.workspace_symbols')
+  local folder_picker = require('config.ui.folder_picker')
 
   map('<Space>ff', telescope_builtin('find_files'), 'Find files')
   map('<Space>fv', telescope_builtin_in_vertical_split('find_files'), 'Find files (vertical split)')
@@ -116,6 +117,7 @@ local function map_finders()
   map('<Space>fs', telescope_builtin('lsp_document_symbols'), 'Document symbols')
   map('<Space>fw', workspace_symbols.open, 'Project workspace symbols')
   map('<Space>ft', workspace_symbols.open_for_cursor, 'Project definitions of cursor word')
+  map('<Space>fp', folder_picker.open_project, 'Switch project')
   local git = require('config.git')
   map('<Space>de', git.search_repository, 'Search Git branches, commits, and issues')
   map('<Space>df', git.history_file, 'Git history for current file')

@@ -94,7 +94,7 @@ local expected_mappings = {
   '<Space>gf', '<Space>gv', '<Space>gx', 'gx',
   '<F3>', '<Space>h', '<Space>mp', '<Space>t',
   '<Space>ff', '<Space>fv', '<Space>fg', '<Space>fb', '<Space>fr',
-  '<Space>bv', '<Space>fh', '<Space>fk', '<Space>fs', '<Space>fw', '<Space>ft',
+  '<Space>bv', '<Space>fh', '<Space>fk', '<Space>fs', '<Space>fw', '<Space>ft', '<Space>fp',
   '<Space>de', '<Space>df', '<Space>ds', '<Space>dr',
   '<Space>e', '[d', ']d', '<Space>q', '<Space>gq', '<Space>gs',
   'gd', 'gD', 'gr', 'gI', '<Space>i', '<Space>D',

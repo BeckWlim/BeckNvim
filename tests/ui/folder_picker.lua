@@ -6,6 +6,8 @@ local replaced_modules = {
   'telescope.config',
   'telescope.finders',
   'telescope.pickers',
+  'telescope.pickers.entry_display',
+  'telescope.previewers',
 }
 local original_modules = {}
 for _, module_name in ipairs(replaced_modules) do
@@ -23,6 +25,7 @@ local current_line = ''
 local refreshed_finder
 local picker_layout_updates = 0
 local fake_picker
+local entry_display_configuration
 
 package.loaded['telescope.finders'] = {
   new_dynamic = function(options)
@@ -74,6 +77,23 @@ package.loaded['telescope.pickers'] = {
       end,
     }
     return fake_picker
+  end,
+}
+package.loaded['telescope.previewers'] = {
+  new_buffer_previewer = function(options)
+    return options
+  end,
+}
+package.loaded['telescope.pickers.entry_display'] = {
+  create = function(configuration)
+    entry_display_configuration = configuration
+    return function(parts)
+      local text = {}
+      for _, part in ipairs(parts) do
+        text[#text + 1] = type(part) == 'table' and part[1] or part
+      end
+      return table.concat(text, ' ')
+    end
   end,
 }
 package.loaded['config.ui.folder_picker'] = nil
@@ -162,11 +182,28 @@ assert(
     == '../plain-folder/',
   'Tab completion did not preserve parent-relative navigation'
 )
+local scoped_root, scoped_query, direct_children = folder_picker.search_scope(
+  temporary_root,
+  temporary_root .. '/'
+)
+assert(
+  scoped_root == temporary_root and scoped_query == '' and direct_children,
+  'folder picker did not expand an existing path prefix into a directory scope'
+)
+scoped_root, scoped_query, direct_children = folder_picker.search_scope(
+  temporary_root,
+  vim.fs.joinpath(temporary_root, 'pla')
+)
+assert(
+  scoped_root == temporary_root and scoped_query == 'pla' and not direct_children,
+  'folder picker did not split a partial path into its parent and leaf query'
+)
 
 local chosen_folder
 local picker_closed = false
 folder_picker.open({
   starting_directory = beta_folder,
+  search_root = temporary_root,
   on_select = function(folder_path)
     chosen_folder = folder_path
   end,
@@ -175,15 +212,32 @@ folder_picker.open({
   end,
 })
 assert(picker_find_calls == 1, 'folder picker did not start Telescope')
-assert(picker_options.layout_strategy == 'center', 'folder picker did not use compact layout')
+assert(picker_options.cwd == temporary_root, 'folder picker did not use the search root')
 assert(
-  picker_spec.prompt_title == 'Open Folder · ' .. vim.fn.fnamemodify(beta_folder, ':~'),
-  'folder picker did not start at the requested directory'
+  picker_spec.prompt_title == 'Switch Project',
+  'folder picker did not use the project-switcher title'
 )
-local external_results = picker_spec.finder.fn(vim.fs.joinpath(temporary_root, 'plain'))
+assert(type(picker_spec.finder) == 'table', 'folder picker did not create an async directory finder')
 assert(
-  #external_results == 1 and external_results[1].path == plain_folder,
-  'path input did not load matching external folders'
+  picker_spec.previewer and picker_spec.previewer.title == 'Project tree',
+  'folder picker did not attach a project-tree previewer'
+)
+assert(
+  entry_display_configuration.items[2].width == 0.30
+    and entry_display_configuration.items[3].width == 0.18
+    and entry_display_configuration.items[4].width == 0.50
+    and not entry_display_configuration.items[2].right_justify
+    and not entry_display_configuration.items[3].right_justify
+    and not entry_display_configuration.items[4].right_justify,
+  'project results did not use independent left-aligned name, branch, and path columns'
+)
+local initial_entries = {}
+picker_spec.finder('', function(entry)
+  initial_entries[#initial_entries + 1] = entry
+end, function() end)
+assert(
+  initial_entries[1].shortcut == '.' and initial_entries[2].shortcut == '..',
+  'folder picker did not expose current and parent path shortcuts'
 )
 
 local prompt_buffer = vim.api.nvim_create_buf(false, true)
@@ -204,33 +258,30 @@ assert(
   'folder picker discarded Telescope mappings'
 )
 assert(
-  telescope_mapped_keys.i['<Tab>'] and telescope_mapped_keys.n['<Tab>'],
-  'folder picker did not claim Tab through Telescope mapping precedence'
+  type(selected_callback) == 'function',
+  'folder picker did not replace selection behavior'
 )
-assert(type(selected_callback) == 'function', 'folder picker did not replace selection behavior')
+selected_entry = initial_entries[1]
+selected_callback()
+assert(
+  closed_prompt_buffer == nil
+    and picker_prompt == vim.fn.fnamemodify(beta_folder, ':~'),
+  'current-path shortcut did not update the search scope'
+)
 selected_entry = { value = plain_folder }
-current_line = 'pla'
-local tab_mapping = vim.api.nvim_buf_call(prompt_buffer, function()
-  return vim.fn.maparg('<Tab>', 'i', false, true)
-end)
-assert(type(tab_mapping.callback) == 'function', 'folder picker did not isolate Tab completion')
-tab_mapping.callback()
-assert(picker_prompt == 'plain-folder/', 'Tab did not complete the selected path prefix')
-
-selected_entry = nil
-current_line = plain_folder
 selected_callback()
 assert(closed_prompt_buffer == prompt_buffer, 'folder selection did not close Telescope')
-assert(chosen_folder == plain_folder, 'exact path input did not select the folder')
+assert(chosen_folder == plain_folder, 'folder selection did not return the selected folder')
 
-selected_entry = { value = alpha_folder }
-current_line = ''
-local browse_mapping = vim.api.nvim_buf_call(prompt_buffer, function()
-  return vim.fn.maparg('<C-L>', 'i', false, true)
-end)
-assert(type(browse_mapping.callback) == 'function', 'folder picker omitted browse navigation')
-browse_mapping.callback()
-assert(refreshed_finder and picker_layout_updates == 1, 'folder browsing did not refresh its layout')
+local tree_lines = folder_picker.project_tree_lines(beta_folder, {
+  'd\tdocs',
+  'f\tdocs/guide.md',
+  'f\tREADME.md',
+})
+local tree_text = table.concat(tree_lines, '\n')
+assert(tree_text:find('docs', 1, true), 'project preview omitted a directory')
+assert(tree_text:find('guide.md', 1, true), 'project preview omitted a file')
+assert(tree_text:find('README.md', 1, true), 'project preview omitted a root file')
 
 vim.api.nvim_buf_delete(prompt_buffer, { force = true })
 assert(vim.wait(100, function()

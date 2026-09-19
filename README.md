@@ -10,6 +10,10 @@ system while keeping native Neovim and plugin behavior wherever practical.
 - **Git review:** search remote branches, inspect commits, detach HEAD for deeper review, and read pull requests in floating dialogs.
 - **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, move through links without stepping through hidden URLs, and edit source in place with refreshes when external file changes are detected.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
+  Press `<Space>fp` from any pane to search system folders, preview a project's file tree, and switch the active project.
+  Press `<Tab>` to focus the tree preview, then `<Enter>` to expand or collapse a folder.
+  The default `.` and `..` entries rewrite the search scope to the current or parent folder without opening it.
+  Results show the project provider icon, branch (or `<None>` when unknown), and a left-aligned path annotation in a right-side column.
   Inside tmux, its local palette hook makes the pane and status bar follow the editor theme;
   see [tmux theme integration](docs/architecture.md#tmux-theme-integration).
 

@@ -509,7 +509,7 @@ local function build_render(state)
     add_line(rendered, '')
   end
 
-  local hint = 'h/l project  ·  j/k file  ·  f folder  ·  <Enter> activate/open  ·  q close'
+  local hint = 'h/l project  ·  j/k file  ·  f switch project  ·  <Enter> activate/open  ·  q close'
   local hint_row = add_centered_line(rendered, truncate_display(hint, layout_width), layout_width)
   add_highlight(rendered, hint_row, 0, -1, 'TypeInformationHint')
   for _ = 1, M.bottom_padding do
@@ -640,6 +640,16 @@ local function activate_selected_folder(state, folder_path)
   state.mode = 'projects'
   state.context = { root = activated_root }
   render(state)
+end
+
+function M.activate_folder(folder_path, bufnr)
+  local source_buffer = bufnr or vim.api.nvim_get_current_buf()
+  local state = dashboard_states[source_buffer]
+  if state then
+    activate_selected_folder(state, folder_path)
+    return folder_path
+  end
+  return M.activate_project(folder_path)
 end
 
 local function open_folder_picker(state)
