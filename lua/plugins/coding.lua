@@ -1,8 +1,7 @@
 return {
   {
     'nvim-treesitter/nvim-treesitter',
-    lazy = false,
-    build = { ':TSUpdate', ':TSInstall python' },
+    event = { 'BufReadPost', 'BufNewFile' },
     config = function()
       require('config.syntax.treesitter').setup()
     end,
@@ -17,6 +16,7 @@ return {
   },
   {
     'nvim-telescope/telescope.nvim',
+    cmd = 'Telescope',
     branch = 'master',
     dependencies = {
       'nvim-lua/plenary.nvim',

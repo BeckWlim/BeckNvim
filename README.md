@@ -79,16 +79,20 @@ cd ~/.config/nvim
 ```
 
 Setup installs missing core external tools and checks whether Node.js/npm and Python are available.
-It does not install runtime managers or runtimes. Follow any PATH instructions it prints, reopen
-your terminal, and start Neovim:
+It does not install runtime managers or runtimes. The downloaded Tree-sitter CLI is tested before
+installation; on systems whose GLIBC is too old for the release binary, setup builds it locally
+with Cargo. Install Rust 1.84 or newer first when that fallback is needed; if it is unavailable,
+setup continues without parser installation. Follow any PATH instructions it prints, reopen your
+terminal, and start Neovim:
 
 ```bash
 nvim
 ```
 
 On first launch, lazy.nvim installs missing plugins and builds Termaid for Mermaid diagrams when
-Python is available. Startup requests no LSP installation. Choose every language server explicitly
-in `:Mason`:
+Python is available. Tree-sitter parser installation is opt-in; use `:TSInstall python` or another
+language after installing a compatible Tree-sitter CLI. Startup requests no LSP installation.
+Choose every language server explicitly in `:Mason`:
 press `i` to install, `X` to uninstall, and `?` for help. Restart Neovim after removing a server to
 stop any existing client. Startup enables installed servers and does not download or restore removed
 servers.

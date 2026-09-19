@@ -16,6 +16,7 @@ BECKNVIM_INSTALL_SYSTEM=1
 BECKNVIM_INSTALL_CLIPBOARD=1
 BECKNVIM_TEMP_DIR=''
 BECKNVIM_FAILURES=0
+BECKNVIM_NEEDS_PATH_PROMPT=0
 
 usage() {
   cat <<'EOF'
@@ -303,6 +304,8 @@ ensure_neovim() {
     return
   fi
 
+  BECKNVIM_NEEDS_PATH_PROMPT=1
+
   local platform archive_platform archive_name archive_path checksum extracted target link
   platform="$(platform_asset 'Neovim')"
   case "${platform}" in
@@ -342,6 +345,28 @@ python_compatible() {
     "${BECKNVIM_MINIMUM_PYTHON_VERSION}" >/dev/null 2>&1
 }
 
+build_tree_sitter_from_source() {
+  local target="$1"
+  local cargo_root="${BECKNVIM_USER_OPT}/tree-sitter-cli-${BECKNVIM_TREE_SITTER_VERSION}-$(uname -m)"
+
+  if ! command -v cargo >/dev/null 2>&1; then
+    warn "the downloaded Tree-sitter CLI is incompatible with this system's GLIBC; install Rust 1.84+ (cargo) to enable parser installation"
+    return 1
+  fi
+
+  log "Building Tree-sitter CLI ${BECKNVIM_TREE_SITTER_VERSION} locally for this system"
+  if ! cargo install --locked --version "${BECKNVIM_TREE_SITTER_VERSION}" \
+    --root "${cargo_root}" tree-sitter-cli; then
+    warn 'local Tree-sitter build failed; continuing without parser installation'
+    return 1
+  fi
+  if [[ ! -x "${cargo_root}/bin/tree-sitter" ]]; then
+    warn 'local Tree-sitter build did not produce an executable; continuing without parser installation'
+    return 1
+  fi
+  install -m 0755 "${cargo_root}/bin/tree-sitter" "${target}"
+}
+
 ensure_tree_sitter() {
   local owned_binary="${BECKNVIM_USER_BIN}/tree-sitter"
   local current_version=''
@@ -371,6 +396,15 @@ ensure_tree_sitter() {
   mkdir -p "${extract_dir}"
   unzip -q "${archive_path}" -d "${extract_dir}"
   [[ -f "${extract_dir}/tree-sitter" ]] || die 'downloaded Tree-sitter archive is incomplete'
+  if ! "${extract_dir}/tree-sitter" --version >/dev/null 2>&1; then
+    warn "the downloaded Tree-sitter CLI cannot run on this system (likely GLIBC incompatibility)"
+    if ! build_tree_sitter_from_source "${owned_binary}"; then
+      rm -f "${owned_binary}"
+      warn 'continuing without Tree-sitter CLI; Neovim remains usable without installed parsers'
+    fi
+    hash -r
+    return
+  fi
   install -m 0755 "${extract_dir}/tree-sitter" "${owned_binary}"
   hash -r
 }
@@ -489,6 +523,39 @@ run_checks() {
   fi
 }
 
+path_has_user_bin() {
+  [[ ":${PATH}:" == *":${BECKNVIM_USER_BIN}:"* ]]
+}
+
+offer_user_bin_path() {
+  [[ ${BECKNVIM_NEEDS_PATH_PROMPT} -eq 1 ]] || return 0
+  path_has_user_bin && return 0
+
+  if [[ ! -t 0 || ! -t 1 ]]; then
+    warn "add ${BECKNVIM_USER_BIN} to PATH before starting Neovim from a new shell"
+    return 0
+  fi
+
+  local answer=''
+  printf '[BeckNvim] Add %s to ~/.bashrc? [Y/n] ' "${BECKNVIM_USER_BIN}"
+  IFS= read -r answer || answer=''
+  case "${answer}" in
+    ''|y|Y|yes|YES|Yes)
+      local bashrc="${HOME}/.bashrc"
+      local path_line='export PATH="$HOME/.local/bin:$PATH"'
+      if ! grep -Fqx "${path_line}" "${bashrc}" 2>/dev/null; then
+        printf '\n# BeckNvim user-local tools\n%s\n' "${path_line}" >> "${bashrc}"
+      fi
+      export PATH="${BECKNVIM_USER_BIN}:${PATH}"
+      hash -r
+      log "Added ${BECKNVIM_USER_BIN} to ~/.bashrc"
+      ;;
+    *)
+      warn "PATH was not changed; start Neovim with ${BECKNVIM_USER_BIN}/nvim or update PATH manually"
+      ;;
+  esac
+}
+
 main() {
   if [[ "${BECKNVIM_MODE}" == 'check' ]]; then
     run_checks
@@ -503,9 +570,10 @@ main() {
     log 'Skipping operating-system package installation'
   fi
   ensure_neovim
+  offer_user_bin_path
   ensure_tree_sitter
   run_checks || true
-  if [[ ":${PATH}:" != *":${BECKNVIM_USER_BIN}:"* ]]; then
+  if ! path_has_user_bin; then
     warn "add ${BECKNVIM_USER_BIN} to PATH before starting Neovim from a new shell"
   fi
   warn 'install a Nerd Font manually and select it in the terminal application'

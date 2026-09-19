@@ -1,7 +1,7 @@
 return {
   {
     'stevearc/overseer.nvim',
-    lazy = false,
+    event = 'VeryLazy',
     opts = {
       task_win = {
         padding = 2,
@@ -16,7 +16,7 @@ return {
   },
   {
     'Civitasv/cmake-tools.nvim',
-    lazy = false,
+    event = 'VeryLazy',
     dependencies = {
       'nvim-lua/plenary.nvim',
       'stevearc/overseer.nvim',

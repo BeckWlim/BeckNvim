@@ -211,6 +211,17 @@ function M.setup(options)
       vim.wait(500, function() return not saving and not pending_save end, 10)
     end,
   })
+  local function refresh_startup_highlights()
+    vim.schedule(function()
+      require('config.syntax.highlights').apply()
+      vim.cmd('redraw!')
+    end)
+  end
+  vim.api.nvim_create_autocmd('VimEnter', {
+    group = group,
+    once = true,
+    callback = refresh_startup_highlights,
+  })
   vim.api.nvim_create_user_command('Theme', function(command)
     if command.args == '' then M.pick() else M.select(command.args) end
   end, {
@@ -231,6 +242,7 @@ function M.setup(options)
       restore(previous)
       notify('saved theme is unavailable; using the default: ' .. tostring(failure))
     end
+    refresh_startup_highlights()
   end)
 end
 
