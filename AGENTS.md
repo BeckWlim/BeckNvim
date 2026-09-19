@@ -13,8 +13,7 @@ newer is required.
   grep previews, file navigation), `lsp/` (language-server behavior, completion, type
   information, diagnostics, detail windows), and `syntax/` (Treesitter parser bootstrap, context,
   scope visuals, highlights, folds). Feature families with their own lifecycle live in dedicated
-  directories:
-  `python/`, `audit/`, `translation/`, `type_hierarchy/`.
+  directories: `python/`, `audit/`, `translation/`, `type_hierarchy/`.
 - `lua/plugins/*.lua` contains plugin specifications, dependencies, loading conditions, and
   lightweight setup calls.
 - `lua/config/project.lua` is the source of truth for roots, markers, and path containment.
@@ -52,6 +51,9 @@ candidates when semantic results arrive. `q` closes the picker after cancelling 
 - Keep plugin specifications focused on dependencies, loading conditions, and module setup.
 - Add focused fixtures and tests with every project-definition language extension.
 - Preserve stable semantic roles and static types for parameters and local bindings.
+- Treat `README.md` as stable project documentation. Update it only when the current work adds or
+  materially changes an essential user-facing feature, and keep any resulting edit as small and
+  targeted as possible.
 
 See `docs/architecture.md` for the complete ownership and extension model.
 
