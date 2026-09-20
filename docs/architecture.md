@@ -786,8 +786,8 @@ underlying editor line-number intent.
 
 Startup-only modules remain small: keymaps retain deferred module callbacks for feature-owned
 actions, and plugins that serve files, insert mode, or explicit commands load on their first relevant
-event. LSP and completion setup are deferred past the initial editor paint, so opening a file can
-show its buffer before Mason, server configuration, and completion implementation are loaded.
+event. LSP setup completes during plugin loading so Mason commands are registered before lazy.nvim
+dispatches them. Completion setup remains deferred until insert mode.
 
 `config.ui.folder_picker` owns the shared project switcher used by `<Space>fp` and the homepage's
 folder action. Its Telescope finder searches direct child directories asynchronously within the

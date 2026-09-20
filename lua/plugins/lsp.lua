@@ -9,9 +9,8 @@ return {
       'hrsh7th/cmp-nvim-lsp',
     },
     config = function()
-      vim.schedule(function()
-        require('config.lsp').setup()
-      end)
+      -- Register Mason commands before lazy.nvim retries the command that loaded us.
+      require('config.lsp').setup()
     end,
   },
   {
