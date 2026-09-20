@@ -33,6 +33,7 @@ Options:
 The setup checks Node.js/npm and Python for optional LSP and Termaid features.
 It does not install runtime managers or language runtimes. Install LSP servers
 explicitly through :Mason. Termaid uses uv when available, otherwise Python.
+Tree-sitter CLI is installed through npm when available; otherwise it is skipped.
 EOF
 }
 
@@ -284,16 +285,6 @@ neovim_checksum() {
   esac
 }
 
-tree_sitter_checksum() {
-  case "$1" in
-    linux-x64) printf '%s\n' 'ff1b7f9863f2faafd78dc0e66d902ee85b37f709b314b22c009f51caf233eebd' ;;
-    linux-arm64) printf '%s\n' 'db28509fe6db8902f9d14c43c486858c7486b42c3a96b30e811e73f105762336' ;;
-    macos-x86_64) printf '%s\n' 'e3c2cdec71bbc60344b25df3dad5da378a174f2292af953ff0d641e06aaee099' ;;
-    macos-arm64) printf '%s\n' '050f41d60a054b608ea392ba14722bba9457bdc0ab11a5706c77f034dafc68ac' ;;
-    *) return 1 ;;
-  esac
-}
-
 ensure_neovim() {
   local current_version=''
   if command -v nvim >/dev/null 2>&1; then
@@ -345,30 +336,7 @@ python_compatible() {
     "${BECKNVIM_MINIMUM_PYTHON_VERSION}" >/dev/null 2>&1
 }
 
-build_tree_sitter_from_source() {
-  local target="$1"
-  local cargo_root="${BECKNVIM_USER_OPT}/tree-sitter-cli-${BECKNVIM_TREE_SITTER_VERSION}-$(uname -m)"
-
-  if ! command -v cargo >/dev/null 2>&1; then
-    warn "the downloaded Tree-sitter CLI is incompatible with this system's GLIBC; install Rust 1.84+ (cargo) to enable parser installation"
-    return 1
-  fi
-
-  log "Building Tree-sitter CLI ${BECKNVIM_TREE_SITTER_VERSION} locally for this system"
-  if ! cargo install --locked --version "${BECKNVIM_TREE_SITTER_VERSION}" \
-    --root "${cargo_root}" tree-sitter-cli; then
-    warn 'local Tree-sitter build failed; continuing without parser installation'
-    return 1
-  fi
-  if [[ ! -x "${cargo_root}/bin/tree-sitter" ]]; then
-    warn 'local Tree-sitter build did not produce an executable; continuing without parser installation'
-    return 1
-  fi
-  install -m 0755 "${cargo_root}/bin/tree-sitter" "${target}"
-}
-
 ensure_tree_sitter() {
-  local owned_binary="${BECKNVIM_USER_BIN}/tree-sitter"
   local current_version=''
   if command -v tree-sitter >/dev/null 2>&1; then
     current_version="$(tree_sitter_version || true)"
@@ -378,34 +346,18 @@ ensure_tree_sitter() {
     return
   fi
 
-  local platform archive_name archive_path checksum extract_dir
-  platform="$(platform_asset 'Tree-sitter CLI')"
-  case "${platform}" in
-    macos-x86_64) archive_name='tree-sitter-cli-macos-x64.zip' ;;
-    *) archive_name="tree-sitter-cli-${platform}.zip" ;;
-  esac
-  archive_path="${BECKNVIM_TEMP_DIR}/${archive_name}"
-  extract_dir="${BECKNVIM_TEMP_DIR}/tree-sitter-cli"
-  checksum="$(tree_sitter_checksum "${platform}")"
-
-  log "Installing Tree-sitter CLI ${BECKNVIM_TREE_SITTER_VERSION} in ${BECKNVIM_USER_BIN}"
-  download \
-    "https://github.com/tree-sitter/tree-sitter/releases/download/v${BECKNVIM_TREE_SITTER_VERSION}/${archive_name}" \
-    "${archive_path}"
-  verify_sha256 "${checksum}" "${archive_path}"
-  mkdir -p "${extract_dir}"
-  unzip -q "${archive_path}" -d "${extract_dir}"
-  [[ -f "${extract_dir}/tree-sitter" ]] || die 'downloaded Tree-sitter archive is incomplete'
-  if ! "${extract_dir}/tree-sitter" --version >/dev/null 2>&1; then
-    warn "the downloaded Tree-sitter CLI cannot run on this system (likely GLIBC incompatibility)"
-    if ! build_tree_sitter_from_source "${owned_binary}"; then
-      rm -f "${owned_binary}"
-      warn 'continuing without Tree-sitter CLI; Neovim remains usable without installed parsers'
-    fi
-    hash -r
+  if ! command -v npm >/dev/null 2>&1 || ! npm --version >/dev/null 2>&1; then
+    warn 'npm is unavailable; skipping Tree-sitter CLI installation'
     return
   fi
-  install -m 0755 "${extract_dir}/tree-sitter" "${owned_binary}"
+
+  log "Installing Tree-sitter CLI ${BECKNVIM_TREE_SITTER_VERSION} through npm in ${BECKNVIM_USER_BIN}"
+  if ! npm install --global --prefix "${BECKNVIM_USER_BIN%/bin}" \
+    "tree-sitter-cli@${BECKNVIM_TREE_SITTER_VERSION}"; then
+    warn 'npm installation of Tree-sitter CLI failed; continuing without parser installation'
+    return
+  fi
+  BECKNVIM_NEEDS_PATH_PROMPT=1
   hash -r
 }
 
@@ -570,8 +522,8 @@ main() {
     log 'Skipping operating-system package installation'
   fi
   ensure_neovim
-  offer_user_bin_path
   ensure_tree_sitter
+  offer_user_bin_path
   run_checks || true
   if ! path_has_user_bin; then
     warn "add ${BECKNVIM_USER_BIN} to PATH before starting Neovim from a new shell"

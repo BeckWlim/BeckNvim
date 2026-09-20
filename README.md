@@ -73,10 +73,9 @@ cd ~/.config/nvim
 ```
 
 Setup installs missing core external tools and checks whether Node.js/npm and Python are available.
-It does not install runtime managers or runtimes. The downloaded Tree-sitter CLI is tested before
-installation; on systems whose GLIBC is too old for the release binary, setup builds it locally
-with Cargo. Install Rust 1.84 or newer first when that fallback is needed; if it is unavailable,
-setup continues without parser installation. Follow any PATH instructions it prints, reopen your
+It does not install runtime managers or runtimes. Setup installs Tree-sitter CLI through npm into
+`~/.local/bin` when npm is available. If npm is missing or unusable, setup skips CLI installation;
+if npm installation fails, setup warns and continues. Follow any PATH instructions it prints, reopen your
 terminal, and start Neovim:
 
 ```bash
