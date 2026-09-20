@@ -30,12 +30,11 @@ local function display_path(path)
   return vim.fn.fnamemodify(path, ':~')
 end
 
-local function search_entry(path, shortcut)
+local function search_entry(path, shortcut, displayer)
   local normalized_path = vim.fs.normalize(path)
   local label = display_path(normalized_path)
   return {
-    display = shortcut and ('%s  %s'):format(shortcut, label)
-      or ('󰉋  %s'):format(label),
+    display = displayer,
     kind = shortcut and 'shortcut' or 'directory',
     ordinal = label .. ' ' .. normalized_path,
     path = normalized_path,
@@ -100,13 +99,13 @@ local function project_displayer()
   end
 end
 
-local function find_arguments(root, query, direct_children)
-  local pattern = '*' .. query .. '*'
+local function find_arguments(root, query)
+  local pattern = query:gsub('([\\*?%[%]])', '\\%1') .. '*'
   return {
     root,
     '-xdev',
     '-mindepth', '1',
-    '-maxdepth', direct_children and '1' or '12',
+    '-maxdepth', '1',
     '(',
       '-path', '*/.git',
       '-o', '-path', '*/node_modules',
@@ -118,43 +117,37 @@ local function find_arguments(root, query, direct_children)
     '-prune',
     '-o',
     '-type', 'd',
-    '(', '-iname', pattern, '-o', '-path', pattern, ')',
+    '-iname', pattern,
     '-print',
   }
 end
 
-local function search_scope(search_root, prompt)
+local function search_scope(starting_directory, prompt)
   local normalized_prompt = vim.trim(prompt or '')
-  local is_path_query = normalized_prompt:find('/', 1, true) ~= nil
-    or normalized_prompt:sub(1, 1) == '~'
-    or normalized_prompt:sub(1, 1) == '.'
-  if not is_path_query then
-    return search_root, normalized_prompt
-  end
-
   local expanded_prompt = normalized_prompt:sub(1, 1) == '~'
       and vim.fn.expand(normalized_prompt)
     or normalized_prompt
   local absolute_prompt = expanded_prompt:sub(1, 1) == '/'
       and expanded_prompt
-    or vim.fs.joinpath(vim.uv.cwd(), expanded_prompt)
+    or vim.fs.joinpath(starting_directory, expanded_prompt)
   local normalized_path = vim.fs.normalize(absolute_prompt)
   local path_stat = vim.uv.fs_stat(normalized_path)
-  if path_stat and path_stat.type == 'directory' then
+  if path_stat and path_stat.type == 'directory'
+      and (normalized_prompt:sub(-1) == '/' or normalized_prompt == '~'
+        or normalized_prompt == '.' or normalized_prompt == '..') then
     return normalized_path, '', true
   end
 
   local parent_path = vim.fs.dirname(normalized_path)
   local parent_stat = vim.uv.fs_stat(parent_path)
   if parent_stat and parent_stat.type == 'directory' then
-    return parent_path, vim.fs.basename(normalized_path), false
+    return parent_path, vim.fs.basename(normalized_path), true
   end
-  return search_root, normalized_prompt, false
 end
 
 M.search_scope = search_scope
 
-local function project_finder(root, initial_entries, displayer)
+local function project_finder(starting_directory, initial_entries, displayer)
   local generation = 0
   local active_job
   local finder = {}
@@ -181,12 +174,16 @@ local function project_finder(root, initial_entries, displayer)
         return
       end
 
-      local scoped_root, scoped_query, direct_children = search_scope(root, normalized_prompt)
+      local scoped_root, scoped_query = search_scope(starting_directory, normalized_prompt)
+      if not scoped_root then
+        process_complete()
+        return
+      end
       local Job = require('plenary.job')
       local received_count = 0
       active_job = Job:new({
         command = 'find',
-        args = find_arguments(scoped_root, scoped_query, direct_children),
+        args = find_arguments(scoped_root, scoped_query),
         enable_recording = false,
         on_stdout = function(_, line)
           if generation ~= active_generation or received_count >= M.maximum_search_results
@@ -194,8 +191,7 @@ local function project_finder(root, initial_entries, displayer)
             return
           end
           received_count = received_count + 1
-          local entry = search_entry(line)
-          entry.display = displayer
+          local entry = search_entry(line, nil, displayer)
           vim.schedule(function()
             if generation == active_generation then
               process_result(entry)
@@ -609,15 +605,13 @@ function M.open(options)
   )
   local search_root = vim.fs.normalize(picker_options.search_root or M.search_root)
   local displayer = project_displayer()
-  local initial_entries = { search_entry(starting_directory, '.') }
-  initial_entries[1].display = displayer
+  local initial_entries = { search_entry(starting_directory, '.', displayer) }
   local parent_directory = vim.fs.dirname(starting_directory)
   if parent_directory ~= starting_directory then
-    initial_entries[#initial_entries + 1] = search_entry(parent_directory, '..')
-    initial_entries[2].display = displayer
+    initial_entries[#initial_entries + 1] = search_entry(parent_directory, '..', displayer)
   end
   local pickers = require('telescope.pickers')
-  local telescope_config = require('telescope.config').values
+  local sorters = require('telescope.sorters')
   local actions = require('telescope.actions')
   local action_state = require('telescope.actions.state')
   local picker
@@ -626,9 +620,11 @@ function M.open(options)
 
   picker = pickers.new({ cwd = search_root }, {
     prompt_title = prompt_title,
-    finder = project_finder(search_root, initial_entries, displayer),
+    finder = project_finder(starting_directory, initial_entries, displayer),
     previewer = previewer,
-    sorter = telescope_config.generic_sorter({ cwd = search_root }),
+    -- The finder already matches expanded path prefixes; the raw prompt may
+    -- use a different spelling (such as ../), so do not fuzzy-filter it again.
+    sorter = sorters.empty(),
     attach_mappings = function(prompt_buffer, map)
       previewer.prompt_buffer = prompt_buffer
       picker.preview_enter_action = function(active_prompt_buffer)
@@ -643,7 +639,8 @@ function M.open(options)
           return
         end
         if selected_entry.shortcut then
-          picker:set_prompt(display_path(selected_entry.value))
+          local shortcut_path = display_path(selected_entry.value)
+          picker:set_prompt(shortcut_path:sub(-1) == '/' and shortcut_path or shortcut_path .. '/')
           return
         end
         actions.close(prompt_buffer)

@@ -790,13 +790,17 @@ event. LSP and completion setup are deferred past the initial editor paint, so o
 show its buffer before Mason, server configuration, and completion implementation are loaded.
 
 `config.ui.folder_picker` owns the shared project switcher used by `<Space>fp` and the homepage's
-folder action. Its Telescope finder searches bounded directory paths asynchronously from the system
-root, cancels stale `find` jobs as the prompt changes, and caps streamed results. The selected folder
+folder action. Its Telescope finder searches direct child directories asynchronously within the
+requested path, cancels stale `find` jobs as the prompt changes, and caps streamed results. The selected folder
 uses a real Telescope previewer that renders a bounded, read-only file tree through a cancellable
 child process. The preview loads each folder's direct children on demand; focused-preview Enter
 toggles expansion and collapse, so nested content remains reachable without a fixed preview depth.
 Absolute, home-relative, and relative path prefixes are expanded into their own search
-scope, so entering `<prefix>/` lists its direct project folders without depending on the current file.
+scope. A partial path matches direct child folder names by literal, case-insensitive prefix;
+entering `<prefix>/` lists that folder's direct children. Without a trailing slash, a complete folder name
+still matches sibling names with the same prefix. Bare names match only direct child folders in the
+picker's starting directory; relative paths resolve from that same directory. An invalid parent path
+returns no results. Telescope preserves these matches without applying a second fuzzy filter.
 The initial `.` and `..` entries are prompt shortcuts: confirming one rewrites the scope to the current
 or parent directory and keeps the picker open.
 Confirming a result delegates to `config.project.activate`; when the dashboard is the

@@ -1,6 +1,7 @@
 -- Focused tests for config.ui.folder_picker.
 local replaced_modules = {
   'config.ui.folder_picker',
+  'plenary.job',
   'telescope.actions',
   'telescope.actions.state',
   'telescope.config',
@@ -8,6 +9,7 @@ local replaced_modules = {
   'telescope.pickers',
   'telescope.pickers.entry_display',
   'telescope.previewers',
+  'telescope.sorters',
 }
 local original_modules = {}
 for _, module_name in ipairs(replaced_modules) do
@@ -26,6 +28,7 @@ local refreshed_finder
 local picker_layout_updates = 0
 local fake_picker
 local entry_display_configuration
+local search_commands = {}
 
 package.loaded['telescope.finders'] = {
   new_dynamic = function(options)
@@ -38,6 +41,29 @@ package.loaded['telescope.config'] = {
       return 'folder-sorter'
     end,
   },
+}
+package.loaded['telescope.sorters'] = {
+  empty = function()
+    return 'prefix-sorter'
+  end,
+}
+package.loaded['plenary.job'] = {
+  new = function(_, options)
+    return {
+      start = function()
+        local command = { options.command }
+        vim.list_extend(command, options.args)
+        search_commands[#search_commands + 1] = command
+        local result = vim.system(command, { text = true }):wait()
+        assert(result.code == 0, result.stderr)
+        for line in result.stdout:gmatch('[^\n]+') do
+          options.on_stdout(nil, line)
+        end
+        options.on_exit()
+      end,
+      shutdown = function() end,
+    }
+  end,
 }
 package.loaded['telescope.actions'] = {
   close = function(prompt_buffer)
@@ -195,7 +221,7 @@ scoped_root, scoped_query, direct_children = folder_picker.search_scope(
   vim.fs.joinpath(temporary_root, 'pla')
 )
 assert(
-  scoped_root == temporary_root and scoped_query == 'pla' and not direct_children,
+  scoped_root == temporary_root and scoped_query == 'pla' and direct_children,
   'folder picker did not split a partial path into its parent and leaf query'
 )
 
@@ -218,6 +244,7 @@ assert(
   'folder picker did not use the project-switcher title'
 )
 assert(type(picker_spec.finder) == 'table', 'folder picker did not create an async directory finder')
+assert(picker_spec.sorter == 'prefix-sorter', 'folder picker reapplied fuzzy filtering to path prefixes')
 assert(
   picker_spec.previewer and picker_spec.previewer.title == 'Project tree',
   'folder picker did not attach a project-tree previewer'
@@ -239,6 +266,51 @@ assert(
   initial_entries[1].shortcut == '.' and initial_entries[2].shortcut == '..',
   'folder picker did not expose current and parent path shortcuts'
 )
+
+local longer_folder = vim.fs.joinpath(temporary_root, 'plain-folder-extra')
+local substring_folder = vim.fs.joinpath(temporary_root, 'explain')
+local nested_folder = vim.fs.joinpath(beta_folder, 'plain-nested')
+local literal_folder = vim.fs.joinpath(temporary_root, 'pla[1]*?')
+local deeper_folder = vim.fs.joinpath(nested_folder, 'plain-deeper')
+for _, directory in ipairs({ longer_folder, substring_folder, deeper_folder, literal_folder }) do
+  vim.fn.mkdir(directory, 'p')
+end
+local function search_paths(prompt)
+  local paths = {}
+  local complete = false
+  picker_spec.finder(prompt, function(entry)
+    paths[#paths + 1] = entry.path
+  end, function()
+    complete = true
+  end)
+  assert(vim.wait(1000, function()
+    return complete
+  end), 'folder prefix search did not complete')
+  table.sort(paths)
+  return paths
+end
+local function assert_paths(prompt, expected_paths)
+  local sorted_expected_paths = vim.deepcopy(expected_paths)
+  table.sort(sorted_expected_paths)
+  assert(vim.deep_equal(search_paths(prompt), sorted_expected_paths),
+    'unexpected prefix matches for ' .. prompt)
+end
+assert_paths(temporary_root .. '/pla', { plain_folder, longer_folder, literal_folder })
+assert_paths(temporary_root .. '/PLA', { plain_folder, longer_folder, literal_folder })
+assert_paths(plain_folder, { plain_folder, longer_folder })
+assert_paths(beta_folder .. '/', { nested_folder })
+assert_paths(temporary_root .. '/pla[1]*?', { literal_folder })
+local commands_before_missing_path = #search_commands
+assert_paths(temporary_root .. '/missing/pla', {})
+assert(#search_commands == commands_before_missing_path, 'invalid path started a fallback search')
+assert_paths('pla', { nested_folder })
+local bare_search_command = search_commands[#search_commands]
+assert(bare_search_command[2] == beta_folder, 'bare prefix searched outside the starting directory')
+local depth_option_index = vim.fn.index(bare_search_command, '-maxdepth')
+assert(depth_option_index >= 0 and bare_search_command[depth_option_index + 2] == '1',
+  'bare prefix started a recursive scan')
+assert_paths('unmatched', {})
+assert_paths('../pla', { plain_folder, longer_folder, literal_folder })
 
 local prompt_buffer = vim.api.nvim_create_buf(false, true)
 local telescope_mapped_keys = { i = {}, n = {} }
@@ -265,7 +337,7 @@ selected_entry = initial_entries[1]
 selected_callback()
 assert(
   closed_prompt_buffer == nil
-    and picker_prompt == vim.fn.fnamemodify(beta_folder, ':~'),
+    and picker_prompt == vim.fn.fnamemodify(beta_folder, ':~') .. '/',
   'current-path shortcut did not update the search scope'
 )
 selected_entry = { value = plain_folder }
