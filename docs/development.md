@@ -53,7 +53,8 @@ live in the fork; BeckNvim retains configuration and editor-integration tests. I
 run `nvim --headless -u NONE -i NONE -l tests/preview/run.lua` or run `just test`.
 
 Termaid's build keeps its Python package editable in the selected checkout, using `uv` when
-available or `python3 -m venv` and the environment's `pip` otherwise. After switching
+available or Python's `venv` and the environment's `pip` otherwise. The Python path tries
+`python`, then `python3`, requiring Python 3.10+ with `venv` and `ensurepip`. After switching
 checkouts, run `:Lazy build termaid` if that checkout does not yet have its `.venv` dependencies.
 
 ## Validation

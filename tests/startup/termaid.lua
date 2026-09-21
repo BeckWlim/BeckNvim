@@ -7,6 +7,7 @@ vim.fn.mkdir(fixture_directory .. '/.venv/bin', 'p')
 
 for _, executable_path in ipairs({
   fixture_bin .. '/uv',
+  fixture_bin .. '/python',
   fixture_bin .. '/python3',
   fixture_directory .. '/.venv/bin/python',
 }) do
@@ -14,7 +15,11 @@ for _, executable_path in ipairs({
     '#!/bin/sh',
     'printf "%s %s\\n" "${0##*/}" "$*" >> "$TERMAID_TEST_TRACE"',
     'case "$*" in',
-    '  "-c "*) exit "${TERMAID_TEST_PROBE_STATUS:-0}" ;;',
+    '  "-c "*)',
+    '    case "${0##*/}" in',
+    '      python) exit "${TERMAID_TEST_PYTHON_STATUS:-1}" ;;',
+    '      python3) exit "${TERMAID_TEST_PROBE_STATUS:-0}" ;;',
+    '    esac ;;',
     '  "venv "*|"-m venv "*) exit "${TERMAID_TEST_VENV_STATUS:-0}" ;;',
     '  *) exit "${TERMAID_TEST_PIP_STATUS:-0}" ;;',
     'esac',
@@ -22,7 +27,7 @@ for _, executable_path in ipairs({
   vim.fn.setfperm(executable_path, 'rwx------')
 end
 
-local function check_build(uv_available, venv_status, pip_status, probe_status)
+local function check_build(uv_available, venv_status, pip_status, probe_status, python_status, python_missing)
   local spec_chunk = assert(loadfile('lua/plugins/termaid.lua'))
   setfenv(spec_chunk, {
     vim = {
@@ -45,6 +50,7 @@ local function check_build(uv_available, venv_status, pip_status, probe_status)
       TERMAID_TEST_VENV_STATUS = tostring(venv_status),
       TERMAID_TEST_PIP_STATUS = tostring(pip_status),
       TERMAID_TEST_PROBE_STATUS = tostring(probe_status or 0),
+      TERMAID_TEST_PYTHON_STATUS = tostring(python_status or 1),
     },
     text = true,
   }):wait()
@@ -52,7 +58,7 @@ local function check_build(uv_available, venv_status, pip_status, probe_status)
     'uv venv --allow-existing .venv',
     'uv pip install --python .venv/bin/python --reinstall -e .',
   } or {
-    'python3 -m venv .venv',
+    (python_status == 0 and 'python' or 'python3') .. ' -m venv .venv',
     'python -m pip install --force-reinstall -e .',
   }
   if venv_status ~= 0 then
@@ -63,9 +69,16 @@ local function check_build(uv_available, venv_status, pip_status, probe_status)
   end
   local traced_commands = vim.fn.readfile(trace_path)
   if not uv_available then
-    assert(traced_commands[1]:find('python3 -c import sys', 1, true) == 1,
-      'Termaid did not check Python before attempting its build')
-    table.remove(traced_commands, 1)
+    if not python_missing then
+      assert(traced_commands[1]:find('python -c import sys', 1, true) == 1,
+        'Termaid must probe python first')
+      table.remove(traced_commands, 1)
+    end
+    if python_status ~= 0 then
+      assert(traced_commands[1]:find('python3 -c import sys', 1, true) == 1,
+        'Termaid must try python3 when python is unavailable or unsuitable')
+      table.remove(traced_commands, 1)
+    end
   end
   assert(vim.deep_equal(traced_commands, expected_commands),
     'Termaid must build an editable package using only the selected runtime')
@@ -82,6 +95,11 @@ for _, uv_available in ipairs({ false, true }) do
     check_build(uv_available, 0, 0, 127)
   end
 end
+check_build(false, 0, 0, nil, 0)
+check_build(false, 7, 0, nil, 0)
+check_build(false, 0, 9, nil, 0)
+vim.fn.delete(fixture_bin .. '/python')
+check_build(false, 0, 0, nil, nil, true)
 vim.fn.delete(fixture_bin .. '/python3')
 local missing_python_chunk = assert(loadfile('lua/plugins/termaid.lua'))
 setfenv(missing_python_chunk, {
