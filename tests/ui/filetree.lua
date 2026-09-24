@@ -11,6 +11,7 @@ local node_change_count = 0
 local synchronized_roots = {}
 local active_activation
 package.loaded['nvim-tree.api'] = {
+  events = { Event = { TreeOpen = 'TreeOpen' }, subscribe = function() end },
   node = {
     open = {
       edit = function(node)

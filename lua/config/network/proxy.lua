@@ -2,7 +2,6 @@ local M = {}
 local persistence_path
 local session_override
 local recent_proxy_addresses = {}
-local persistence_version = 1
 
 local proxy_names = {
   ALL_PROXY = 'ALL_PROXY',
@@ -92,61 +91,24 @@ local function normalized_persisted_environment(raw_environment)
   return proxy_environment, nil
 end
 
+local function proxy_store(state_path)
+  return require('config.state').open('proxy', { path = state_path })
+end
+
 local function load_persisted_environment(state_path)
-  if not vim.uv.fs_stat(state_path) then
-    return nil, nil
-  end
-  local read_succeeded, state_lines = pcall(vim.fn.readfile, state_path)
-  if not read_succeeded then
-    return nil, ('could not read %s'):format(state_path)
-  end
-  local decode_succeeded, state_document = pcall(
-    vim.json.decode,
-    table.concat(state_lines, '\n')
-  )
-  if not decode_succeeded or type(state_document) ~= 'table' then
-    return nil, ('could not parse %s'):format(state_path)
-  end
-  if state_document.version ~= persistence_version then
-    return nil, ('unsupported proxy state version in %s'):format(state_path)
-  end
-  return normalized_persisted_environment(state_document.environment)
+  local document, failure = proxy_store(state_path):read_sync()
+  if not document then return nil, failure end
+  return normalized_persisted_environment(document.environment)
 end
 
 local function persist_environment(proxy_environment)
-  local state_path = active_persistence_path()
-  local state_directory = vim.fs.dirname(state_path)
-  local directory_created = vim.fn.mkdir(state_directory, 'p')
-  if directory_created == 0 and not vim.uv.fs_stat(state_directory) then
-    return ('could not create %s'):format(state_directory)
-  end
   local serialized_environment = next(proxy_environment) == nil
       and vim.empty_dict()
     or proxy_environment
-  local encode_succeeded, encoded_state = pcall(vim.json.encode, {
+  local saved, failure = proxy_store(active_persistence_path()):write_sync({
     environment = serialized_environment,
-    version = persistence_version,
   })
-  if not encode_succeeded then
-    return 'could not encode proxy state'
-  end
-  local temporary_path = ('%s.tmp.%d'):format(state_path, vim.fn.getpid())
-  local write_succeeded, write_result = pcall(
-    vim.fn.writefile,
-    { encoded_state },
-    temporary_path,
-    'b'
-  )
-  if not write_succeeded or write_result ~= 0 then
-    return ('could not write %s'):format(temporary_path)
-  end
-  vim.uv.fs_chmod(temporary_path, 384)
-  local renamed, rename_error = vim.uv.fs_rename(temporary_path, state_path)
-  if not renamed then
-    vim.uv.fs_unlink(temporary_path)
-    return ('could not replace %s: %s'):format(state_path, rename_error or 'unknown error')
-  end
-  return nil
+  return not saved and failure or nil
 end
 
 local function remember_proxy_address(proxy_url)

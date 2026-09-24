@@ -75,8 +75,14 @@ end
 
 function M.setup()
   local project = require('config.project')
+  local api = require('nvim-tree.api')
   sync_lifecycle = sync_lifecycle + 1
   local current_lifecycle = sync_lifecycle
+  api.events.subscribe(api.events.Event.TreeOpen, function()
+    if sync_lifecycle == current_lifecycle then
+      require('config.ui.window_state').track_panel(api.tree.winid())
+    end
+  end)
   pending_roots_by_tabpage = {}
   local sync_group = vim.api.nvim_create_augroup('project_filetree_sync', { clear = true })
 

@@ -8,6 +8,7 @@ lua/
 ├── config/                       Reusable, testable feature modules, grouped by area
 │   ├── init.lua                  Startup assembly
 │   ├── project.lua               Project-root authority and path containment
+│   ├── state.lua                 Shared preference storage and scoped session documents
 │   ├── startup/                  options.lua, autocmds.lua, lazy.lua, keybindings.lua
 │   ├── ui/                       window_state.lua, float.lua, folder_picker.lua, dashboard.lua,
 │   │                             statusline.lua, filetree.lua, terminal.lua, theme.lua, palette.lua
@@ -32,10 +33,11 @@ lua/
 | Module | Responsibility |
 | --- | --- |
 | `config/project.lua` | Project-root authority, activation gate, path containment, markers, and cached Git-host detection |
+| `config/state.lua` | Namespaced global/project persistence, session documents, version checks, bounded reads, and atomic private writes |
 | `config/startup/` | Editor options, global autocmds, lazy.nvim bootstrap, and the single keymap assembly |
-| `config/ui/window_state.lua` | Registered special-surface state gate for resolving editor-facing window options across UI transitions |
+| `config/ui/window_state.lua` | Per-tab split proportions, opt-in panel size memory, and registered editor-facing window options across UI transitions |
 | `config/ui/statusline.lua` | Explicit project identity and project-relative current-file state |
-| `config/ui/theme.lua` | Theme selection, Telescope preview/rollback, and bounded asynchronous preference persistence |
+| `config/ui/theme.lua` | Theme selection, Telescope preview/rollback, and preference validation through shared storage |
 | `config/ui/palette.lua` | Shared semantic palette resolved from the selected colorscheme, light/dark fallbacks, contrast, and background tints |
 | `config/ui/tmux.lua` | Asynchronous pane palette publication through tmux's application hook and editor owner lifecycle |
 | `config/ui/dashboard.lua` | Bounded project drawer, project-relative MRU state, and dashboard actions |
@@ -80,6 +82,49 @@ lua/
 has loaded. Back/forward navigation therefore starts with the current Neovim process, including
 windows opened with startup split arguments. ShaDa still preserves recent files, file marks,
 registers, and search history; ordinary navigation continues to use native window-local jumplists.
+
+`config.ui.window_state` remembers nested split proportions per tab during the current session.
+Opening files keeps pane sizes; new splits divide the active pane without equalizing unrelated
+windows. Terminal resizing scales the current layout, with hidden tabs restored when entered.
+Manual resizing and explicit equalization establish new proportions. Floats are excluded, and
+changed split topology is adopted rather than reconstructing closed windows.
+Panels can use `panel_size(filetype, axis, default_size)` in their native size callback and call
+`track_panel(winid)` after opening. Nvim-tree uses this shared memory to restore its width after
+closing and reopening, including terminal resizing while hidden; its initial width is 30 columns.
+`prepare_panel(filetype, axis)` preloads the saved preference asynchronously. Registered panels
+persist their last adjusted ratio through `config.state`, so new tabs and later Neovim processes
+inherit it; existing tabs retain their own overrides. A late startup read only adjusts an untouched
+panel. Window IDs and complete split layouts stay in memory.
+Diffview's existing code panes and history footer use the same split tracking when selecting files
+and resizing the terminal. Diffview retains ownership of panel toggles and rebuilt layouts.
+
+## Shared State Storage
+
+Feature modules open small document stores with `require('config.state').open(namespace, options)`.
+The default global scope writes `<stdpath('state')>/<namespace>.json`. Project scope requires an
+absolute `project_root` supplied by `config.project` and uses `projects/<root-hash>/<namespace>.json`.
+Session scope uses an optional `session_id` to isolate in-memory documents and never writes files.
+Storage does not detect projects or take ownership of feature lifecycles.
+
+`store:read(callback)` returns a cancellation function and delivers on the main loop.
+`store:write(document)` validates encoding and queues an asynchronous save; `store:flush(timeout_ms)`
+waits for completion when needed. Asynchronous write errors reach `on_error` or a notification.
+`read_sync()` and `write_sync()` retain the proxy's startup dependency and immediate error contract;
+UI consumers use asynchronous I/O. Reads are bounded to 64 KiB by default, and documents carry a
+positive integer `version` (default 1). Missing state returns no document; malformed, oversized, or
+unsupported versions return an error so the feature can choose its fallback.
+
+Writes use private temporary files and atomic replacement, with one active write and the latest
+pending document per destination. Independent preferences use separate namespaces. Two processes
+saving the same namespace use last-completed-write semantics; this is document replacement, not
+a transactional key/value merge. A bounded exit flush finishes queued saves when possible.
+
+Theme and proxy retain their existing `theme.json` and `proxy.json` paths. Theme accepts its old
+unversioned document and adds version 1 on the next confirmed save; proxy retains its version 1
+environment document and user-only permissions. Window preferences use one namespace per panel
+role and axis, such as `window-NvimTree-width`. Each feature owns value validation, defaults, and
+which user actions warrant saving. Native ShaDa history and live Git/request state keep their
+existing owners.
 
 ## Local plugin development
 

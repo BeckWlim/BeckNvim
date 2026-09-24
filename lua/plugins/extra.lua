@@ -15,13 +15,22 @@ return {
       'NvimTreeFindFile',
     },
     dependencies = { 'nvim-tree/nvim-web-devicons' },
+    init = function()
+      require('config.ui.window_state').prepare_panel('NvimTree', 'width')
+    end,
     opts = {
       on_attach = require('config.ui.filetree').on_attach,
       sort = { sorter = 'case_sensitive' },
-      view = { width = 30 },
+      view = {
+        width = function()
+          return require('config.ui.window_state').panel_size('NvimTree', 'width', 30)
+        end,
+        preserve_window_proportions = true,
+      },
       renderer = { group_empty = true },
       filters = { dotfiles = true },
       actions = {
+        open_file = { resize_window = false },
         change_dir = {
           enable = true,
           global = false,

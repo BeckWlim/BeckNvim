@@ -2,6 +2,7 @@ vim.opt.runtimepath:prepend(vim.fn.getcwd())
 dofile('tests/markdown_runtime.lua')
 
 for _, test_file in ipairs({
+  'tests/state.lua',
   'tests/user.lua',
   'tests/project.lua',
   'tests/audit/workflow.lua',

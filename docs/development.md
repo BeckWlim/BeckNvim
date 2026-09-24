@@ -90,6 +90,7 @@ nvim --headless -u NONE -i NONE -l tests/ui/theme_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/theme_preview_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/tmux_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/dashboard_installed.lua
+nvim --headless -u NONE -i NONE -l tests/ui/window_state_installed.lua
 nvim --headless -u NONE -i NONE -l tests/search/telescope_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/visuals_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/treesitter_installed.lua

@@ -2,9 +2,8 @@
 -- config.syntax.highlights own rendering; Telescope owns the picker surface.
 local M = {}
 local generation = 0
-local pending_save
-local saving = false
-local save_sequence = 0
+local preference_store
+local cancel_read
 local preference_path
 local active_preset
 local picker_session
@@ -67,42 +66,9 @@ local function apply(name)
   return true
 end
 
-local save_next
-save_next = function()
-  if saving or not pending_save then return end
-  local request = pending_save
-  pending_save = nil
-  saving = true
-  save_sequence = save_sequence + 1
-  local temporary_path = request.path .. '.' .. vim.uv.os_getpid() .. '.' .. save_sequence .. '.tmp'
-  local function finish(failure)
-    if failure then
-      vim.uv.fs_unlink(temporary_path, function() end)
-      notify('could not save selection: ' .. failure)
-    end
-    saving = false
-    save_next()
-  end
-  vim.uv.fs_mkdir(vim.fs.dirname(request.path), 448, function(directory_error)
-    if directory_error and not directory_error:find('EEXIST', 1, true) then finish(directory_error); return end
-    vim.uv.fs_open(temporary_path, 'w', 384, function(open_error, descriptor)
-      if open_error then finish(open_error); return end
-      vim.uv.fs_write(descriptor, request.document, 0, function(write_error, written)
-        vim.uv.fs_close(descriptor, function(close_error)
-          if write_error or close_error or written ~= #request.document then
-            finish(write_error or close_error or 'incomplete write')
-            return
-          end
-          vim.uv.fs_rename(temporary_path, request.path, finish)
-        end)
-      end)
-    end)
-  end)
-end
-
 local function remember()
-  pending_save = { path = M.state_path(), document = vim.json.encode(current()) }
-  save_next()
+  local saved, failure = preference_store:write(current())
+  if not saved then notify('could not save selection: ' .. failure) end
 end
 
 function M.select(name)
@@ -165,37 +131,28 @@ function M.names()
 end
 
 local function read_saved(callback)
-  vim.uv.fs_open(M.state_path(), 'r', 384, function(open_error, descriptor)
-    if open_error then
-      if not open_error:find('ENOENT', 1, true) then notify(open_error) end
+  if cancel_read then cancel_read() end
+  cancel_read = preference_store:read(function(selection, failure)
+    if failure then notify(failure); return end
+    if not selection then return end
+    if not valid_name(selection.name)
+        or (selection.background ~= 'dark' and selection.background ~= 'light') then
+      notify('saved selection is invalid; using the default')
       return
     end
-    vim.uv.fs_fstat(descriptor, function(stat_error, statistics)
-      if stat_error or not statistics or statistics.type ~= 'file' or statistics.size > 4096 then
-        vim.uv.fs_close(descriptor, function() end)
-        notify('saved selection is unreadable or too large')
-        return
-      end
-      vim.uv.fs_read(descriptor, statistics.size, 0, function(read_error, document)
-        vim.uv.fs_close(descriptor, function() end)
-        if read_error then notify(read_error); return end
-        vim.schedule(function()
-          local decoded, selection = pcall(vim.json.decode, document)
-          if not decoded or type(selection) ~= 'table' or not valid_name(selection.name)
-              or (selection.background ~= 'dark' and selection.background ~= 'light') then
-            notify('saved selection is invalid; using the default')
-            return
-          end
-          callback(selection)
-        end)
-      end)
-    end)
+    callback(selection)
   end)
 end
 
 function M.setup(options)
   local settings = options or {}
   preference_path = settings.state_file
+  preference_store = require('config.state').open('theme', {
+    path = M.state_path(),
+    accept_unversioned = true,
+    max_bytes = 4096,
+    on_error = function(failure) notify('could not save selection: ' .. failure) end,
+  })
   require('config.syntax.highlights').setup({ overrides = settings.overrides })
   local group = vim.api.nvim_create_augroup('project_theme', { clear = true })
   vim.api.nvim_create_autocmd('ColorScheme', {
@@ -203,12 +160,6 @@ function M.setup(options)
     callback = function()
       generation = generation + 1
       active_preset = nil
-    end,
-  })
-  vim.api.nvim_create_autocmd('VimLeavePre', {
-    group = group,
-    callback = function()
-      vim.wait(500, function() return not saving and not pending_save end, 10)
     end,
   })
   local function refresh_startup_highlights()

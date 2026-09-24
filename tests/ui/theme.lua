@@ -28,8 +28,16 @@ end
 theme.setup({ default = 'habamax', state_file = path })
 vim.wait(30)
 assert(vim.g.colors_name == 'habamax')
+vim.fn.writefile({ '{"name":"morning","background":"light"}' }, path)
+theme.setup({ default = 'habamax', state_file = path })
+assert_theme('morning')
+assert(vim.json.decode(table.concat(vim.fn.readfile(path))).version == nil,
+  'Reading a legacy theme unexpectedly rewrote its file')
 assert(theme.select('morning'))
 assert(saved('morning'), 'Confirmed theme was not saved')
+assert(vim.wait(1000, function()
+  return vim.json.decode(table.concat(vim.fn.readfile(path))).version == 1
+end), 'Confirmed legacy theme was not saved through versioned shared storage')
 assert(vim.json.decode(table.concat(vim.fn.readfile(path))).background == 'light', 'Saved theme lost its variant')
 theme.setup({ default = 'habamax', state_file = path })
 assert_theme('morning')
