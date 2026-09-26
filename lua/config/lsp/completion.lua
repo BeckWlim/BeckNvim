@@ -5,6 +5,13 @@ function M.setup()
   local luasnip = require('luasnip')
   require('luasnip.loaders.from_vscode').lazy_load()
 
+  local dismiss_and_fallback = cmp.mapping(function(fallback)
+    if cmp.visible() then
+      cmp.abort()
+    end
+    fallback()
+  end, { 'i' })
+
   cmp.setup({
     snippet = {
       expand = function(args)
@@ -13,6 +20,16 @@ function M.setup()
     },
     mapping = cmp.mapping.preset.insert({
       ['<CR>'] = cmp.mapping.confirm({ select = true }),
+      ['<C-a>'] = dismiss_and_fallback,
+      ['<C-e>'] = dismiss_and_fallback,
+      ['<C-h>'] = dismiss_and_fallback,
+      ['<C-j>'] = dismiss_and_fallback,
+      ['<C-k>'] = dismiss_and_fallback,
+      ['<C-l>'] = dismiss_and_fallback,
+      ['<C-Left>'] = dismiss_and_fallback,
+      ['<C-Right>'] = dismiss_and_fallback,
+      ['<C-p>'] = dismiss_and_fallback,
+      ['<C-d>'] = dismiss_and_fallback,
     }),
     sources = cmp.config.sources({
       { name = 'nvim_lsp' },

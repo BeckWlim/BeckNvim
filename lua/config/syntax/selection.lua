@@ -251,6 +251,25 @@ function M.select_next()
   select_adjacent('next')
 end
 
+---@param direction 'previous'|'next'
+local function move_word(direction)
+  -- Insert-mode navigation must also work in incomplete code and without a parser.
+  -- Search without moving first, so failed searches leave the insertion point intact.
+  local flags = direction == 'previous' and 'bnW' or 'nW'
+  local position = vim.fn.searchpos([[\<\k]], flags, 0, 50)
+  if position[1] > 0 then
+    vim.api.nvim_win_set_cursor(0, { position[1], position[2] - 1 })
+  end
+end
+
+function M.move_previous()
+  move_word('previous')
+end
+
+function M.move_next()
+  move_word('next')
+end
+
 function M.setup()
   local selection_group = vim.api.nvim_create_augroup('config-syntax-selection', { clear = true })
   vim.api.nvim_create_autocmd('WinClosed', {

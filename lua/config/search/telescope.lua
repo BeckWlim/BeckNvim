@@ -31,7 +31,7 @@ local function bind_pane(buffer, prompt_buffer, picker, is_preview)
   for _, key in ipairs({ '<Esc>', 'ZZ', 'ZQ' }) do
     vim.keymap.set('n', key, '<Nop>', { buffer = buffer, silent = true })
   end
-  vim.keymap.set('i', '<C-c>', '<Nop>', { buffer = buffer, silent = true })
+  vim.keymap.set('i', '<C-c>', '<Esc>', { buffer = buffer, silent = true, desc = 'Return to Normal mode' })
   if not vim.b[buffer].telescope_quit_guard then
     vim.b[buffer].telescope_quit_guard = true
     vim.api.nvim_create_autocmd('QuitPre', {
@@ -306,7 +306,14 @@ function M.setup()
       mappings = {
         i = {
           [float.input_close_key] = actions.close,
-          ['<C-c>'] = false,
+          ['<C-c>'] = { '<Esc>', type = 'command' },
+          ['<C-d>'] = { '<BS>', type = 'command' },
+          ['<C-h>'] = { '<Left>', type = 'command' },
+          ['<C-j>'] = actions.move_selection_next,
+          ['<C-k>'] = actions.move_selection_previous,
+          ['<C-l>'] = { '<Right>', type = 'command' },
+          ['<C-Left>'] = { '<C-Left>', type = 'command' },
+          ['<C-Right>'] = { '<C-Right>', type = 'command' },
           ['<Tab>'] = M.focus_preview,
         },
         n = {

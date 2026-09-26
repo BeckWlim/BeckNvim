@@ -52,6 +52,9 @@ Restart Neovim after editing the renderer. Preview, table, and Mermaid implement
 live in the fork; BeckNvim retains configuration and editor-integration tests. In the renderer checkout,
 run `nvim --headless -u NONE -i NONE -l tests/preview/run.lua` or run `just test`.
 
+For an upstream/fork comparison using these settings without changing the plugin declaration or
+lockfile, follow the [Markdown comparison plan](markdown-comparison-plan.md).
+
 Termaid's build keeps its Python package editable in the selected checkout, using `uv` when
 available or Python's `venv` and the environment's `pip` otherwise. The Python path tries
 `python`, then `python3`, requiring Python 3.10+ with `venv` and `ensurepip`. After switching

@@ -37,19 +37,19 @@ local function map(lhs, rhs, description, extra_options)
 end
 
 local function map_windows()
-  map('<Space>wi', '<C-w>k', 'Window up')
-  map('<Space>wj', '<C-w>h', 'Window left')
-  map('<Space>wk', '<C-w>j', 'Window down')
+  map('<Space>wh', '<C-w>h', 'Window left')
+  map('<Space>wj', '<C-w>j', 'Window down')
+  map('<Space>wk', '<C-w>k', 'Window up')
   map('<Space>wl', '<C-w>l', 'Window right')
   map('<Space>wv', '<C-w>v', 'Vertical split')
   map('<Space>ws', '<C-w>s', 'Horizontal split')
   map('<Space>wq', '<C-w>q', 'Close window')
   map('<Space>wo', '<C-w>o', 'Only window')
 
-  map('<Space>ri', '<C-w>3+', 'Taller (push up)')
-  map('<Space>rk', '<C-w>3-', 'Shorter (push down)')
-  map('<Space>rj', '<C-w>5<', 'Narrower (push left)')
-  map('<Space>rl', '<C-w>5>', 'Wider (push right)')
+  map('<Space>rh', '<C-w>5<', 'Decrease window width')
+  map('<Space>rj', '<C-w>3+', 'Increase window height')
+  map('<Space>rk', '<C-w>3-', 'Decrease window height')
+  map('<Space>rl', '<C-w>5>', 'Increase window width')
   map('<Space>r=', '<C-w>=', 'Equalize windows')
 
   map('<Tab>', '<C-w>w', 'Next window')
@@ -63,6 +63,13 @@ local function map_editing_aids()
   syntax_selection.setup()
 
   map('a', '<Nop>', 'Disable append mode')
+  vim.keymap.set('i', '<C-d>', '<BS>', { desc = 'Backspace' })
+  vim.keymap.set({ 'i', 'x', 's' }, '<C-c>', '<Esc>', {
+    desc = 'Return to Normal mode',
+  })
+  vim.keymap.set('i', '<C-p>', '<C-r><C-o>"', {
+    desc = 'Paste default register at insertion point',
+  })
   vim.keymap.set('x', 'q', '<Esc>', {
     silent = true,
     desc = 'Exit Visual mode',
@@ -72,13 +79,19 @@ local function map_editing_aids()
   map('<Space>zo', 'zR', 'Open all code folds')
   map('<Space>cc', module_function('config.syntax.treesitter_context', 'go_to_nearest_context'),
     'Go to nearest enclosing context')
-  vim.keymap.set({ 'n', 'x' }, '<Space>vj', module_function('config.syntax.selection', 'select_previous'), {
+  vim.keymap.set({ 'n', 'x' }, '<C-Left>', module_function('config.syntax.selection', 'select_previous'), {
     silent = true,
     desc = 'Select current or previous source symbol',
   })
-  vim.keymap.set({ 'n', 'x' }, '<Space>vl', module_function('config.syntax.selection', 'select_next'), {
+  vim.keymap.set({ 'n', 'x' }, '<C-Right>', module_function('config.syntax.selection', 'select_next'), {
     silent = true,
     desc = 'Select current or next source symbol',
+  })
+  vim.keymap.set('i', '<C-Left>', module_function('config.syntax.selection', 'move_previous'), {
+    desc = 'Move to previous word',
+  })
+  vim.keymap.set('i', '<C-Right>', module_function('config.syntax.selection', 'move_next'), {
+    desc = 'Move to next word',
   })
 
   map('<Space>gf', module_function('config.search.navigation', 'goto_referenced_file'),
@@ -95,7 +108,7 @@ local function map_editing_aids()
     desc = 'Open selected filepath or URI',
   })
 
-  map('<F3>', '<cmd>NvimTreeToggle<CR>', 'Toggle file tree')
+  map('<Space>bt', '<cmd>NvimTreeToggle<CR>', 'Toggle file tree')
   map('<Space>h', module_function('config.ui.dashboard', 'open'), 'Open dashboard')
   map('<Space>mp', function()
     require('render-markdown').preview()
@@ -103,7 +116,22 @@ local function map_editing_aids()
   map('<Space>t', module_function('config.translation', 'open'), 'Open translation query')
 end
 
+local function map_line_movement()
+  for key, direction in pairs({ h = 'Left', j = 'Down', k = 'Up', l = 'Right' }) do
+    vim.keymap.set({ 'n', 'x', 'i' }, '<C-' .. key .. '>', '<' .. direction .. '>', {
+      desc = 'Move cursor ' .. direction:lower(),
+    })
+  end
+  vim.keymap.set({ 'n', 'x' }, '<C-a>', '0', { desc = 'Move to beginning of line' })
+  vim.keymap.set({ 'n', 'x' }, '<C-e>', '$', { desc = 'Move to end of line' })
+  vim.keymap.set('i', '<C-a>', '<Home>', { desc = 'Move to beginning of line' })
+  vim.keymap.set('i', '<C-e>', '<End>', { desc = 'Move to end of line' })
+  vim.keymap.set('c', '<C-a>', '<C-b>', { desc = 'Move to beginning of command line' })
+  vim.keymap.set('c', '<C-e>', '<End>', { desc = 'Move to end of command line' })
+end
+
 local function map_finders()
+  map('<Space>s', '/', 'Search forward in current buffer', { silent = false })
   map('<Space>ff', telescope_builtin('find_files'), 'Find files')
   map('<Space>fv', telescope_builtin_in_vertical_split('find_files'), 'Find files (vertical split)')
   map('<Space>fg', telescope_builtin('live_grep'), 'Live grep')
@@ -196,6 +224,7 @@ end
 function M.setup()
   map_windows()
   map_editing_aids()
+  map_line_movement()
   map_finders()
   map_diagnostics()
   map_lsp()

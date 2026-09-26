@@ -62,6 +62,8 @@ See [Recording the highlights](examples/README.md) for setup and individual scen
 The complete ownership and lifecycle model is documented in
 [Architecture](docs/architecture.md).
 
+Press `<Space>bt` in Normal mode to toggle the file tree.
+
 ## Installation
 
 Back up any existing `~/.config/nvim` directory, then run:

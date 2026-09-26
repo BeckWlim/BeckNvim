@@ -65,7 +65,7 @@ assert(mappings.i['<C-q>'] == close_action, 'insert-mode <C-q> did not close Tel
 assert(mappings.n['<C-q>'] == close_action, 'normal-mode <C-q> did not close Telescope')
 assert(mappings.i.q == nil, 'insert-mode q was consumed by Telescope')
 assert(mappings.n.q == false, 'normal-mode q still closes Telescope')
-assert(mappings.n['<Esc>'] == false and mappings.i['<C-c>'] == false,
+assert(mappings.n['<Esc>'] == false and mappings.i['<C-c>'][1] == '<Esc>',
   'Alternate close shortcuts remain enabled')
 assert(
   mappings.i['<Tab>'] == telescope_config.focus_preview,
