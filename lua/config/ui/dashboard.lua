@@ -509,7 +509,7 @@ local function build_render(state)
     add_line(rendered, '')
   end
 
-  local hint = 'h/l project  ·  j/k file  ·  f switch project  ·  <Enter> activate/open  ·  q close'
+  local hint = 'h/l project  ·  j/k file  ·  f switch project  ·  o/<Enter> activate/open  ·  q close'
   local hint_row = add_centered_line(rendered, truncate_display(hint, layout_width), layout_width)
   add_highlight(rendered, hint_row, 0, -1, 'TypeInformationHint')
   for _ = 1, M.bottom_padding do
@@ -815,9 +815,9 @@ local function attach_mappings(state)
       move_file(state, -1)
     end, 'Dashboard: previous file')
   end
-  map_buffer(state, '<CR>', function()
-    open_selection(state)
-  end, 'Dashboard: open selection')
+  require('config.keybindings').attach('selection', state.bufnr, {
+    select = function() open_selection(state) end,
+  })
   map_buffer(state, 'f', function()
     open_folder_picker(state)
   end, 'Dashboard: open folder')

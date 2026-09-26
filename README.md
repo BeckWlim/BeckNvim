@@ -7,10 +7,13 @@ system while keeping native Neovim and plugin behavior wherever practical.
 ## Highlights
 
 - **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
-- **Git review:** search remote branches, inspect commits, detach HEAD for deeper review, and read pull requests in floating dialogs.
+- **Git review:** search remote branches, inspect commits, search collapsed commit filenames with `/` in history, detach HEAD for deeper review, and read pull requests in floating dialogs.
 - **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, move through links without stepping through hidden URLs, and edit source in place with refreshes when external file changes are detected.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
   
+Tree panels share `o`/`Enter`, `zo`/`zc`/`za`, and `zR`/`zM`. Git history, NvimTree, and the project
+preview search collapsed paths with `/` and reveal matches temporarily. See [keybindings](docs/keybindings.md).
+
 ## See it in action
 
 **Symbol search:** use `Project Worksapce Symbol Search` to explore functions and types across Mooncake.

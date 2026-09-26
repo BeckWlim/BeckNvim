@@ -1,6 +1,6 @@
 local M = {}
 
--- Keymaps are assembled here so every normal-mode binding lives in one place.
+-- Global maps are assembled here; config.keybindings owns reusable key families.
 -- Telescope builtins are required lazily inside each callback to preserve
 -- telescope.nvim's lazy loading at startup.
 local function telescope_builtin(name)
@@ -37,19 +37,18 @@ local function map(lhs, rhs, description, extra_options)
 end
 
 local function map_windows()
-  map('<Space>wh', '<C-w>h', 'Window left')
-  map('<Space>wj', '<C-w>j', 'Window down')
-  map('<Space>wk', '<C-w>k', 'Window up')
-  map('<Space>wl', '<C-w>l', 'Window right')
+  local keybindings = require('config.keybindings')
+  keybindings.attach('directions', nil, {
+    left = '<C-w>h', down = '<C-w>j', up = '<C-w>k', right = '<C-w>l',
+  }, { prefix = '<Space>w', description = 'Window ' })
   map('<Space>wv', '<C-w>v', 'Vertical split')
   map('<Space>ws', '<C-w>s', 'Horizontal split')
   map('<Space>wq', '<C-w>q', 'Close window')
   map('<Space>wo', '<C-w>o', 'Only window')
 
-  map('<Space>rh', '<C-w>5<', 'Decrease window width')
-  map('<Space>rj', '<C-w>3+', 'Increase window height')
-  map('<Space>rk', '<C-w>3-', 'Decrease window height')
-  map('<Space>rl', '<C-w>5>', 'Increase window width')
+  keybindings.attach('directions', nil, {
+    left = '<C-w>5<', down = '<C-w>3+', up = '<C-w>3-', right = '<C-w>5>',
+  }, { prefix = '<Space>r', description = 'Resize window ' })
   map('<Space>r=', '<C-w>=', 'Equalize windows')
 
   map('<Tab>', '<C-w>w', 'Next window')
@@ -117,11 +116,9 @@ local function map_editing_aids()
 end
 
 local function map_line_movement()
-  for key, direction in pairs({ h = 'Left', j = 'Down', k = 'Up', l = 'Right' }) do
-    vim.keymap.set({ 'n', 'x', 'i' }, '<C-' .. key .. '>', '<' .. direction .. '>', {
-      desc = 'Move cursor ' .. direction:lower(),
-    })
-  end
+  require('config.keybindings').attach('directions', nil, {
+    left = '<Left>', down = '<Down>', up = '<Up>', right = '<Right>',
+  }, { key_format = '<C-%s>', mode = { 'n', 'x', 'i' }, description = 'Move cursor ' })
   vim.keymap.set({ 'n', 'x' }, '<C-a>', '0', { desc = 'Move to beginning of line' })
   vim.keymap.set({ 'n', 'x' }, '<C-e>', '$', { desc = 'Move to end of line' })
   vim.keymap.set('i', '<C-a>', '<Home>', { desc = 'Move to beginning of line' })

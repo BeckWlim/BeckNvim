@@ -276,6 +276,11 @@ local function find_mapping(context, lhs)
   end
 end
 
+for _, key in ipairs({ 'h', 'j', 'k', 'l' }) do
+  assert(find_mapping('file_history_panel', key)[3] == key, 'Git history replaced cursor movement: ' .. key)
+end
+assert(type(find_mapping('file_history_panel', 'o')[3]) == 'function', 'Git history lost its select action')
+
 for _, context in ipairs({ 'view', 'file_panel', 'file_history_panel' }) do
   assert(find_mapping(context, '<C-q>'), 'Ctrl-Q is missing from Diffview context: ' .. context)
   assert(not find_mapping(context, '<Space>o'), 'Git mode overrode the global jump-back key')

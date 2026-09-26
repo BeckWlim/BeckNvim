@@ -283,6 +283,7 @@ local function project_tree_previewer()
   local active_job
   local session
   local function cancel()
+    if session and session.tree_search then session.tree_search.cancel() end
     preview_request = nil
     session = nil
     if active_job and not active_job.is_shutdown then
@@ -312,6 +313,7 @@ local function project_tree_previewer()
         expanded = {},
         children = {},
         loading = {},
+        pending_loads = {},
         rows = {},
       }
       local filetree = require('config.ui.filetree')
@@ -380,6 +382,10 @@ local function project_tree_previewer()
         if preview_request ~= request then
           return
         end
+        if active_job then
+          session.pending_loads[#session.pending_loads + 1] = { folder_path, callback }
+          return
+        end
         session.loading[folder_path] = true
         render_tree()
         local records = {}
@@ -416,6 +422,10 @@ local function project_tree_previewer()
               if callback then
                 callback()
               end
+              if not active_job and #session.pending_loads > 0 then
+                local pending = table.remove(session.pending_loads, 1)
+                load_children(pending[1], pending[2])
+              end
             end)
           end,
         })
@@ -435,6 +445,7 @@ local function project_tree_previewer()
         if not selected_child or selected_child.kind ~= 'd' then
           return
         end
+        if session.tree_search then session.tree_search.manual() end
         local selected_path = selected_child.path
         if session.expanded[selected_path] then
           session.expanded[selected_path] = nil
@@ -449,6 +460,99 @@ local function project_tree_previewer()
         end
       end
 
+      local reveal_generation = 0
+      local function current_path()
+        local window = previewer.state.winid
+        if not window or not vim.api.nvim_win_is_valid(window) then return end
+        local child = session.rows[vim.api.nvim_win_get_cursor(window)[1]]
+        return child and child.path
+      end
+      local function reveal_path(path)
+        reveal_generation = reveal_generation + 1
+        local token = reveal_generation
+        local ancestors = {}
+        local parent = vim.fs.dirname(path)
+        while parent and parent ~= session.root and #parent > #session.root do
+          table.insert(ancestors, 1, parent)
+          parent = vim.fs.dirname(parent)
+        end
+        local function descend(index)
+          if preview_request ~= request or token ~= reveal_generation then return end
+          local directory = ancestors[index]
+          if directory then
+            session.expanded[directory] = true
+            if session.children[directory] then
+              descend(index + 1)
+            else
+              load_children(directory, function() descend(index + 1) end)
+            end
+            return
+          end
+          render_tree()
+          local window = previewer.state.winid
+          if window and vim.api.nvim_win_is_valid(window) then
+            for row, child in pairs(session.rows) do
+              if child.path == path then vim.api.nvim_win_set_cursor(window, { row, 0 }); break end
+            end
+          end
+        end
+        descend(1)
+      end
+      session.tree_search = require('config.ui.tree_search').attach(preview_buffer, {
+        root = function() return root end,
+        hidden = function() return true end,
+        current = current_path,
+        paths = function()
+          local paths = {}
+          for _, children in pairs(session.children) do
+            for _, child in ipairs(children) do paths[#paths + 1] = child.path end
+          end
+          return paths
+        end,
+        snapshot = function() return vim.deepcopy(session.expanded) end,
+        restore = function(expanded)
+          reveal_generation = reveal_generation + 1
+          session.expanded = vim.deepcopy(expanded)
+          render_tree()
+        end,
+        reveal = reveal_path,
+        cancel = function() reveal_generation = reveal_generation + 1 end,
+      })
+      local function fold(open)
+        local path = current_path()
+        if path and (open == nil or (session.expanded[path] == true) ~= open) then
+          previewer.toggle_folder(previewer.prompt_buffer)
+        end
+      end
+      local tree_adapter = {
+        before_action = session.tree_search.manual,
+        select = function()
+          local window = previewer.state.winid
+          local child = session.rows[vim.api.nvim_win_get_cursor(window)[1]]
+          if child and child.kind ~= 'd' then
+            local path = child.path
+            require('telescope.actions').close(previewer.prompt_buffer)
+            vim.cmd('edit ' .. vim.fn.fnameescape(path))
+          else
+            previewer.toggle_folder(previewer.prompt_buffer)
+          end
+        end,
+        expand = function() fold(true) end,
+        collapse = function() fold(false) end,
+        toggle = function() fold(nil) end,
+        collapse_all = function()
+          session.expanded = {}
+          render_tree()
+        end,
+        expand_all = function()
+          for path in pairs(session.children) do session.expanded[path] = true end
+          render_tree()
+        end,
+      }
+      require('config.keybindings').attach('tree', preview_buffer, tree_adapter)
+      previewer.select_node = function()
+        require('config.keybindings').dispatch(tree_adapter, 'select')
+      end
       session.prompt_buffer = previewer.prompt_buffer
       render_tree()
       load_children(session.root)
@@ -627,10 +731,8 @@ function M.open(options)
     sorter = sorters.empty(),
     attach_mappings = function(prompt_buffer, map)
       previewer.prompt_buffer = prompt_buffer
-      picker.preview_enter_action = function(active_prompt_buffer)
-        if previewer.toggle_folder then
-          previewer.toggle_folder(active_prompt_buffer)
-        end
+      picker.preview_enter_action = function()
+        if previewer.select_node then previewer.select_node() end
       end
       actions.select_default:replace(function()
         local selected_entry = action_state.get_selected_entry()

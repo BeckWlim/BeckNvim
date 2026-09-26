@@ -192,22 +192,84 @@ end
 function M.on_attach(bufnr)
   local api = require('nvim-tree.api')
   api.map.on_attach.default(bufnr)
+  local function displayed_node(node)
+    -- A grouped directory's final component owns its visible open state.
+    local current = node
+    while current and current.group_next do current = current.group_next end
+    return current
+  end
+  local function root_node()
+    local root = api.tree.get_node_under_cursor()
+    while root and root.parent do root = root.parent end
+    return root
+  end
+  local function nodes()
+    local root = root_node()
+    local descendants = {}
+    local function visit(node)
+      local displayed = displayed_node(node)
+      for _, child in ipairs(displayed.nodes or {}) do visit(child) end
+      descendants[#descendants + 1] = displayed
+    end
+    if root then
+      for _, child in ipairs(root.nodes or {}) do visit(child) end
+    end
+    return descendants
+  end
+  local function set_expanded(node, expanded)
+    if node.nodes and node.open ~= expanded then api.node.open.edit(node) end
+  end
+  local search = require('config.ui.tree_search').attach(bufnr, {
+    root = current_tree_root,
+    current = function()
+      local node = api.tree.get_node_under_cursor()
+      return node and node.absolute_path
+    end,
+    paths = function()
+      local paths = {}
+      for _, node in ipairs(nodes()) do
+        if not node.hidden then paths[#paths + 1] = node.absolute_path end
+      end
+      return paths
+    end,
+    snapshot = function()
+      local opened = {}
+      for _, node in ipairs(nodes()) do
+        if node.open then opened[node.absolute_path] = true end
+      end
+      return opened
+    end,
+    restore = function(opened)
+      -- Child-first traversal keeps parent folds stable during restoration.
+      for _, node in ipairs(nodes()) do set_expanded(node, opened[node.absolute_path] == true) end
+    end,
+    reveal = function(path)
+      api.tree.find_file({ buf = path, open = false, focus = true })
+    end,
+  })
+  local function folder_action(open)
+    local node = displayed_node(api.tree.get_node_under_cursor())
+    if node and node.nodes and (open == nil or node.open ~= open) then
+      api.node.open.edit(node)
+    end
+  end
   pcall(vim.keymap.del, 'n', '<Tab>', { buffer = bufnr })
   pcall(vim.keymap.del, 'n', '<Esc>', { buffer = bufnr })
   pcall(vim.keymap.del, 'n', '<C-[>', { buffer = bufnr })
   pcall(vim.keymap.del, 'n', '-', { buffer = bufnr })
   pcall(vim.keymap.del, 'n', '<C-]>', { buffer = bufnr })
 
-  vim.keymap.set('n', '<CR>', function()
-    local selected_node = api.tree.get_node_under_cursor()
-    if selected_node and selected_node.name ~= '..' then
-      api.node.open.edit(selected_node)
-    end
-  end, {
-    buffer = bufnr,
-    nowait = true,
-    silent = true,
-    desc = 'nvim-tree: Open except parent entry',
+  require('config.keybindings').attach('tree', bufnr, {
+    before_action = search.manual,
+    expand = function() folder_action(true) end,
+    collapse = function() folder_action(false) end,
+    toggle = function() folder_action(nil) end,
+    expand_all = function() api.tree.expand_all(root_node()) end,
+    collapse_all = function() api.tree.collapse_all() end,
+    select = function()
+      local selected_node = api.tree.get_node_under_cursor()
+      if selected_node and selected_node.name ~= '..' then api.node.open.edit(selected_node) end
+    end,
   })
   vim.keymap.set('n', 'gh', function()
     local tree_root = current_tree_root()

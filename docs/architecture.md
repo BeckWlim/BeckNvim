@@ -866,3 +866,26 @@ nvim --headless -u NONE -i NONE -l tests/run.lua
 Use the repository `.luarc.json` for Lua Language Server checks. Startup-related changes also
 receive a full headless startup check, keymap assertions, and an end-to-end query in a representative
 project.
+
+`config.git.footer_search` owns footer-local `/`, `?`, and `n`/`N` search sessions over the retained
+history model. It reuses the bounded footer loader for pending children and Diffview native fold
+and highlight methods to reveal matches without opening files. Request tokens reject superseded
+search callbacks; incremental previews use already loaded metadata.
+The search session owns only its temporary expansion, collapsing it when the match changes commits
+and restoring the prior expansion on cancellation; existing open commits retain their fold state.
+
+`config.keybindings` owns reusable semantic key families. It composes a family with a prefix or
+key format and binds feature-provided handlers, or returns mappings for plugin setup. The direction
+family supplies `h/j/k/l` to window movement, resizing, cursor movement, and Telescope; the tree
+family supplies selection, folds, and search. It performs no node traversal, rendering, or I/O.
+The shared selection family supplies `o`/`Enter` to the homepage and tree panels; dashboard activation
+and file opening remain owned by `config.ui.dashboard`.
+`config.ui.filetree`, `config.ui.folder_picker`, and `config.git.diffview` adapt these actions to
+native feature behavior. Flat LSP/type-hierarchy result pickers retain their existing interactions;
+source folds retain Neovim's native `z` behavior.
+
+`config.ui.tree_search` owns bounded filesystem discovery, pattern matching, and temporary reveal
+sessions for filesystem panels. It cancels child processes on leave, rejects stale root/selection
+callbacks, and asks adapters to snapshot, restore, and reveal paths. Git reuses the matcher and key
+family while retaining its existing footer-loader lifecycle. NvimTree renders through its public
+API; the project preview renders through its existing tree renderer.

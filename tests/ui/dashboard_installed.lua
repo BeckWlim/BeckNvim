@@ -2,10 +2,14 @@
 -- nvim --headless -u NONE -i NONE -l tests/ui/dashboard_installed.lua
 local directory = vim.fn.tempname()
 vim.fn.mkdir(directory, 'p')
+local project = directory .. '/project'
+local recent_file = project .. '/sample.txt'
+vim.fn.mkdir(project .. '/.git', 'p')
+vim.fn.writefile({ 'homepage selection' }, recent_file)
 local child = vim.fn.jobstart({ vim.v.progpath, '--embed', '-n', '-u', 'init.lua', '-i', 'NONE' },
   { rpc = true, env = { XDG_STATE_HOME = directory } })
-local function evaluate(source)
-  return vim.rpcrequest(child, 'nvim_exec_lua', source, {})
+local function evaluate(source, arguments)
+  return vim.rpcrequest(child, 'nvim_exec_lua', source, arguments or {})
 end
 local function check()
   vim.rpcrequest(child, 'nvim_ui_attach', 120, 40, { rgb = true })
@@ -20,6 +24,18 @@ local function check()
     assert(not vim.api.nvim_get_mode().blocking, 'Dashboard startup opened a blocking prompt')
     assert(not vim.wo.number and not vim.wo.relativenumber, 'Startup dashboard retained an editor gutter')
   ]])
+  evaluate([[
+    local root, file = ...
+    local dashboard = require('config.ui.dashboard')
+    local buffer = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_win_set_buf(0, buffer)
+    dashboard.attach(buffer, vim.api.nvim_get_current_win(),
+      dashboard.collect({ file }, root), { root = root })
+  ]], { project, recent_file })
+  vim.rpcrequest(child, 'nvim_input', 'jo')
+  assert(vim.wait(3000, function()
+    return evaluate([[ return vim.api.nvim_buf_get_name(0) ]]) == recent_file
+  end, 20), 'Homepage o did not open the selected recent file')
 end
 local passed, failure = xpcall(check, debug.traceback)
 vim.fn.jobstop(child)

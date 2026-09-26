@@ -253,6 +253,16 @@ function M.setup()
   local actions = require('telescope.actions')
   local workspace_symbols = require('config.search.workspace_symbols')
   local contextual_previewer = require('config.search.grep_preview').new
+  local direction_mappings = {}
+  for _, mapping in ipairs(require('config.keybindings').mappings('directions', {
+    left = '<Left>',
+    right = '<Right>',
+    down = function(buffer) actions.move_selection_next(buffer) end,
+    up = function(buffer) actions.move_selection_previous(buffer) end,
+  }, { key_format = '<C-%s>' })) do
+    direction_mappings[mapping[2]] = type(mapping[3]) == 'string'
+      and { mapping[3], type = 'command' } or mapping[3]
+  end
   local pane_group = vim.api.nvim_create_augroup('telescope_pane_policy', { clear = true })
   vim.api.nvim_create_autocmd('User', {
     group = pane_group,
@@ -304,18 +314,14 @@ function M.setup()
         },
       },
       mappings = {
-        i = {
+        i = vim.tbl_extend('force', direction_mappings, {
           [float.input_close_key] = actions.close,
           ['<C-c>'] = { '<Esc>', type = 'command' },
           ['<C-d>'] = { '<BS>', type = 'command' },
-          ['<C-h>'] = { '<Left>', type = 'command' },
-          ['<C-j>'] = actions.move_selection_next,
-          ['<C-k>'] = actions.move_selection_previous,
-          ['<C-l>'] = { '<Right>', type = 'command' },
           ['<C-Left>'] = { '<C-Left>', type = 'command' },
           ['<C-Right>'] = { '<C-Right>', type = 'command' },
           ['<Tab>'] = M.focus_preview,
-        },
+        }),
         n = {
           [float.input_close_key] = actions.close,
           [float.normal_close_key] = false,

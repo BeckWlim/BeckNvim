@@ -2378,6 +2378,9 @@ local function attach_history_footer_tracking(view)
     if not panel_buffer or not vim.api.nvim_buf_is_valid(panel_buffer) then
       return
     end
+    require('config.git.footer_search').attach(view, function(entry)
+      restore_history_cursor(history_panel, entry)
+    end)
     -- Diffview's native fold actions redraw the history panel by replacing its
     -- buffer lines. That invalidates our virtual branch separators, but does
     -- not emit a Git view event. Observe those redraws at the buffer boundary
@@ -2488,6 +2491,25 @@ function M.setup()
     return
   end
   state.configured = true
+  local native_actions = require('diffview.actions')
+  local tree_actions = require('config.keybindings')
+  local fold_actions = {
+    expand = native_actions.open_fold,
+    collapse = native_actions.close_fold,
+    toggle = native_actions.toggle_fold,
+    expand_all = native_actions.open_all_folds,
+    collapse_all = native_actions.close_all_folds,
+  }
+  local tree_mappings = tree_actions.mappings('tree', vim.tbl_extend('force', fold_actions, {
+    before_action = function()
+      local view = active_view()
+      if view and view.git_search_manual_expansion then view.git_search_manual_expansion() end
+    end,
+    select = select_history_entry,
+  }))
+  vim.list_extend(tree_mappings, tree_actions.mappings('directions', {
+    left = 'h', down = 'j', up = 'k', right = 'l',
+  }, { description = 'Move cursor ' }))
   require('diffview').setup({
     enhanced_diff_hl = true,
     view = {
@@ -2513,18 +2535,17 @@ function M.setup()
         search_mapping(),
         ignored_search_repeat_mapping(),
       },
-      file_panel = {
+      file_panel = vim.list_extend({
         close_mapping(),
         next_window_mapping(),
         previous_window_mapping(),
         commit_list_mapping(),
         search_mapping(),
         ignored_search_repeat_mapping(),
-      },
-      file_history_panel = {
-        history_entry_mapping('<cr>'),
-        history_entry_mapping('o'),
-        history_entry_mapping('l'),
+      }, tree_actions.mappings('tree', vim.tbl_extend('force', fold_actions, {
+        select = native_actions.select_entry,
+      }))),
+      file_history_panel = vim.list_extend({
         history_entry_mapping('<2-LeftMouse>'),
         checkout_commit_mapping(),
         commit_details_mapping(),
@@ -2534,7 +2555,7 @@ function M.setup()
         commit_list_mapping(),
         search_mapping(),
         ignored_search_repeat_mapping(),
-      },
+      }, tree_mappings),
       option_panel = { close_mapping() },
       help_panel = { close_mapping() },
     },

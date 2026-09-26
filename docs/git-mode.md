@@ -5,7 +5,8 @@ search or issue-detail layers.
 
 Use `<Space>df` for file history, `<Space>ds` for symbol history, `<Space>dr` for repository history,
 and `<Space>de` for branch/commit/issue search. Diffview owns footer rendering, commit folding, and
-file selection. BeckNvim adds bounded asynchronous data loading and lifecycle safety, not competing
+file selection. In the history panel, `hjkl` move the cursor; `o` (or `Enter`) toggles a commit
+or opens a child file. BeckNvim adds bounded asynchronous data loading and lifecycle safety, not competing
 highlight, cursor, or fold behavior.
 
 Only one root Git history can be active. The history entry keys refuse to mount another Git pane
@@ -25,3 +26,10 @@ when Git mode was opened from the intentionally gutterless homepage.
 
 See [Default keybindings](keybindings.md) for controls and [Architecture](architecture.md) for
 ownership and state-machine details.
+
+In the history footer, `/` and `?` search commit metadata and changed paths, including collapsed
+files and rename aliases. `n`/`N` repeat the search; matching commits expand temporarily without
+opening a diff. Moving to another commit match collapses the previous search-opened commit;
+commits already expanded before search stay open. Cancelling a search restores its previous
+temporary expansion. Search covers the retained history window and waits for pending file details on
+confirmation. Incremental search previews files whose details have already loaded.

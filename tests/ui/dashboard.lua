@@ -217,11 +217,13 @@ end
 local next_project = buffer_mapping('l')
 local next_file = buffer_mapping('j')
 local open_selection = buffer_mapping('<CR>')
+local open_with_o = buffer_mapping('o')
 local open_folder = buffer_mapping('f')
 local close = buffer_mapping('q')
 assert(type(next_project.callback) == 'function', 'dashboard has no project drawer navigation')
 assert(type(next_file.callback) == 'function', 'dashboard has no recent-file navigation')
 assert(type(open_selection.callback) == 'function', 'dashboard has no direct open action')
+assert(type(open_with_o.callback) == 'function', 'dashboard has no shared o selection action')
 assert(type(open_folder.callback) == 'function', 'dashboard has no open-folder action')
 assert(type(close.callback) == 'function', 'dashboard has no close action')
 
@@ -258,6 +260,11 @@ open_selection.callback()
 assert(
   opened_commands[#opened_commands] == 'edit ' .. vim.fn.fnameescape(third_file),
   'dashboard recent file did not open directly'
+)
+open_with_o.callback()
+assert(
+  opened_commands[#opened_commands] == 'edit ' .. vim.fn.fnameescape(third_file),
+  'dashboard o did not open the selected recent file'
 )
 
 local activated_root = dashboard.activate_project(first_root)

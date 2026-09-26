@@ -8,6 +8,7 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 | --- | --- |
 | `<Space>bt` | Toggle the file tree |
 | `<Space>h` | Open the project dashboard |
+| `o` / `Enter` on the homepage | Open the selected file or activate the selected project |
 | `<Space>s` | Search forward in the current buffer (`/`); `n` / `N` repeats forward/backward |
 | `<Space>ff` | Find files |
 | `<Space>fg` | Search project text |
@@ -20,6 +21,28 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 Jump history starts fresh in each Neovim instance. Recent files, saved marks, registers, and
 search history remain available across restarts through ShaDa.
 
+## Tree panels
+
+Git history, Diffview's file panel, NvimTree, and the project picker preview share these actions:
+
+| Key | Action |
+| --- | --- |
+| `o` / `Enter` | Toggle a parent or open a file |
+| `zo` / `zc` / `za` | Expand / collapse / toggle the current parent |
+| `zR` / `zM` | Expand / collapse all available parents |
+
+Git history, NvimTree, and the focused project preview also share `/`, `?`, and `n`/`N` for
+searching collapsed paths. Search-opened parents collapse when moving to a different match;
+manually expanded parents stay open. Cancelling restores the previous expansion.
+Filesystem discovery uses ripgrep, respects ignore files, skips `.git`, and caps discovery at
+5,000 files. NvimTree search omits hidden files; the project preview includes them. Incremental
+search uses known paths; confirming searches undiscovered paths asynchronously. A new search
+refreshes discovery; `n`/`N` reuse the results.
+
+Expansion stays bounded by the owning panel: Git uses retained commits, NvimTree its native
+folder-discovery limit, and the project preview folders whose children have already loaded.
+The project picker's main prompt continues to select projects; these tree keys apply in its preview.
+
 ## Git Mode
 
 The history entry keys are editor entry points and do not mount a second Git pane while Git mode is
@@ -31,7 +54,8 @@ already active.
 | `<Space>df` | Current-file history with rename tracking |
 | `<Space>ds` | Current-symbol line history |
 | `<Space>dr` | Bounded repository history |
-| `<Enter>` | Native Diffview expand/collapse or child-file open |
+| `h` / `j` / `k` / `l` | Move the history cursor left / down / up / right |
+| `o` / `<Enter>` | Native Diffview expand/collapse or child-file open |
 | `<Space>dn` | Open native commit details |
 | `<Space>dm` | Guarded checkout of the selected commit |
 | `<Space>dp` | Collapse or restore the footer |
