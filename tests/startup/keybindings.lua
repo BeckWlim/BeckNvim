@@ -14,7 +14,6 @@ local replaced_modules = {
   'config.search.lsp_locations',
   'config.git',
   'config.search.navigation',
-  'config.syntax.selection',
   'config.translation',
   'config.syntax.treesitter_context',
   'config.type_hierarchy',
@@ -59,13 +58,6 @@ package.loaded['config.search.navigation'] = {
   goto_referenced_file = no_op,
   goto_referenced_file_in_split = no_op,
 }
-package.loaded['config.syntax.selection'] = {
-  move_next = no_op,
-  move_previous = no_op,
-  select_next = no_op,
-  select_previous = no_op,
-  setup = no_op,
-}
 package.loaded['config.translation'] = { open = no_op }
 package.loaded['config.syntax.treesitter_context'] = { go_to_nearest_context = no_op }
 package.loaded['config.type_hierarchy'] = {
@@ -92,8 +84,8 @@ local expected_mappings = {
   '<Space>wv', '<Space>ws', '<Space>wq', '<Space>wo',
   '<Space>rh', '<Space>rj', '<Space>rk', '<Space>rl', '<Space>r=',
   '<Tab>', '<S-Tab>', '<Space>o', '<Space>p',
-  'a', '<Space>zz', '<Space>zc', '<Space>zo', '<Space>cc',
-  '<C-a>', '<C-e>', '<C-Left>', '<C-Right>', '<Space>s',
+  '<Space>zz', '<Space>zc', '<Space>zo', '<Space>cc',
+  '<C-a>', '<C-e>', '<Space>s',
   '<C-h>', '<C-j>', '<C-k>', '<C-l>',
   '<Space>gf', '<Space>gv', '<Space>gx', 'gx',
   '<Space>bt', '<Space>h', '<Space>mp', '<Space>t',
@@ -132,13 +124,13 @@ assert(
 )
 assert(visual_quit_mapping.desc == 'Exit Visual mode', 'Visual-mode q has no description')
 
-for _, lhs in ipairs({ '<C-Left>', '<C-Right>' }) do
-  local mapping = vim.fn.maparg(lhs, 'x', false, true)
-  assert(
-    type(mapping) == 'table' and mapping.lhs:lower() == lhs:lower() and mapping.callback,
-    'Expected semantic visual mapping is missing: ' .. lhs
-  )
-  assert(mapping.desc and mapping.desc ~= '', 'Visual mapping has no description: ' .. lhs)
+for _, lhs in ipairs({ '<C-Left>', '<C-Right>', '<C-d>', 'w', 'b' }) do
+  for _, mode in ipairs({ 'n', 'x', 'i' }) do
+    assert(
+      vim.tbl_isempty(vim.fn.maparg(lhs, mode, false, true)),
+      'Native word movement is overridden: ' .. mode .. ' ' .. lhs
+    )
+  end
 end
 for _, lhs in ipairs({ '<Space>vj', '<Space>vl', '<Space>vs', '<Space>vc', '<Space>vS' }) do
   for _, mode in ipairs({ 'n', 'x' }) do
@@ -156,7 +148,7 @@ local jump_back_mapping = vim.fn.maparg('<Space>o', 'n', false, true)
 assert(jump_back_mapping.rhs == '<C-o>', 'Space-o is not a pure jump-back mapping')
 
 local append_mapping = vim.fn.maparg('a', 'n', false, true)
-assert(append_mapping.rhs == '<Nop>', 'Normal-mode a still enters append mode')
+assert(vim.tbl_isempty(append_mapping), 'Native Normal-mode append is overridden')
 
 local function press(keys)
   vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(keys, true, false, true), 'xt', false)
@@ -200,17 +192,14 @@ for _, lhs in ipairs(expected_mappings) do
 end
 vim.keymap.del('x', 'gx')
 vim.keymap.del('x', 'q')
-for _, lhs in ipairs({ '<C-Left>', '<C-Right>', '<C-a>', '<C-e>' }) do
+for _, lhs in ipairs({ '<C-a>', '<C-e>' }) do
   vim.keymap.del('x', lhs)
 end
 for _, mode in ipairs({ 'i', 'c' }) do
   vim.keymap.del(mode, '<C-a>')
   vim.keymap.del(mode, '<C-e>')
 end
-vim.keymap.del('i', '<C-Left>')
-vim.keymap.del('i', '<C-Right>')
 vim.keymap.del('i', '<C-p>')
-vim.keymap.del('i', '<C-d>')
 for _, mode in ipairs({ 'i', 'x', 's' }) do
   vim.keymap.del(mode, '<C-c>')
 end

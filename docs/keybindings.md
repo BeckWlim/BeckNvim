@@ -69,7 +69,6 @@ already active.
 | `gr` / `gI` | Find references/go to implementation |
 | `<Space>rn` | Rename symbol |
 | `<Space>cc` | Walk outward through syntax context |
-| `<C-Left>` / `<C-Right>` | Select the identifier at the cursor; repeat to select the previous/next identifier in Normal/Visual mode |
 | `gx` | Open a local path or URI; GitHub records prefer the editor detail float |
 | `<Space>mp` | Switch the current pane between rendered Markdown and editable source |
 | `<Space>t` | Open Chinese/English translation |
@@ -117,25 +116,19 @@ Resize keys change the current window's size; the border that moves depends on t
 | --- | --- |
 | `<C-a>` / `<C-e>` | Move to beginning/end of line in Normal, Visual, Insert, and command-line modes, including Telescope input |
 | `<C-h>` / `<C-j>` / `<C-k>` / `<C-l>` | Move left/down/up/right in Normal, Visual, and Insert modes |
-| `<C-Left>` / `<C-Right>` | Move to previous/next word start in Insert mode |
-| `<C-p>` | Paste the default register at the insertion point in Insert mode; dismiss completion first |
-| `<C-d>` | Backspace in Insert mode, including Telescope input; dismiss completion first |
+| `<C-p>` | Paste the system clipboard at the insertion point in Insert mode; dismiss completion first |
 | `<C-c>` | Return from Insert, Visual, or Select mode to Normal mode using normal Escape cleanup; keeps Telescope open |
 | `q` | Exit Visual mode; retains macro recording in Normal mode |
-| `a` | Disabled in Normal mode; use `i` or `A` to enter Insert mode |
+| `a` | Enter Insert mode after the cursor (native append) |
 
 `<C-a>` goes before indentation. Visual mode extends the selection; Insert mode dismisses
 completion before moving. These replace native number increment (`<C-a>`) and scroll-down
 (`<C-e>`) shortcuts in Normal/Visual mode.
-Symbol selection skips whitespace and punctuation and requires a Treesitter parser. In Insert mode
-`<C-Left>` / `<C-Right>` move to the previous/next
-word start without leaving Insert mode, dismissing completion first. This uses `iskeyword` word
-boundaries, works without a parser, crosses lines, and stops at buffer boundaries. Picker-local
-bindings use native word movement. In Telescope input, `<C-h>` / `<C-l>` move within the query
+In Telescope input, `<C-h>` / `<C-l>` move within the query
 and `<C-j>` / `<C-k>` move down/up through results, matching the arrow keys.
 
-Insert-mode `<C-p>` uses the same default register as Normal-mode `p` (the system clipboard
-with `unnamedplus`). It preserves pasted indentation and keeps Insert mode active. It replaces
+Insert-mode `<C-p>` explicitly reads the system clipboard (`+` register), matching Normal-mode `p`
+with the configured `unnamedplus`. It preserves pasted indentation and keeps Insert mode active. It replaces
 previous-completion selection; use the popup's arrow keys to select completion items. Telescope
 keeps its local `<C-p>` binding for the previous result.
 

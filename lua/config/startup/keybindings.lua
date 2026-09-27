@@ -58,16 +58,11 @@ local function map_windows()
 end
 
 local function map_editing_aids()
-  local syntax_selection = require('config.syntax.selection')
-  syntax_selection.setup()
-
-  map('a', '<Nop>', 'Disable append mode')
-  vim.keymap.set('i', '<C-d>', '<BS>', { desc = 'Backspace' })
   vim.keymap.set({ 'i', 'x', 's' }, '<C-c>', '<Esc>', {
     desc = 'Return to Normal mode',
   })
-  vim.keymap.set('i', '<C-p>', '<C-r><C-o>"', {
-    desc = 'Paste default register at insertion point',
+  vim.keymap.set('i', '<C-p>', '<C-r><C-o>+', {
+    desc = 'Paste system clipboard at insertion point',
   })
   vim.keymap.set('x', 'q', '<Esc>', {
     silent = true,
@@ -78,21 +73,6 @@ local function map_editing_aids()
   map('<Space>zo', 'zR', 'Open all code folds')
   map('<Space>cc', module_function('config.syntax.treesitter_context', 'go_to_nearest_context'),
     'Go to nearest enclosing context')
-  vim.keymap.set({ 'n', 'x' }, '<C-Left>', module_function('config.syntax.selection', 'select_previous'), {
-    silent = true,
-    desc = 'Select current or previous source symbol',
-  })
-  vim.keymap.set({ 'n', 'x' }, '<C-Right>', module_function('config.syntax.selection', 'select_next'), {
-    silent = true,
-    desc = 'Select current or next source symbol',
-  })
-  vim.keymap.set('i', '<C-Left>', module_function('config.syntax.selection', 'move_previous'), {
-    desc = 'Move to previous word',
-  })
-  vim.keymap.set('i', '<C-Right>', module_function('config.syntax.selection', 'move_next'), {
-    desc = 'Move to next word',
-  })
-
   map('<Space>gf', module_function('config.search.navigation', 'goto_referenced_file'),
     'Go to referenced file')
   map('<Space>gv', function()

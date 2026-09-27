@@ -317,7 +317,6 @@ function M.setup()
         i = vim.tbl_extend('force', direction_mappings, {
           [float.input_close_key] = actions.close,
           ['<C-c>'] = { '<Esc>', type = 'command' },
-          ['<C-d>'] = { '<BS>', type = 'command' },
           ['<C-Left>'] = { '<C-Left>', type = 'command' },
           ['<C-Right>'] = { '<C-Right>', type = 'command' },
           ['<Tab>'] = M.focus_preview,

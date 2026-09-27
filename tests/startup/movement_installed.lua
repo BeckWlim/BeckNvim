@@ -18,6 +18,22 @@ local function check()
   vim.rpcrequest(child, 'nvim_ui_attach', 100, 30, { rgb = true })
   evaluate([[
     vim.cmd('enew!')
+    local lines = {}
+    for index = 1, 200 do lines[index] = 'line ' .. index end
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+    vim.api.nvim_win_set_cursor(0, { 80, 0 })
+    vim.cmd('normal! zz')
+    vim.wo.scroll = 0
+    vim.g.half_page_distance = vim.wo.scroll
+  ]])
+  input('<C-d>')
+  wait_for([[return vim.api.nvim_win_get_cursor(0)[1] == 80 + vim.g.half_page_distance]],
+    'Normal Ctrl-d did not move down half a page')
+  input('<C-u>')
+  wait_for([[return vim.api.nvim_win_get_cursor(0)[1] == 80]],
+    'Normal Ctrl-u did not move up half a page')
+  evaluate([[
+    vim.cmd('enew!')
     vim.api.nvim_buf_set_lines(0, 0, -1, false, { '  alpha tail' })
     vim.api.nvim_win_set_cursor(0, { 1, 7 })
   ]])
@@ -49,7 +65,7 @@ local function check()
     })
     cmp.setup.buffer({ completion = { autocomplete = false }, sources = { { name = 'movement_test' } } })
   ]])
-  for _, shortcut in ipairs({ '<C-a>', '<C-e>', '<C-Left>', '<C-Right>', '<C-h>', '<C-l>' }) do
+  for _, shortcut in ipairs({ '<C-a>', '<C-e>', '<C-h>', '<C-l>' }) do
     evaluate([[
       vim.api.nvim_win_set_cursor(0, { 1, 7 })
       require('cmp').complete()
@@ -57,7 +73,7 @@ local function check()
     wait_for([[return require('cmp').visible()]], 'Completion popup did not open')
     input(shortcut)
     local column = ({
-      ['<C-a>'] = 0, ['<C-e>'] = 12, ['<C-Left>'] = 2, ['<C-Right>'] = 8,
+      ['<C-a>'] = 0, ['<C-e>'] = 12,
       ['<C-h>'] = 6, ['<C-l>'] = 8,
     })[shortcut]
     wait_for(('return not require("cmp").visible() and vim.api.nvim_win_get_cursor(0)[2] == %d'):format(column),
@@ -65,20 +81,19 @@ local function check()
     assert(evaluate([[return vim.api.nvim_get_current_line()]]) == '  alpha tail',
       'Completion movement changed buffer text')
   end
+  evaluate([[vim.opt.clipboard = '' ]])
   evaluate([[
-    vim.opt.clipboard = ''
-    vim.api.nvim_win_set_cursor(0, { 1, 7 })
-    require('cmp').complete()
-  ]])
-  wait_for([[return require('cmp').visible()]], 'Completion popup did not open for Backspace')
-  input('<C-d>')
-  wait_for([[return vim.api.nvim_get_mode().mode == 'i' and not require('cmp').visible()
-    and vim.api.nvim_get_current_line() == '  alph tail']],
-    'Ctrl-d did not delete the preceding character with completion open')
-  input('a')
-  wait_for([[return vim.api.nvim_get_current_line() == '  alpha tail']], 'Typing after Backspace failed')
-  evaluate([[
-    vim.fn.setreg('"', 'X\n  Y', 'v')
+    vim.fn.setreg('"', 'internal register must not be pasted', 'v')
+    vim.g.clipboard = {
+      name = 'movement-test-clipboard',
+      copy = { ['+'] = function() end, ['*'] = function() end },
+      paste = {
+        ['+'] = function() return { { 'X', '  Y' }, 'v' } end,
+        ['*'] = function() return { { 'primary selection must not be pasted' }, 'v' } end,
+      },
+      cache_enabled = 0,
+    }
+    vim.fn['provider#clipboard#Executable']()
     vim.api.nvim_win_set_cursor(0, { 1, 7 })
     require('cmp').complete()
   ]])
@@ -98,7 +113,7 @@ local function check()
   ]])
   wait_for([[return vim.bo.filetype == 'TelescopePrompt' and vim.api.nvim_get_mode().mode == 'i']],
     'Telescope prompt did not open')
-  input('alphaz<C-d><C-a>X<C-e>Y')
+  input('alphaz<BS><C-a>X<C-e>Y')
   wait_for([[
     local picker = require('telescope.actions.state').get_current_picker(vim.api.nvim_get_current_buf())
     return picker:_get_prompt() == 'XalphaY'
@@ -116,47 +131,10 @@ local function check()
   input('<Esc>:let g:movement_probe = "mid<C-a><C-e>dle"<CR>')
   wait_for([[return vim.g.movement_probe == 'middle']], 'Command-line movement failed')
   evaluate([[
-    vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'local alpha = beta + gamma' })
-    vim.bo.filetype = 'lua'
-    vim.api.nvim_win_set_cursor(0, { 1, 6 })
-  ]])
-  input('<C-Right>')
-  wait_for([[return vim.api.nvim_get_mode().mode == 'v' and vim.api.nvim_win_get_cursor(0)[2] == 10]],
-    'Ctrl-Right did not select the current identifier')
-  input('<C-Right>')
-  wait_for([[return vim.fn.getpos('v')[3] == 15 and vim.api.nvim_win_get_cursor(0)[2] == 17]],
-    'Ctrl-Right did not skip whitespace and punctuation to the next identifier')
-  input('<C-Left>')
-  wait_for([[return vim.fn.getpos('v')[3] == 7 and vim.api.nvim_win_get_cursor(0)[2] == 10]],
-    'Ctrl-Left did not return to the previous identifier')
-  input('<Esc>i<C-Left>')
-  wait_for([[return vim.api.nvim_get_mode().mode == 'i' and vim.api.nvim_win_get_cursor(0)[2] == 6]],
-    'Insert Ctrl-Left did not return to the current word start')
-  input('<C-Right>X')
-  wait_for([[return vim.api.nvim_get_mode().mode == 'i'
-    and vim.api.nvim_get_current_line() == 'local alpha = Xbeta + gamma']],
-    'Insert Ctrl-Right did not skip punctuation or replaced selected text')
-  evaluate([[
-    vim.bo.filetype = ''
-    vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'α_one,   β_two', '', '  final' })
-    vim.api.nvim_win_set_cursor(0, { 1, 0 })
-    vim.fn.setreg('/', 'preserved_search')
-  ]])
-  input('<C-Left><C-Right>')
-  wait_for([[return vim.api.nvim_win_get_cursor(0)[1] == 1 and vim.api.nvim_win_get_cursor(0)[2] == 10]],
-    'Insert movement failed on Unicode words without a parser')
-  input('<C-Right><C-Right>')
-  wait_for([[return vim.api.nvim_win_get_cursor(0)[1] == 3 and vim.api.nvim_win_get_cursor(0)[2] == 2]],
-    'Insert movement did not cross blank lines or stop at the buffer end')
-  input('<C-Left>')
-  wait_for([[return vim.api.nvim_win_get_cursor(0)[1] == 1 and vim.api.nvim_win_get_cursor(0)[2] == 10]],
-    'Insert movement did not return across blank lines')
-  assert(evaluate([[return vim.fn.getreg('/')]]) == 'preserved_search', 'Movement changed search history')
-  evaluate([[
     vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'first', 'second', 'third' })
     vim.api.nvim_win_set_cursor(0, { 2, 2 })
   ]])
-  input('<C-h><C-k>')
+  input('i<C-h><C-k>')
   wait_for([[return vim.api.nvim_get_mode().mode == 'i'
     and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 1 })]],
     'Insert Ctrl-h/k did not move left/up')

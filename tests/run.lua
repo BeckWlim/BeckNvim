@@ -36,7 +36,6 @@ for _, test_file in ipairs({
   'tests/syntax/highlights.lua',
   'tests/syntax/markdown/configuration.lua',
   'tests/syntax/markdown/links.lua',
-  'tests/syntax/selection.lua',
   'tests/syntax/treesitter.lua',
   'tests/syntax/treesitter_context.lua',
   'tests/syntax/visuals.lua',

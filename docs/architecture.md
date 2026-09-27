@@ -20,7 +20,7 @@ lua/
 │   ├── lsp/                      init.lua (servers), completion.lua, type_information.lua,
 │   │                             diagnostics.lua, detail_window.lua
 │   ├── syntax/                   treesitter.lua (parser bootstrap), treesitter_context.lua,
-│   │                             selection.lua, visuals.lua, highlights.lua, folds.lua
+│   │                             visuals.lua, highlights.lua, folds.lua
 │   ├── type_hierarchy/           Recursive class and implementation pickers
 │   ├── translation/              Translation query UI and backend providers
 │   ├── python/                   Python environment and hierarchy indexing
@@ -69,7 +69,7 @@ lua/
 | `config/lsp/type_information.lua` | Toggleable hover inference and type-definition preview for LSP languages |
 | `config/lsp/diagnostics.lua` | Diagnostic float and document diagnostic picker wiring |
 | `config/lsp/detail_window.lua` | Shared focus, same-key close, and copy behavior for detail windows |
-| `config/syntax/` | Parser installation and highlighting bootstrap (`treesitter.lua`), identifier selection and navigation (`selection.lua`), Treesitter pinned context, scope and rainbow visuals, highlight policy, and folds |
+| `config/syntax/` | Parser installation and highlighting bootstrap (`treesitter.lua`), Treesitter pinned context, scope and rainbow visuals, highlight policy, and folds |
 | `config/type_hierarchy/` | Recursive class and implementation pickers: `init.lua` dispatches by filetype, `python.lua` owns the indexed AST paths and Python source parsing, `lsp.lua` owns the live-request paths, `core.lua` owns shared picker plumbing and walk bookkeeping |
 | `config/translation/` | Translation query window (`init.lua`) plus backend construction and response parsing (`providers.lua`) |
 | `config/python/environment.lua` | Python interpreter and environment resolution |
