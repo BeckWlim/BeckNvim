@@ -199,7 +199,10 @@ for _, mode in ipairs({ 'i', 'c' }) do
   vim.keymap.del(mode, '<C-a>')
   vim.keymap.del(mode, '<C-e>')
 end
-vim.keymap.del('i', '<C-p>')
+for _, mode in ipairs({ 'i', 'c' }) do
+  assert(vim.tbl_isempty(vim.fn.maparg('<C-p>', mode, false, true)),
+    'Global Ctrl-p overrides native behavior in mode ' .. mode)
+end
 for _, mode in ipairs({ 'i', 'x', 's' }) do
   vim.keymap.del(mode, '<C-c>')
 end

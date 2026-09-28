@@ -60,7 +60,7 @@ local function check()
     local cmp = require('cmp')
     cmp.register_source('movement_test', {
       complete = function(_, _, callback)
-        callback({ items = { { label = 'alphabet' } }, isIncomplete = false })
+        callback({ items = { { label = 'alphabet' }, { label = 'alpine' } }, isIncomplete = false })
       end,
     })
     cmp.setup.buffer({ completion = { autocomplete = false }, sources = { { name = 'movement_test' } } })
@@ -81,8 +81,27 @@ local function check()
     assert(evaluate([[return vim.api.nvim_get_current_line()]]) == '  alpha tail',
       'Completion movement changed buffer text')
   end
-  evaluate([[vim.opt.clipboard = '' ]])
   evaluate([[
+    vim.api.nvim_win_set_cursor(0, { 1, 7 })
+    require('cmp').complete()
+  ]])
+  wait_for([[return require('cmp').visible()]], 'Completion popup did not open for navigation')
+  evaluate([[
+    require('cmp').select_next_item()
+    require('cmp').select_next_item()
+  ]])
+  input('<C-p>')
+  wait_for([[local entry = require('cmp').get_selected_entry()
+    return require('cmp').visible() and entry and entry.completion_item.label == 'alphabet']],
+    'Ctrl-p did not retain completion navigation')
+  evaluate([[
+    require('cmp').abort()
+    vim.opt.clipboard = ''
+  ]])
+  input('<Esc>')
+  wait_for([[return vim.api.nvim_get_mode().mode == 'n']], 'Completion navigation did not end')
+  evaluate([[
+    vim.api.nvim_buf_set_lines(0, 0, -1, false, { '  alpha tail' })
     vim.fn.setreg('"', 'internal register must not be pasted', 'v')
     vim.g.clipboard = {
       name = 'movement-test-clipboard',
@@ -95,19 +114,47 @@ local function check()
     }
     vim.fn['provider#clipboard#Executable']()
     vim.api.nvim_win_set_cursor(0, { 1, 7 })
-    require('cmp').complete()
   ]])
-  wait_for([[return require('cmp').visible()]], 'Completion popup did not open for paste')
-  input('<C-p>')
+  input('i')
+  wait_for([[return vim.api.nvim_get_mode().mode == 'i']], 'Insert mode did not start for paste')
+  input('<C-r><C-o>+')
   wait_for([[return vim.api.nvim_get_mode().mode == 'i' and not require('cmp').visible()
     and vim.deep_equal(vim.api.nvim_buf_get_lines(0, 0, -1, false), { '  alphaX', '  Y tail' })]],
-    'Ctrl-p did not paste literal multiline text and dismiss completion')
-  input('<C-p>')
+    'Native register paste did not preserve multiline text')
+  input('<C-r><C-o>+')
   wait_for([[return vim.api.nvim_get_mode().mode == 'i'
     and vim.deep_equal(vim.api.nvim_buf_get_lines(0, 0, -1, false), { '  alphaX', '  YX', '  Y tail' })]],
-    'Ctrl-p did not paste with completion closed')
+    'Repeated native register paste failed')
   input('<Esc>')
   wait_for([[return vim.api.nvim_get_mode().mode == 'n']], 'Insert mode did not end')
+  evaluate([[
+    vim.g.command_paste_text = '中文 café'
+    local clipboard_provider = vim.g.clipboard
+    clipboard_provider.paste['+'] = function() return { { vim.g.command_paste_text }, 'v' } end
+    vim.g.clipboard = clipboard_provider
+    vim.fn['provider#clipboard#Executable']()
+  ]])
+  for _, prompt in ipairs({ '/', '?', ':' }) do
+    input(prompt .. 'leftright<Left><Left><Left><Left><Left><C-r>+')
+    wait_for([[return vim.api.nvim_get_mode().mode == 'c'
+      and vim.fn.getcmdline() == 'left中文 caféright']],
+      prompt .. ' native register paste did not insert the system clipboard at the cursor')
+    input('<C-c>')
+    wait_for([[return vim.api.nvim_get_mode().mode == 'n']], 'Command line did not close')
+  end
+  evaluate([[vim.fn.histadd('search', 'stale search history')]])
+  input('/<C-p>')
+  wait_for([[return vim.fn.getcmdline() == 'stale search history']],
+    'Command-line Ctrl-p did not retain native search history')
+  input('<C-c>')
+  wait_for([[return vim.api.nvim_get_mode().mode == 'n']], 'Search history prompt did not close')
+  evaluate([[vim.g.command_paste_text = 'A\nB' .. string.char(8) .. 'C']])
+  input(':<C-r><C-r>+')
+  wait_for([[return vim.api.nvim_get_mode().mode == 'c'
+    and vim.fn.getcmdline() == vim.g.command_paste_text]],
+    'Command-line paste executed a newline or interpreted a control character')
+  input('<C-c>')
+  wait_for([[return vim.api.nvim_get_mode().mode == 'n']], 'Literal paste prompt did not close')
   evaluate([[
     require('telescope.builtin').find_files({ cwd = vim.fn.stdpath('state') })
   ]])

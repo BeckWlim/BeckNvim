@@ -116,7 +116,8 @@ Resize keys change the current window's size; the border that moves depends on t
 | --- | --- |
 | `<C-a>` / `<C-e>` | Move to beginning/end of line in Normal, Visual, Insert, and command-line modes, including Telescope input |
 | `<C-h>` / `<C-j>` / `<C-k>` / `<C-l>` | Move left/down/up/right in Normal, Visual, and Insert modes |
-| `<C-p>` | Paste the system clipboard at the insertion point in Insert mode; dismiss completion first |
+| `p` / `P` | Paste after/before the cursor in Normal mode; uses the system clipboard with `unnamedplus` |
+| `<C-r>+` | Paste the system clipboard in Insert mode or a command-line prompt (`/`, `?`, `:`) |
 | `<C-c>` | Return from Insert, Visual, or Select mode to Normal mode using normal Escape cleanup; keeps Telescope open |
 | `q` | Exit Visual mode; retains macro recording in Normal mode |
 | `a` | Enter Insert mode after the cursor (native append) |
@@ -127,9 +128,9 @@ completion before moving. These replace native number increment (`<C-a>`) and sc
 In Telescope input, `<C-h>` / `<C-l>` move within the query
 and `<C-j>` / `<C-k>` move down/up through results, matching the arrow keys.
 
-Insert-mode `<C-p>` explicitly reads the system clipboard (`+` register), matching Normal-mode `p`
-with the configured `unnamedplus`. It preserves pasted indentation and keeps Insert mode active. It replaces
-previous-completion selection; use the popup's arrow keys to select completion items. Telescope
-keeps its local `<C-p>` binding for the previous result.
+Clipboard paste uses native keys: press `Ctrl+r`, then `+` to read the `+` register.
+In Insert mode, `Ctrl+r`, `Ctrl+o`, then `+` preserves pasted indentation.
+`Ctrl+p` retains completion navigation in Insert mode, history navigation in command-line
+prompts, and the previous-result action in Telescope.
 
 Use `:map` and plugin help to inspect context-specific mappings without duplicating upstream docs.

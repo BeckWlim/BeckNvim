@@ -61,9 +61,6 @@ local function map_editing_aids()
   vim.keymap.set({ 'i', 'x', 's' }, '<C-c>', '<Esc>', {
     desc = 'Return to Normal mode',
   })
-  vim.keymap.set('i', '<C-p>', '<C-r><C-o>+', {
-    desc = 'Paste system clipboard at insertion point',
-  })
   vim.keymap.set('x', 'q', '<Esc>', {
     silent = true,
     desc = 'Exit Visual mode',

@@ -26,7 +26,6 @@ function M.setup()
       ['<C-j>'] = dismiss_and_fallback,
       ['<C-k>'] = dismiss_and_fallback,
       ['<C-l>'] = dismiss_and_fallback,
-      ['<C-p>'] = dismiss_and_fallback,
     }),
     sources = cmp.config.sources({
       { name = 'nvim_lsp' },
