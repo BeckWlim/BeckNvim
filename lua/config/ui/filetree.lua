@@ -76,11 +76,15 @@ end
 function M.setup()
   local project = require('config.project')
   local api = require('nvim-tree.api')
+  local window_state = require('config.ui.window_state')
+  window_state.register('NvimTree', function()
+    return { number = vim.go.number, relativenumber = vim.go.relativenumber }
+  end)
   sync_lifecycle = sync_lifecycle + 1
   local current_lifecycle = sync_lifecycle
   api.events.subscribe(api.events.Event.TreeOpen, function()
     if sync_lifecycle == current_lifecycle then
-      require('config.ui.window_state').track_panel(api.tree.winid())
+      window_state.track_panel(api.tree.winid())
     end
   end)
   pending_roots_by_tabpage = {}
@@ -268,7 +272,9 @@ function M.on_attach(bufnr)
     collapse_all = function() api.tree.collapse_all() end,
     select = function()
       local selected_node = api.tree.get_node_under_cursor()
-      if selected_node and selected_node.name ~= '..' then api.node.open.edit(selected_node) end
+      if selected_node and selected_node.name ~= '..' then
+        api.node.open.edit(selected_node, { focus = true })
+      end
     end,
   })
   vim.keymap.set('n', 'gh', function()

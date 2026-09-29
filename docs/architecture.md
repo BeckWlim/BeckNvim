@@ -33,7 +33,9 @@ lua/
 | Module | Responsibility |
 | --- | --- |
 | `config/project.lua` | Project-root authority, activation gate, path containment, markers, and cached Git-host detection |
-| `config/state.lua` | Namespaced global/project persistence, session documents, version checks, bounded reads, and atomic private writes |
+| `config/state.lua` | Shared SQLite storage, namespaced global/project persistence, process-local session documents, JSON migration, and asynchronous writes |
+| `config/storage/sqlite.lua` | SQLite C API boundary shared by the main VM and libuv workers |
+| `config/startup/logs.lua` | Direct native/plugin log destinations under the log subfolder |
 | `config/startup/` | Editor options, global autocmds, lazy.nvim bootstrap, and the single keymap assembly |
 | `config/ui/window_state.lua` | Per-tab split proportions, opt-in panel size memory, and registered editor-facing window options across UI transitions |
 | `config/ui/statusline.lua` | Explicit project identity and project-relative current-file state |
@@ -95,31 +97,56 @@ closing and reopening, including terminal resizing while hidden; its initial wid
 persist their last adjusted ratio through `config.state`, so new tabs and later Neovim processes
 inherit it; existing tabs retain their own overrides. A late startup read only adjusts an untouched
 panel. Window IDs and complete split layouts stay in memory.
+NvimTree registers its underlying editor line-number settings with `window_state`, using the
+same resolver contract as the dashboard. Telescope's selection-window callback routes tree-origin
+file selections to an existing editor; if none remains, it creates one using the resolved settings.
+Tree `o`/`Enter` uses NvimTree's native keep-focus option for ordinary file opens.
 Diffview's existing code panes and history footer use the same split tracking when selecting files
 and resizing the terminal. Diffview retains ownership of panel toggles and rebuilt layouts.
 
 ## Shared State Storage
 
 Feature modules open small document stores with `require('config.state').open(namespace, options)`.
-The default global scope writes `<stdpath('state')>/<namespace>.json`. Project scope requires an
-absolute `project_root` supplied by `config.project` and uses `projects/<root-hash>/<namespace>.json`.
-Session scope uses an optional `session_id` to isolate in-memory documents and never writes files.
+Global and project scopes share `<stdpath('state')>/state.db`. Records use a key containing scope,
+project-root hash, and namespace; the payload is a versioned JSON object inside SQLite.
+Project scope requires an absolute `project_root` supplied by `config.project`.
+Session scope uses an optional `session_id` to isolate Lua memory documents and never writes files.
 Storage does not detect projects or take ownership of feature lifecycles.
+If the SQLite shared library cannot load, all scopes use isolated Lua memory for this process.
+Startup warns once, existing database/JSON files remain untouched, and setting changes are transient.
+`persistent_available()` exposes this capability without requiring consumers to load SQLite.
 
 `store:read(callback)` returns a cancellation function and delivers on the main loop.
-`store:write(document)` validates encoding and queues an asynchronous save; `store:flush(timeout_ms)`
-waits for completion when needed. Asynchronous write errors reach `on_error` or a notification.
-`read_sync()` and `write_sync()` retain the proxy's startup dependency and immediate error contract;
-UI consumers use asynchronous I/O. Reads are bounded to 64 KiB by default, and documents carry a
+`store:write(document)` validates encoding and queues an asynchronous save;
+`store:when_idle(callback)` subscribes to completion without polling. Asynchronous write errors reach
+`on_error` or a notification. SQLite runs in libuv workers, using separate connections and bounded
+timer-based retries for database contention. No busy timeout or shutdown wait blocks the editor.
+`read_sync()` and `write_sync()` retain the proxy's startup dependency and immediate error contract.
+The initial theme also reads synchronously before the first frame; subsequent UI reads and saves
+use asynchronous I/O. Reads are bounded to 64 KiB by default, and documents carry a
 positive integer `version` (default 1). Missing state returns no document; malformed, oversized, or
 unsupported versions return an error so the feature can choose its fallback.
 
-Writes use private temporary files and atomic replacement, with one active write and the latest
-pending document per destination. Independent preferences use separate namespaces. Two processes
-saving the same namespace use last-completed-write semantics; this is document replacement, not
-a transactional key/value merge. A bounded exit flush finishes queued saves when possible.
+SQLite transactions atomically replace records in a private (0600) database, with one active write
+and the latest pending document per namespace. Two processes saving the same namespace use
+last-committed-write semantics; this is document replacement, not a field-level merge.
+Persistence is best effort at exit; the process does not wait for pending saves.
 
-Theme and proxy retain their existing `theme.json` and `proxy.json` paths. Theme accepts its old
+Reads import the old namespace JSON files, including project-scoped files. Migration inserts only
+missing records, validates the committed document, then removes the source JSON. Existing database
+records win over stale migration files. Failed imports retain their source for recovery.
+The legacy `path` option identifies an import file; its directory contains the new `state.db`.
+Third-party plugin files such as `lazy/state.json` retain their native format.
+
+`config.startup.logs` creates `<stdpath('state')>/logs/` before plugin bootstrap and configures
+Neovim, LSP, LuaSnip, Mason, Telescope, and Overseer to write directly there. It uses native path
+settings where available; small adapters configure Telescope's Plenary logger and Overseer's path
+provider. LSP currently requires Neovim's internal filename setter. No root-level compatibility
+links or ongoing migration are created. Editor state such as ShaDa and swap stays in its native format.
+The separate terminal UI starts before Lua initialization and may write to the default
+`<stdpath('state')>/nvim.log`. This is expected; no shell configuration is required.
+
+Theme and proxy recognize `theme.json` and `proxy.json` only as legacy import paths. Theme accepts its old
 unversioned document and adds version 1 on the next confirmed save; proxy retains its version 1
 environment document and user-only permissions. Window preferences use one namespace per panel
 role and axis, such as `window-NvimTree-width`. Each feature owns value validation, defaults, and
@@ -180,10 +207,12 @@ inactive variant. Lualine consumes these same palette roles through its public t
 all sections share the footer surface and the mode label uses bold text. ToggleTerm background
 shading is disabled.
 
-Saved name/background pairs are read asynchronously with a 4 KiB bound. A generation counter prevents
-a late startup read from overriding a newer explicit selection or preview. Confirmed choices are
-written in order through temporary files and atomic renames, coalescing queued selections. Shutdown
-allows up to 500 ms for pending writes to finish. Invalid saved choices leave the default usable.
+Saved name/background pairs have a 4 KiB bound. Before `VimEnter`, startup reads the saved record
+synchronously and applies it directly, avoiding a visible default-to-saved theme switch. Database
+contention fails immediately; there is no polling or lock-wait loop. Missing or invalid choices use
+the default. Setup after startup reads asynchronously and keeps the current theme until resolution;
+a generation counter prevents a late read from overriding a newer selection or preview. Confirmed
+choices use the shared SQLite writer, with coalescing and best-effort saves at exit.
 
 `themes/default/*.lua` contains bundled preset tables; `themes/*.lua` contains personal presets
 and takes precedence for matching names. The picker lists these files and the current selection;

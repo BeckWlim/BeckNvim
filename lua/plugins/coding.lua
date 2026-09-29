@@ -28,6 +28,7 @@ return {
       },
     },
     config = function()
+      require('config.startup.logs').configure('telescope')
       require('config.search.telescope').setup()
     end,
   },

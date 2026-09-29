@@ -88,9 +88,8 @@ local function check()
     wait_for([[return vim.api.nvim_get_current_buf() == vim.g.theme_comparison_buffer]],
       name .. ': confirmation did not close the picker')
     wait_for([[
-      local path = require('config.ui.theme').state_path()
-      return vim.fn.filereadable(path) == 1
-        and vim.json.decode(table.concat(vim.fn.readfile(path))).name == vim.g.theme_comparison_target
+      local selection = require('config.state').open('theme'):read_sync()
+      return selection and selection.name == vim.g.theme_comparison_target
     ]], name .. ': confirmation did not save the previewed theme')
   end
 end

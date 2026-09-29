@@ -2,6 +2,10 @@ return {
   {
     'stevearc/overseer.nvim',
     event = 'VeryLazy',
+    config = function(_, options)
+      require('config.startup.logs').configure('overseer')
+      require('overseer').setup(options)
+    end,
     opts = {
       task_win = {
         padding = 2,

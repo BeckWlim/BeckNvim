@@ -66,6 +66,9 @@ The complete ownership and lifecycle model is documented in
 [Architecture](docs/architecture.md).
 
 Press `<Space>bt` in Normal mode to toggle the file tree.
+Persistent preferences share `~/.local/state/nvim/state.db`; temporary settings stay in process
+memory. Log data lives in `~/.local/state/nvim/logs/` (or the corresponding XDG state directory).
+Without SQLite, Neovim keeps running with preferences limited to the current process.
 
 ## Installation
 

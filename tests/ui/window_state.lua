@@ -1,5 +1,13 @@
 -- Focused tests for config.ui.window_state.
 local window_state = require('config.ui.window_state')
+local function saved(store)
+  local completed = false
+  store:when_idle(function(succeeded, failure)
+    assert(succeeded, failure)
+    completed = true
+  end)
+  return vim.wait(1000, function() return completed end)
+end
 local test_window = vim.api.nvim_get_current_win()
 local test_buffer = vim.api.nvim_create_buf(false, true)
 local original_buffer = vim.api.nvim_win_get_buf(test_window)
@@ -68,7 +76,7 @@ vim.api.nvim_del_augroup_by_name('workspace_window_proportions')
 vim.api.nvim_buf_delete(panel_buffer, { force = true })
 vim.o.equalalways = original_equalalways
 local preference = window_state.prepare_panel('window-state-panel', 'width')
-assert(preference.store:flush(1000))
+assert(saved(preference.store))
 window_state.setup({ state_directory = state_directory })
 assert(vim.wait(1000, function()
   return window_state.panel_size('window-state-panel', 'width', 30) == panel_width
@@ -91,7 +99,7 @@ assert(vim.api.nvim_win_get_width(late_window) == latest_width,
   'A late preference read replaced a new manual resize')
 vim.api.nvim_win_close(late_window, true)
 vim.api.nvim_buf_delete(late_buffer, { force = true })
-assert(window_state.prepare_panel('window-state-panel', 'width').store:flush(1000))
+assert(saved(window_state.prepare_panel('window-state-panel', 'width').store))
 vim.wait(20)
 vim.api.nvim_del_augroup_by_name('workspace_window_proportions')
 vim.o.equalalways = original_equalalways

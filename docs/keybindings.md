@@ -21,6 +21,12 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 Jump history starts fresh in each Neovim instance. Recent files, saved marks, registers, and
 search history remain available across restarts through ShaDa.
 
+## Command-line completion
+
+For `:e` filename completion, `Tab` / `Shift-Tab` or `Ctrl-N` / `Ctrl-P` select a match.
+`Ctrl-Y` accepts it without running the command; continue typing or use Down Arrow to enter a
+directory while the menu is open. Up Arrow returns to its parent. `Enter` executes `:e`.
+
 ## Tree panels
 
 Git history, Diffview's file panel, NvimTree, and the project picker preview share these actions:
@@ -30,6 +36,10 @@ Git history, Diffview's file panel, NvimTree, and the project picker preview sha
 | `o` / `Enter` | Toggle a parent or open a file |
 | `zo` / `zc` / `za` | Expand / collapse / toggle the current parent |
 | `zR` / `zM` | Expand / collapse all available parents |
+
+In NvimTree, `o` / `Enter` opens a file while keeping focus and selection in the tree.
+Telescope searches launched from the tree, such as `<Space>fw`, jump into a code pane with
+its line-number settings preserved; cancelling returns to the tree.
 
 Git history, NvimTree, and the focused project preview also share `/`, `?`, and `n`/`N` for
 searching collapsed paths. Search-opened parents collapse when moving to a different match;

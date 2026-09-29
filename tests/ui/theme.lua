@@ -1,4 +1,4 @@
--- Theme persistence, failed selection, and asynchronous startup races.
+-- Theme persistence, first-frame restoration, and failed selection.
 local theme = require('config.ui.theme')
 local original = {
   name = vim.g.colors_name or 'default',
@@ -7,6 +7,7 @@ local original = {
 local directory = vim.fn.tempname()
 vim.fn.mkdir(directory, 'p')
 local path = directory .. '/theme.json'
+local preference = require('config.state').open('theme', { path = path, accept_unversioned = true })
 local runtime = directory .. '/runtime'
 vim.fn.mkdir(runtime .. '/themes/default', 'p')
 vim.opt.runtimepath:prepend(runtime)
@@ -16,9 +17,8 @@ vim.fn.writefile({ "return { colorscheme = 'morning', background = 'light' }" },
   runtime .. '/themes/personal.lua')
 local function saved(name)
   return vim.wait(1000, function()
-    if vim.fn.filereadable(path) == 0 then return false end
-    local decoded, selection = pcall(vim.json.decode, table.concat(vim.fn.readfile(path), '\n'))
-    return decoded and selection.name == name
+    local selection = preference:read_sync()
+    return selection and selection.name == name
   end, 10)
 end
 local function assert_theme(name)
@@ -29,16 +29,23 @@ theme.setup({ default = 'habamax', state_file = path })
 vim.wait(30)
 assert(vim.g.colors_name == 'habamax')
 vim.fn.writefile({ '{"name":"morning","background":"light"}' }, path)
+local startup_schemes = {}
+local startup_observer = vim.api.nvim_create_autocmd('ColorScheme', {
+  callback = function(event) startup_schemes[#startup_schemes + 1] = event.match end,
+})
 theme.setup({ default = 'habamax', state_file = path })
+assert(vim.g.colors_name == 'morning', 'Saved theme was deferred beyond startup setup')
+assert(vim.deep_equal(startup_schemes, { 'morning' }),
+  'Startup applied a default theme before the saved choice: ' .. vim.inspect(startup_schemes))
+vim.api.nvim_del_autocmd(startup_observer)
 assert_theme('morning')
-assert(vim.json.decode(table.concat(vim.fn.readfile(path))).version == nil,
-  'Reading a legacy theme unexpectedly rewrote its file')
+assert(not vim.uv.fs_stat(path), 'Migrated theme JSON was not removed')
 assert(theme.select('morning'))
 assert(saved('morning'), 'Confirmed theme was not saved')
 assert(vim.wait(1000, function()
-  return vim.json.decode(table.concat(vim.fn.readfile(path))).version == 1
+  return preference:read_sync().version == 1
 end), 'Confirmed legacy theme was not saved through versioned shared storage')
-assert(vim.json.decode(table.concat(vim.fn.readfile(path))).background == 'light', 'Saved theme lost its variant')
+assert(preference:read_sync().background == 'light', 'Saved theme lost its variant')
 theme.setup({ default = 'habamax', state_file = path })
 assert_theme('morning')
 assert(vim.tbl_contains(theme.names(), 'personal'), 'New user theme was not discovered')

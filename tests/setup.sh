@@ -19,6 +19,24 @@ done
 
 printf 'PASS: setup only checks runtimes and does not manage runtime installers\n'
 
+test_sqlite_package() (
+  local selected_manager="$1" expected_package="$2"
+  source <(sed '/^main; exit$/d' "${setup_root}/setup.sh") --skip-clipboard
+  system_package_manager() { printf '%s\n' "${selected_manager}"; }
+  dependency_available() { [[ "$1" != 'sqlite3' ]]; }
+  run_as_root() { :; }
+  install_package_batch() {
+    [[ "$1" == "${selected_manager}" && "$2" == "${expected_package}" && $# -eq 2 ]]
+  }
+  install_system_packages
+  printf 'PASS: SQLite package for %s\n' "${selected_manager}"
+)
+test_sqlite_package apt-get sqlite3
+test_sqlite_package dnf sqlite
+test_sqlite_package pacman sqlite
+test_sqlite_package zypper sqlite3
+test_sqlite_package brew sqlite
+
 # Load setup functions without running the installer. Each case gets fresh state.
 test_tree_sitter_install() (
   local scenario="$1"

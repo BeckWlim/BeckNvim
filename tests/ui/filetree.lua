@@ -6,6 +6,7 @@ local original_project = package.loaded['config.project']
 local tree_buffer = vim.api.nvim_create_buf(false, true)
 local selected_node = { name = '..' }
 local opened_node
+local open_options
 local parent_change_count = 0
 local node_change_count = 0
 local synchronized_roots = {}
@@ -14,8 +15,9 @@ package.loaded['nvim-tree.api'] = {
   events = { Event = { TreeOpen = 'TreeOpen' }, subscribe = function() end },
   node = {
     open = {
-      edit = function(node)
+      edit = function(node, options)
         opened_node = node
+        open_options = options
       end,
     },
   },
@@ -136,6 +138,7 @@ selected_node = {
 }
 enter_mapping.callback()
 assert(opened_node == selected_node, '<CR> no longer opens regular tree nodes')
+assert(open_options and open_options.focus == true, '<CR> did not keep focus in the tree')
 assert(type(root_back_mapping.callback) == 'function', 'file tree has no gh root-back mapping')
 root_back_mapping.callback()
 assert(parent_change_count == 1, 'gh did not change to the parent root')

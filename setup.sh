@@ -129,21 +129,21 @@ install_system_packages() {
   local -a specifications=(cmake:cmake curl:curl git:git ripgrep:rg unzip:unzip)
   case "${manager}" in
     apt-get)
-      specifications+=(build-essential:build-tools ninja-build:ninja pkg-config:pkg-config)
+      specifications+=(build-essential:build-tools ninja-build:ninja pkg-config:pkg-config sqlite3:sqlite3)
       ;;
     dnf)
-      specifications+=(gcc:c gcc-c++:cxx make:make ninja-build:ninja
+      specifications+=(sqlite:sqlite3 gcc:c gcc-c++:cxx make:make ninja-build:ninja
         pkgconf-pkg-config:pkg-config)
       ;;
     pacman)
-      specifications+=(base-devel:build-tools ninja:ninja pkgconf:pkg-config)
+      specifications+=(sqlite:sqlite3 base-devel:build-tools ninja:ninja pkgconf:pkg-config)
       ;;
     zypper)
-      specifications+=(gcc:c gcc-c++:cxx make:make ninja:ninja
+      specifications+=(sqlite3:sqlite3 gcc:c gcc-c++:cxx make:make ninja:ninja
         pkg-config:pkg-config)
       ;;
     brew)
-      specifications+=(gcc:c gcc:cxx make:make ninja:ninja pkg-config:pkg-config)
+      specifications+=(sqlite:sqlite3 gcc:c gcc:cxx make:make ninja:ninja pkg-config:pkg-config)
       ;;
   esac
   if [[ "${manager}" != 'brew' ]]; then
@@ -431,6 +431,9 @@ run_checks() {
   BECKNVIM_FAILURES=0
   check_command 'git' 'plugin and repository workflows'
   check_command 'rg' 'Telescope and workspace search'
+  if ! command -v sqlite3 >/dev/null 2>&1; then
+    warn 'sqlite3 CLI is unavailable; the editor can still use an installed SQLite shared library'
+  fi
   check_command 'curl' 'translation and HTTP-backed features'
   check_command 'unzip' 'plugin and tool extraction'
   check_command 'make' 'native Telescope sorter compilation'
@@ -451,6 +454,11 @@ run_checks() {
   if command -v nvim >/dev/null 2>&1; then
     check_version 'Neovim' "$(nvim_version)" "${BECKNVIM_MINIMUM_NVIM_VERSION}" \
       'the pinned nvim-treesitter main branch'
+    if ! nvim --headless -u NONE -i NONE \
+      '+lua local ffi = require("ffi"); if not pcall(ffi.load, ffi.os == "Linux" and "libsqlite3.so.0" or "sqlite3") then vim.cmd("cquit 1") end' \
+      '+qa' >/dev/null 2>&1; then
+      warn 'SQLite shared library is unavailable; Neovim preferences will stay in process memory'
+    fi
   else
     warn 'missing nvim (editor runtime)'
     BECKNVIM_FAILURES=$((BECKNVIM_FAILURES + 1))

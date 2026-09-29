@@ -30,6 +30,7 @@ for _, test_file in ipairs({
   'tests/search/workspace_symbols.lua',
   'tests/startup/keybindings.lua',
   'tests/startup/jumps.lua',
+  'tests/startup/logs.lua',
   'tests/startup/lazy.lua',
   'tests/startup/termaid.lua',
   'tests/syntax/folds.lua',

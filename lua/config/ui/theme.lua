@@ -9,7 +9,7 @@ local active_preset
 local picker_session
 
 function M.state_path()
-  return preference_path or vim.fn.stdpath('state') .. '/theme.json'
+  return preference_path or vim.fn.stdpath('state') .. '/state.db'
 end
 
 local function notify(message)
@@ -132,27 +132,37 @@ end
 
 local function read_saved(callback)
   if cancel_read then cancel_read() end
-  cancel_read = preference_store:read(function(selection, failure)
-    if failure then notify(failure); return end
-    if not selection then return end
+  cancel_read = nil
+  local function deliver(selection, failure)
+    if failure then notify(failure); callback(nil); return end
+    if not selection then callback(nil); return end
     if not valid_name(selection.name)
         or (selection.background ~= 'dark' and selection.background ~= 'light') then
       notify('saved selection is invalid; using the default')
+      callback(nil)
       return
     end
     callback(selection)
-  end)
+  end
+  if vim.v.vim_did_enter == 0 then
+    -- The initial palette is a startup dependency, like the proxy environment.
+    -- Read one bounded record before the first frame, with no lock wait/retry.
+    deliver(preference_store:read_sync())
+  else
+    cancel_read = preference_store:read(deliver)
+  end
 end
 
 function M.setup(options)
   local settings = options or {}
-  preference_path = settings.state_file
+  generation = generation + 1
   preference_store = require('config.state').open('theme', {
-    path = M.state_path(),
+    path = settings.state_file or vim.fn.stdpath('state') .. '/theme.json',
     accept_unversioned = true,
     max_bytes = 4096,
     on_error = function(failure) notify('could not save selection: ' .. failure) end,
   })
+  preference_path = preference_store.path
   require('config.syntax.highlights').setup({ overrides = settings.overrides })
   local group = vim.api.nvim_create_augroup('project_theme', { clear = true })
   vim.api.nvim_create_autocmd('ColorScheme', {
@@ -182,17 +192,16 @@ function M.setup(options)
     end,
     desc = 'Preview or apply and save a project theme',
   })
-  local applied = apply(settings.default or 'monokai')
-  if not applied then apply('habamax') end
   local startup_generation = generation
   read_saved(function(selection)
     if generation ~= startup_generation then return end
-    local previous = current()
-    local restored, failure = restore(selection)
-    if not restored then
-      restore(previous)
+    if selection then
+      local restored, failure = restore(selection)
+      if restored then refresh_startup_highlights(); return end
       notify('saved theme is unavailable; using the default: ' .. tostring(failure))
     end
+    local applied = apply(settings.default or 'monokai')
+    if not applied then apply('habamax') end
     refresh_startup_highlights()
   end)
 end

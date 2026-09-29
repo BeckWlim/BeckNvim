@@ -6,6 +6,41 @@ local preview_focused_preview_width = 0.65
 local results_focused_preview_height = 0.36
 local preview_focused_preview_height = 0.58
 
+local function selection_window()
+  if vim.bo.filetype ~= 'NvimTree' then return 0 end
+
+  local function is_editor(winid)
+    if not vim.api.nvim_win_is_valid(winid) then return false end
+    local buffer = vim.api.nvim_win_get_buf(winid)
+    return vim.api.nvim_win_get_config(winid).relative == ''
+      and vim.bo[buffer].buftype == '' and not vim.wo[winid].winfixbuf
+  end
+  local target_window
+  local previous_window = vim.fn.win_getid(vim.fn.winnr('#'))
+  if is_editor(previous_window) then
+    target_window = previous_window
+  else
+    for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if is_editor(winid) then
+        target_window = winid
+        break
+      end
+    end
+  end
+  if target_window then
+    -- Telescope records jump/tag history after this callback: use the code pane.
+    vim.api.nvim_set_current_win(target_window)
+  else
+    local editor_options = assert(require('config.ui.window_state').resolve(
+      vim.api.nvim_get_current_win(), { 'number', 'relativenumber' }))
+    vim.cmd('botright vnew')
+    target_window = vim.api.nvim_get_current_win()
+    vim.wo.number = editor_options.number
+    vim.wo.relativenumber = editor_options.relativenumber
+  end
+  return target_window
+end
+
 local function unlock_preview(buffer)
   if vim.api.nvim_buf_is_valid(buffer) and vim.b[buffer].telescope_preview_modifiable ~= nil then
     vim.bo[buffer].modifiable = vim.b[buffer].telescope_preview_modifiable
@@ -292,6 +327,7 @@ function M.setup()
   })
   telescope.setup({
     defaults = {
+      get_selection_window = selection_window,
       grep_previewer = contextual_previewer,
       qflist_previewer = contextual_previewer,
       layout_strategy = 'flex',

@@ -5,6 +5,9 @@ For clone and setup commands, see the [quick start](../README.md#installation).
 ## Dependencies and setup options
 
 Setup installs missing core external tools and checks whether Node.js/npm and Python are available.
+Setup installs SQLite 3 for persistent preferences. If its shared library is unavailable, Neovim
+continues with memory-only preferences and warns once; those changes disappear on exit. Existing
+saved files remain untouched. Temporary UI settings always stay in the current process's memory.
 It does not install runtime managers or language runtimes. Setup installs Tree-sitter CLI through
 npm into `~/.local/bin` when npm is available. If npm is missing or unusable, setup skips CLI
 installation; if npm installation fails, setup warns and continues. Follow any PATH instructions

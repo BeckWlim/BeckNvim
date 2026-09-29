@@ -244,8 +244,9 @@ assert(
   'Session proxy did not set HTTP and HTTPS consistently'
 )
 assert(proxy.resolve().NO_PROXY == 'localhost,.internal', 'Session bypass was not activated')
-local persisted_state = vim.json.decode(table.concat(vim.fn.readfile(temporary_state_path), '\n'))
-local persisted_state_stat = vim.uv.fs_stat(temporary_state_path)
+local persisted_store = require('config.state').open('proxy', { path = temporary_state_path })
+local persisted_state = assert(persisted_store:read_sync())
+local persisted_state_stat = vim.uv.fs_stat(persisted_store.path)
 assert(
   persisted_state.version == 1
     and persisted_state.environment.http_proxy == 'http://session.example:8123'

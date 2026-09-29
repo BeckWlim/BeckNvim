@@ -209,9 +209,17 @@ local function check()
     assert(math.abs(vim.api.nvim_win_get_height(history.panel.winid) - history_height * 1.25) <= 2,
       'Diffview history footer did not use shared proportions')
   ]])
+  evaluate([[
+    local preference = require('config.ui.window_state').prepare_panel('NvimTree', 'width')
+    preference.store:when_idle(function(saved, failure)
+      assert(saved, failure)
+      vim.g.window_preference_saved = true
+    end)
+  ]])
+  assert(vim.wait(2000, function() return evaluate([[return vim.g.window_preference_saved]]) end),
+    'Window preference did not finish saving')
   local persisted_ratio = evaluate([[
     local preference = require('config.ui.window_state').prepare_panel('NvimTree', 'width')
-    assert(preference.store:flush(1000))
     return assert(preference.store:read_sync()).ratio
   ]])
   local restarted = vim.fn.jobstart({ vim.v.progpath, '--embed', '-n', '-u', 'init.lua', '-i', 'NONE' },

@@ -110,9 +110,8 @@ local function check()
   ]])
   evaluate([[require('config.ui.theme').select('catppuccin-latte')]])
   wait_for([[
-    local path = require('config.ui.theme').state_path()
-    return vim.fn.filereadable(path) == 1
-      and vim.json.decode(table.concat(vim.fn.readfile(path))).name == 'catppuccin-latte'
+    local selection = require('config.state').open('theme'):read_sync()
+    return selection and selection.name == 'catppuccin-latte'
   ]], 'Final theme selection did not finish saving')
   evaluate([[
     vim.g.colors_name = nil
@@ -136,9 +135,8 @@ local function check()
   open_picker('paper-light')
   evaluate([[vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'xt', false)]])
   wait_for([[
-    local path = require('config.ui.theme').state_path()
-    return vim.fn.filereadable(path) == 1
-      and vim.json.decode(table.concat(vim.fn.readfile(path))).name == 'paper-light'
+    local selection = require('config.state').open('theme'):read_sync()
+    return selection and selection.name == 'paper-light'
   ]], 'Picker confirmation was not persisted')
   evaluate([[require('config.ui.theme').setup()]])
   wait_for([[return require('config.ui.theme').current().name == 'paper-light']], 'Saved choice was not restored')

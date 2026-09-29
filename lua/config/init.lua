@@ -2,6 +2,7 @@ local M = {}
 
 function M.setup()
   require('config.startup.options')
+  require('config.startup.logs').setup()
   require('config.state').setup()
   require('config.ui.window_state').setup()
   require('config.ui.float').setup()

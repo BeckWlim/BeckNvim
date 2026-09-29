@@ -75,6 +75,7 @@ bash -n tests/setup.sh
 bash tests/setup.sh
 XDG_CACHE_HOME=/tmp/nvim-test-cache XDG_STATE_HOME=/tmp/nvim-test-state \
   nvim --headless -u NONE -i NONE -l tests/run.lua
+nvim --headless -u NONE -i NONE -l tests/state_fallback.lua
 git diff --check
 XDG_CACHE_HOME=/tmp/nvim-test-cache XDG_STATE_HOME=/tmp/nvim-test-state \
   nvim --headless -u init.lua -i NONE '+qa'
@@ -90,11 +91,15 @@ Neovim UI. The check retains normal prompt behavior so blocking errors remain vi
 ```bash
 nvim --headless -u NONE -i NONE -l tests/syntax/markdown/installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/theme_installed.lua
+nvim --headless -u NONE -i NONE '+luafile tests/ui/theme_startup_installed.lua'
+XDG_STATE_HOME=/tmp/nvim-log-test-state XDG_CACHE_HOME=/tmp/nvim-log-test-cache \
+  nvim --headless -u init.lua -i NONE '+luafile tests/startup/logs_installed.lua'
 nvim --headless -u NONE -i NONE -l tests/ui/theme_preview_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/tmux_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/dashboard_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/window_state_installed.lua
 nvim --headless -u NONE -i NONE -l tests/search/telescope_installed.lua
+nvim --headless -u init.lua -i NONE '+luafile tests/ui/filetree_navigation_installed.lua'
 nvim --headless -u NONE -i NONE -l tests/syntax/visuals_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/treesitter_installed.lua
 ```

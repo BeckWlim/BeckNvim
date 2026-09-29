@@ -4,7 +4,10 @@ return {
     event = { 'BufReadPre', 'BufNewFile' },
     cmd = { 'Mason', 'MasonInstall', 'MasonUpdate', 'MasonUninstall', 'MasonLog' },
     dependencies = {
-      'williamboman/mason.nvim',
+      {
+        'williamboman/mason.nvim',
+        config = function() require('config.startup.logs').configure('mason') end,
+      },
       'neovim/nvim-lspconfig',
       'hrsh7th/cmp-nvim-lsp',
     },
