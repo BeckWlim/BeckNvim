@@ -10,6 +10,8 @@ vim.opt.number = true
 vim.opt.cursorline = true
 vim.opt.signcolumn = "auto"
 vim.opt.colorcolumn = "160"
+-- Git layouts use separate tabs internally; hide the native Scratch/file tab bar.
+vim.opt.showtabline = 0
 
 vim.opt.expandtab = true
 vim.opt.tabstop = 4

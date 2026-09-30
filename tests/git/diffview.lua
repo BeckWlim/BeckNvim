@@ -282,18 +282,19 @@ end
 assert(type(find_mapping('file_history_panel', 'o')[3]) == 'function', 'Git history lost its select action')
 
 for _, context in ipairs({ 'view', 'file_panel', 'file_history_panel' }) do
-  assert(find_mapping(context, '<C-q>'), 'Ctrl-Q is missing from Diffview context: ' .. context)
+  assert(not find_mapping(context, '<C-q>'), 'Ctrl-Q still closes a Diffview pane: ' .. context)
   assert(not find_mapping(context, '<Space>o'), 'Git mode overrode the global jump-back key')
   assert(not find_mapping(context, '<Space>fw'), 'Git mode overrode project definition search')
   assert(find_mapping(context, '<Space>de'), 'Git search is missing from Diffview context: ' .. context)
   assert(not find_mapping(context, '<Space>df'), 'Git mode retained the overloaded file-history binding')
   assert(not find_mapping(context, '<C-b>'), 'Git mode retained the obsolete branch-picker binding')
   assert(find_mapping(context, '<Space>dp'), 'History-panel toggle is missing: ' .. context)
+  assert(find_mapping(context, '<Space>dv'), 'History-layout switch is missing: ' .. context)
   assert(find_mapping(context, '<Tab>'), 'Pane traversal is missing: ' .. context)
   assert(not find_mapping(context, '<Space>dc'), 'Obsolete commit-checkout key remains: ' .. context)
   assert(
-    (context == 'file_history_panel') == (find_mapping(context, '<Space>dn') ~= nil),
-    'Commit details escaped the Git history footer scope: ' .. context
+    (context ~= 'view') == (find_mapping(context, '<Space>dn') ~= nil),
+    'Commit details are not scoped to the Git file/history panels: ' .. context
   )
   local ignored_search_repeat_mapping = find_mapping(context, '<Space>n')
   assert(
@@ -306,8 +307,8 @@ assert(
   'Git history list lacks guarded checkout for its selected commit'
 )
 assert(
-  not find_mapping('view', '<Space>dm') and not find_mapping('file_panel', '<Space>dm'),
-  'Commit checkout escaped the Git history list scope'
+  not find_mapping('view', '<Space>dm') and find_mapping('file_panel', '<Space>dm'),
+  'Commit checkout is not scoped to the Git file/history panels'
 )
 
 local detached_head_commit = string.rep('f', 40)
@@ -488,6 +489,40 @@ current_view = {
   },
 }
 assert(diffview.toggle_commit_list() and panel_toggle_calls == 1, 'Git panel did not toggle')
+
+local layout_close_calls = 0
+local layout_open_calls = 0
+local layout_focus_calls = 0
+current_view.panel.close = function()
+  layout_close_calls = layout_close_calls + 1
+end
+current_view.panel.open = function()
+  layout_open_calls = layout_open_calls + 1
+end
+current_view.panel.focus = function()
+  layout_focus_calls = layout_focus_calls + 1
+end
+current_view.panel.winid = vim.api.nvim_get_current_win()
+current_view.git_history_layout_mode = 'list'
+assert(diffview.toggle_history_layout(), 'Git history did not enter detail layout')
+assert(
+  current_view.git_history_layout_mode == 'detail'
+    and current_view.panel.config_producer.position == 'bottom'
+    and current_view.panel.config_producer.height == 10
+    and layout_close_calls == 1
+    and layout_open_calls == 1
+    and layout_focus_calls == 1,
+  'Detail layout did not reuse and refocus the native history panel'
+)
+assert(diffview.toggle_history_layout(), 'Git history did not return to list layout')
+assert(
+  current_view.git_history_layout_mode == 'list'
+    and (vim.o.columns < 110
+      or current_view.panel.config_producer.position == 'left')
+    and layout_close_calls == 2
+    and layout_open_calls == 2,
+  'List layout did not reuse the native history panel'
+)
 
 local root_history_view = current_view
 local footer_render_calls = 0
@@ -1460,7 +1495,7 @@ selected_commit_view.nulled = true
 selected_commit_view.panel = { cur_item = nil, log_options = {}, updating = false }
 history_lifecycle.mark_empty_ready(selected_commit_view, 'test empty commit rendered')
 current_view = selected_commit_view
-find_mapping('view', '<C-q>')[3]()
+assert(diffview.quit_git_mode(), 'Git quit did not close the empty commit view')
 assert(vim.wait(100, function()
   return selected_commit_view.closed
     and disposed_views[#disposed_views] == selected_commit_view
@@ -1528,8 +1563,8 @@ assert(
 )
 current_view = performance_view
 assert(
-  diffview.handle_ctrl_q(),
-  'Ctrl-Q did not cancel Git history during initial scoped enrichment'
+  diffview.quit_git_mode(),
+  ':q did not cancel Git history during initial scoped enrichment'
 )
 assert(
   not performance_entry.git_files_enriching
@@ -1577,11 +1612,11 @@ history_lifecycle.attach(initializing_exit_view, 'repository')
 history_lifecycle.transition(initializing_exit_view, 'listing', 'test initial history')
 current_view = initializing_exit_view
 panel.enter_git(initializing_exit_view, function()
-  diffview.return_to_editor_line()
+  diffview.return_to_editor()
 end)
 assert(
-  diffview.handle_ctrl_q(),
-  'Ctrl-Q did not accept an exit while Git history was initializing'
+  diffview.quit_git_mode(),
+  ':q did not accept an exit while Git history was initializing'
 )
 assert(vim.wait(100, function()
   return initializing_exit_view.closed
@@ -1609,9 +1644,9 @@ local waiting_view = {
 }
 current_view = waiting_view
 panel.enter_git(waiting_view, function()
-  diffview.return_to_editor_line()
+  diffview.return_to_editor()
 end)
-assert(diffview.handle_ctrl_q(), 'Unready Ctrl-Q return did not exit Git mode immediately')
+assert(diffview.quit_git_mode(), 'Unready :q return did not exit Git mode immediately')
 assert(vim.wait(100, function()
   return panel.level() == 'editor' and waiting_view.closed
 end, 10), 'Unready Git history remained mounted after its editor handoff')
@@ -1623,359 +1658,66 @@ vim.keymap.set('n', '<Space>fw', function() end, { desc = 'Project workspace sym
 vim.keymap.set('n', '<Space>de', function() end, {
   desc = 'Search Git branches, commits, and issues',
 })
-local return_editor_window = vim.api.nvim_get_current_win()
-vim.api.nvim_win_set_cursor(return_editor_window, { 1, 0 })
-vim.wo[return_editor_window].number = false
-vim.wo[return_editor_window].relativenumber = false
-vim.cmd('tabnew')
-local git_tabpage = vim.api.nvim_get_current_tabpage()
-local historical_window = vim.api.nvim_get_current_win()
-local historical_buffer = vim.api.nvim_create_buf(false, true)
-vim.api.nvim_win_set_buf(historical_window, historical_buffer)
-vim.api.nvim_buf_set_lines(historical_buffer, 0, -1, false, {
-  'local function open_picker(changed_signature)',
-  '  return true',
-  'end',
+local editor_window = vim.api.nvim_get_current_win()
+local editor_buffer = vim.api.nvim_get_current_buf()
+vim.api.nvim_win_set_cursor(editor_window, { 1, 0 })
+vim.wo[editor_window].number = false
+vim.wo[editor_window].relativenumber = false
+vim.keymap.set('n', '<Space>dx', function() end, {
+  buffer = editor_buffer,
+  desc = 'Editor-specific action',
 })
-vim.api.nvim_win_set_cursor(historical_window, { 2, 4 })
-vim.cmd('belowright split')
-local footer_window = vim.api.nvim_get_current_win()
-local footer_buffer = vim.api.nvim_create_buf(false, true)
-vim.api.nvim_win_set_buf(footer_window, footer_buffer)
-vim.api.nvim_buf_set_lines(footer_buffer, 0, -1, false, {
-  'unrelated commit',
-  'unrelated file',
-  'footer bottom',
-})
-vim.api.nvim_win_set_cursor(footer_window, { 3, 0 })
-local editor_target_path = vim.fs.normalize(
+local target_path = vim.fs.normalize(
   vim.fn.getcwd() .. '/tests/fixtures/symbol_project/example.lua'
 )
-local editor_target_file = { absolute_path = editor_target_path, opened = true }
+local target_buffer_before = vim.fn.bufnr(target_path)
+vim.cmd('tabnew')
+local git_tabpage = vim.api.nvim_get_current_tabpage()
 local return_view = {
   close = function(self)
     self.closed = true
     branch_info_visible = false
   end,
-  cur_entry = editor_target_file,
-  cur_layout = {
-    b = { id = historical_window },
-    windows = { { id = historical_window } },
-  },
-  git_editor_line_number_options = {
-    number = true,
-    relativenumber = true,
-  },
-  panel = {
-    cur_item = { {}, { absolute_path = '/work/random-file.lua' } },
-    log_options = {},
-    updating = false,
-    winid = footer_window,
-  },
+  cur_entry = { absolute_path = target_path, opened = true },
+  cur_layout = { b = { id = vim.api.nvim_get_current_win() } },
+  git_diff_opened = true,
+  panel = { cur_item = nil, log_options = {}, updating = false },
   tabpage = git_tabpage,
 }
 previous_editing_tabpage = editor_tabpage
 current_view = return_view
-enclosing_structure_result = {
-  first_line = 1,
-  label = 'open_picker',
-  node_type = 'function_declaration',
-}
 panel.enter_git(return_view, function()
-  diffview.return_to_editor_line()
+  diffview.return_to_editor()
 end)
-local original_schedule = vim.schedule
-local original_cmd = vim.cmd
-local original_return_defer = vim.defer_fn
-local original_set_editor_buffer = vim.api.nvim_win_set_buf
-local scheduled_editor_apply
-local pending_return_close
-local return_phase_order = {}
-vim.cmd = function(command)
-  if command == 'redraw' and vim.api.nvim_get_current_tabpage() == editor_tabpage then
-    return_phase_order[#return_phase_order + 1] = 'render'
-  end
-  return original_cmd(command)
-end
-vim.schedule = function(callback)
-  return_phase_order[#return_phase_order + 1] = 'jump'
-  scheduled_editor_apply = callback
-end
-vim.defer_fn = function(callback, delay)
-  if delay == 0 then
-    pending_return_close = callback
-    return
-  end
-  return original_return_defer(callback, delay)
-end
-vim.api.nvim_win_set_buf = function(window, buffer)
-  local set_result = original_set_editor_buffer(window, buffer)
-  if window == return_editor_window
-      and vim.fs.normalize(vim.api.nvim_buf_get_name(buffer)) == editor_target_path then
-    vim.keymap.set('n', '<Space>de', function() end, {
-      buffer = buffer,
-      desc = 'Search Git commits and issues',
-    })
-    vim.keymap.set('n', '<Space>dx', function() end, {
-      buffer = buffer,
-      desc = 'Editor-specific action',
-    })
-  end
-  return set_result
-end
-assert(diffview.handle_ctrl_q(), 'Ctrl-Q did not invoke the Git line return callback')
--- Git mode exits immediately; the restored editor only displays the existing file.
+assert(diffview.quit_git_mode(), ':q did not close Git history')
 assert(
-  vim.api.nvim_get_current_tabpage() == editor_tabpage,
-  'Footer Ctrl-Q did not return to the editor tab immediately'
+  vim.api.nvim_get_current_tabpage() == editor_tabpage
+    and vim.api.nvim_get_current_win() == editor_window
+    and vim.api.nvim_get_current_buf() == editor_buffer
+    and vim.deep_equal(vim.api.nvim_win_get_cursor(editor_window), { 1, 0 })
+    and not vim.wo[editor_window].number
+    and not vim.wo[editor_window].relativenumber
+    and vim.fn.bufnr(target_path) == target_buffer_before,
+  'Git exit jumped to a historical file or changed the preserved editor state'
 )
-assert(
-  not vim.wo[return_editor_window].number
-    and not vim.wo[return_editor_window].relativenumber,
-  'Git return exposed an editor gutter on the preserved homepage frame'
-)
-local return_message_buffer = vim.fn.bufnr(editor_target_path)
-assert(return_message_buffer > 0, 'Git exit did not address a target buffer')
-assert(vim.b[return_message_buffer].git_return_cursor == nil,
-  'Git exit retained an automatic cursor message')
-assert(
-  scheduled_editor_apply and vim.deep_equal(return_phase_order, { 'jump' }),
-  'Git exit performed render work itself instead of handing it to the editor'
-)
-scheduled_editor_apply()
-vim.api.nvim_win_set_buf = original_set_editor_buffer
-vim.schedule = original_schedule
-vim.defer_fn = original_return_defer
-vim.cmd = original_cmd
+local editor_mapping = vim.fn.maparg('<Space>dx', 'n', false, true)
+assert(editor_mapping.buffer == 1 and editor_mapping.desc == 'Editor-specific action',
+  'Git exit removed an editor-owned mapping')
 local opened_view_count_during_return = #opened_views
-assert(
-  diffview.open_file_history({ kind = 'repository', location = { root = '/work/repository' } }) == nil,
-  'Git teardown accepted a delayed history mount'
-)
-assert(
-  #opened_views == opened_view_count_during_return,
-  'Git teardown mounted another history before the current view disposed'
-)
-assert(
-  vim.fs.normalize(vim.api.nvim_buf_get_name(0)) == editor_target_path
-    and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
-    and vim.wo[return_editor_window].number
-    and vim.wo[return_editor_window].relativenumber
-    and vim.b[return_message_buffer].git_return_cursor == nil,
-  'The editor return did not restore the file with editor line numbers'
-)
-assert(
-  vim.deep_equal(return_phase_order, { 'jump', 'render' }),
-  'The editor did not redraw after displaying the return file'
-)
-local restored_workspace_mapping = vim.fn.maparg('<Space>fw', 'n', false, true)
-assert(
-  restored_workspace_mapping.buffer == 0
-    and restored_workspace_mapping.desc == 'Project workspace symbols',
-  'Git return did not preserve the global project-definition mapping'
-)
-local restored_git_search_mapping = vim.fn.maparg('<Space>de', 'n', false, true)
-assert(
-  restored_git_search_mapping.buffer == 0
-    and restored_git_search_mapping.desc == 'Search Git branches, commits, and issues',
-  'Git return retained a buffer-local search mapping that cannot re-enter Git mode'
-)
-local preserved_editor_mapping = vim.fn.maparg('<Space>dx', 'n', false, true)
-assert(
-  preserved_editor_mapping.buffer == 1
-    and preserved_editor_mapping.desc == 'Editor-specific action',
-  'Git return removed an editor-owned buffer-local mapping'
-)
-assert(
-  vim.wo[footer_window].winbar:match('RETURN')
-    and vim.wo[footer_window].winbar:match('restoring editor'),
-  'Git footer did not log the immediate editor restore'
-)
-local settled_reentry_calls = 0
-assert(diffview.defer_until_settled('repository_search', function()
-  settled_reentry_calls = settled_reentry_calls + 1
-end), 'Git return did not accept an immediate editor re-entry action')
-assert(diffview.defer_until_settled('repository_search', function()
-  settled_reentry_calls = settled_reentry_calls + 1
-end), 'Git return did not coalesce its immediate editor re-entry action')
-assert(pending_return_close, 'Git return did not schedule Diffview teardown')
-pending_return_close()
+assert(diffview.open_file_history({
+  kind = 'repository', location = { root = '/work/repository' },
+}) == nil, 'Git teardown accepted a delayed history mount')
 assert(vim.wait(100, function()
   return return_view.closed
-    and settled_reentry_calls == 1
     and #opened_views == opened_view_count_during_return
-    and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
-    and vim.wo[return_editor_window].number
-    and vim.wo[return_editor_window].relativenumber
+    and vim.api.nvim_get_current_buf() == editor_buffer
 end, 10), 'Git teardown did not preserve the editor or reject a delayed history mount')
-assert(
-  branch_info_visible and statusline_branch_refreshes == 2,
-  'Diffview teardown erased restored branch state'
-)
-assert(
-  vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 }),
-  'Editor handoff moved the cursor while opening the historical file'
-)
-enclosing_structure_result = nil
-
-vim.api.nvim_set_current_tabpage(git_tabpage)
-vim.api.nvim_buf_set_lines(historical_buffer, 0, 1, false, {
-  'local function missing_from_worktree()',
-})
-local fallback_view = {
-  close = function(self)
-    self.closed = true
-  end,
-  cur_entry = editor_target_file,
-  cur_layout = {
-    b = { id = historical_window },
-    windows = { { id = historical_window } },
-  },
-  panel = {
-    cur_item = { {}, editor_target_file },
-    log_options = {},
-    updating = false,
-    winid = footer_window,
-  },
-  tabpage = git_tabpage,
-}
-previous_editing_tabpage = editor_tabpage
-current_view = fallback_view
-enclosing_structure_result = {
-  first_line = 1,
-  label = 'missing_from_worktree',
-  node_type = 'function_declaration',
-}
-panel.enter_git(fallback_view, function()
-  diffview.return_to_editor_line()
-end)
-assert(diffview.handle_ctrl_q(), 'Direct editor routing did not close Git mode')
-assert(
-  vim.api.nvim_get_current_tabpage() == editor_tabpage,
-  'Fallback return did not hand back to the editor tab immediately'
-)
-assert(
-  vim.wait(100, function()
-    return vim.api.nvim_get_current_tabpage() == editor_tabpage
-      and vim.fs.normalize(vim.api.nvim_buf_get_name(0)) == editor_target_path
-  end, 5),
-  'Fallback return did not restore the working-tree editor buffer first'
-)
-assert(
-  vim.wait(100, function()
-    return vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 1, 0 })
-  end, 5),
-  'Direct editor routing moved the cursor while opening the AFTER file'
-)
-enclosing_structure_result = nil
-assert(vim.wait(100, function()
-  return fallback_view.closed
-end, 10), 'Fallback Git return did not dispose its history view')
-assert(statusline_branch_refreshes == 4, 'Fallback Git teardown erased branch statusline state')
-
-vim.api.nvim_set_current_tabpage(git_tabpage)
-local render_failure_view = {
-  close = function(self)
-    self.closed = true
-  end,
-  cur_entry = editor_target_file,
-  cur_layout = {
-    b = { id = historical_window },
-    windows = { { id = historical_window } },
-  },
-  panel = {
-    cur_item = { {}, editor_target_file },
-    log_options = {},
-    updating = false,
-    winid = footer_window,
-  },
-  tabpage = git_tabpage,
-}
-previous_editing_tabpage = editor_tabpage
-current_view = render_failure_view
-panel.enter_git(render_failure_view, function()
-  diffview.return_to_editor_line()
-end)
-local render_failure_notified = false
-local original_notify = vim.notify
-vim.cmd = function(command)
-  if command == 'redraw' and vim.api.nvim_get_current_tabpage() == editor_tabpage then
-    error('forced editor render failure')
-  end
-  return original_cmd(command)
-end
-vim.notify = function(message)
-  if tostring(message):match('forced editor render failure') then
-    render_failure_notified = true
-  end
-end
-assert(diffview.handle_ctrl_q(), 'Editor render failure prevented Git mode teardown')
-assert(vim.wait(200, function()
-  return render_failure_notified
-end, 10), 'Editor render failure was not reported')
-vim.notify = original_notify
-vim.cmd = original_cmd
-assert(vim.wait(100, function()
-  return render_failure_view.closed
-end, 10), 'Render-failure Git return did not dispose its history view')
+assert(branch_info_visible and statusline_branch_refreshes == 2,
+  'Git teardown erased restored branch statusline state')
 if vim.api.nvim_tabpage_is_valid(git_tabpage) then
   vim.api.nvim_set_current_tabpage(git_tabpage)
   vim.cmd('tabclose')
 end
-
-local preserved_editor_tabpage = vim.api.nvim_get_current_tabpage()
-local preserved_editor_window = vim.api.nvim_get_current_win()
-local restored_editor_buffer = vim.api.nvim_get_current_buf()
-local preserved_editor_buffer = vim.api.nvim_create_buf(true, false)
-vim.api.nvim_win_set_buf(preserved_editor_window, preserved_editor_buffer)
-vim.api.nvim_buf_set_lines(preserved_editor_buffer, 0, -1, false, {
-  'unsaved editor state',
-  'must remain untouched',
-})
-vim.api.nvim_win_set_cursor(preserved_editor_window, { 2, 5 })
-vim.cmd('tabnew')
-local idle_git_tabpage = vim.api.nvim_get_current_tabpage()
-local idle_after_window = vim.api.nvim_get_current_win()
-local idle_view = {
-  close = function(self)
-    self.closed = true
-  end,
-  cur_entry = editor_target_file,
-  cur_layout = { b = { id = idle_after_window } },
-  git_diff_opened = false,
-  panel = { cur_item = nil, log_options = {}, updating = false },
-  tabpage = idle_git_tabpage,
-}
-previous_editing_tabpage = preserved_editor_tabpage
-current_view = idle_view
-panel.enter_git(idle_view, function()
-  diffview.return_to_editor_line()
-end)
-assert(diffview.handle_ctrl_q(), 'Idle Git history did not exit Git mode')
-assert(
-  vim.api.nvim_get_current_tabpage() == preserved_editor_tabpage
-    and vim.api.nvim_get_current_win() == preserved_editor_window
-    and vim.api.nvim_get_current_buf() == preserved_editor_buffer
-    and vim.deep_equal(vim.api.nvim_win_get_cursor(0), { 2, 5 })
-    and vim.deep_equal(
-      vim.api.nvim_buf_get_lines(preserved_editor_buffer, 0, -1, false),
-      { 'unsaved editor state', 'must remain untouched' }
-    ),
-  'Idle Git history changed the editor state preserved before entry'
-)
-assert(vim.wait(100, function()
-  return idle_view.closed
-end, 10), 'Idle Git view was not disposed')
-assert(
-  statusline_branch_refreshes == 7,
-  'Idle Git return did not restore branch statusline state'
-)
-if vim.api.nvim_tabpage_is_valid(idle_git_tabpage) then
-  vim.api.nvim_set_current_tabpage(idle_git_tabpage)
-  vim.cmd('tabclose')
-end
-vim.api.nvim_win_set_buf(preserved_editor_window, restored_editor_buffer)
-vim.api.nvim_buf_delete(preserved_editor_buffer, { force = true })
 previous_editing_tabpage = nil
 
 local symbol_view = diffview.open_file_history({

@@ -293,9 +293,15 @@ assert(issue_view.open_file('/work/repository', issue, {
   parent_tabpage = parent_tabpage,
 }))
 local second_issue_buffer = vim.api.nvim_get_current_buf()
-local close_mapping = vim.iter(vim.api.nvim_buf_get_keymap(second_issue_buffer, 'n')):find(
+local ctrl_q_mapping = vim.iter(vim.api.nvim_buf_get_keymap(second_issue_buffer, 'n')):find(
   function(keymap)
     return keymap.lhs == '<C-Q>'
+  end
+)
+assert(not ctrl_q_mapping, 'Issue detail still maps Ctrl-Q outside an input dialog')
+local close_mapping = vim.iter(vim.api.nvim_buf_get_keymap(second_issue_buffer, 'n')):find(
+  function(keymap)
+    return keymap.lhs == 'q'
   end
 )
 assert(close_mapping and close_mapping.callback, 'Issue detail lacks direct parent return')
@@ -303,7 +309,7 @@ close_mapping.callback()
 assert(
   vim.api.nvim_get_current_tabpage() == parent_tabpage
     and not issue_view.is_active(),
-  'Issue-detail Ctrl-Q did not close only detail and preserve its parent surface'
+  'Issue-detail q did not close only detail and preserve its parent surface'
 )
 
 local direct_pull_url = 'https://github.com/moon-hotel/Mooncake/pull/3452/files'
@@ -389,6 +395,15 @@ assert(
     and fallback_notification.message:match('opening in external browser'),
   'Failed direct issue rendering did not explain its browser fallback'
 )
+
+assert(issue_view.open_file('/work/repository', issue, {
+  parent_tabpage = parent_tabpage,
+}), 'Issue detail did not reopen for whole-mode quit')
+vim.api.nvim_feedkeys(vim.keycode(':q<CR>'), 'xt', false)
+assert(vim.wait(1000, function()
+  return not issue_view.is_active()
+    and vim.api.nvim_get_current_tabpage() == parent_tabpage
+end, 10), 'Issue-detail :q did not exit the Git mode')
 
 package.loaded['config.git.github'] = original_github
 package.loaded['config.git.issue'] = original_issue

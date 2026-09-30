@@ -11,6 +11,7 @@ for _, test_file in ipairs({
   'tests/git/events.lua',
   'tests/git/footer_loader.lua',
   'tests/git/footer_search.lua',
+  'tests/git/graph.lua',
   'tests/git/github.lua',
   'tests/git/init.lua',
   'tests/git/issue.lua',

@@ -127,7 +127,7 @@ function M.lines(github_record)
   vim.list_extend(rendered_lines, {
     '',
     '_`j`/`k`/`<C-d>`/`<C-u>` scroll · `q`/`<Space>de` returns to search · '
-      .. '`<C-q>` closes detail · `za` folds Markdown sections · '
+      .. '`q` returns to search · `:q` quits Git mode · `za` folds Markdown sections · '
       .. '`o` opens GitHub._',
   })
   return rendered_lines
@@ -242,14 +242,6 @@ local function attach_mappings(buffer, root, fetch_related)
     silent = true,
     desc = 'Return to Git search',
   })
-  vim.keymap.set('n', panel.close_key, function()
-    panel.pop()
-  end, {
-    buffer = buffer,
-    nowait = true,
-    silent = true,
-    desc = 'Close GitHub detail layer',
-  })
   vim.keymap.set('n', '<CR>', function()
     local issue_window = vim.fn.bufwinid(buffer)
     if issue_window == -1 then
@@ -284,6 +276,7 @@ local function attach_mappings(buffer, root, fetch_related)
 end
 
 function M.open_file(root, github_record, options)
+  require('config.git.diffview').install_quit_command()
   local detail_options = options or {}
   if not detail_options.preserve_pending_request then
     cancel_pending_direct_request()

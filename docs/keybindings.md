@@ -15,7 +15,7 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 | `<Space>fw` | Search project definitions |
 | `<Tab>` / `<S-Tab>` | Move between results/preview or Git panes |
 | `<C-v>` / `<C-x>` | Open a result in a vertical/horizontal split |
-| `<C-q>` | Close the active UI layer |
+| `<C-q>` | Cancel an input dialog or picker |
 | `<Space>o` / `<Space>p` | Jump back / forward within the current Neovim run |
 
 Jump history starts fresh in each Neovim instance. Recent files, saved marks, registers, and
@@ -63,12 +63,17 @@ already active.
 | `<Space>de` | Search branches, commits, issues, and pull requests |
 | `<Space>df` | Current-file history with rename tracking |
 | `<Space>ds` | Current-symbol line history |
-| `<Space>dr` | Bounded repository history |
-| `h` / `j` / `k` / `l` | Move the history cursor left / down / up / right |
-| `o` / `<Enter>` | Native Diffview expand/collapse or child-file open |
-| `<Space>dn` | Open native commit details |
-| `<Space>dm` | Guarded checkout of the selected commit |
-| `<Space>dp` | Collapse or restore the footer |
+| `<Space>dr` | Merge-aware repository graph and commit preview |
+| `j` / `k` | Move through commits or branches |
+| `o` / `<Enter>` | Focus the selected commit preview; in commit detail, open the selected file |
+| `<Space>db` | Toggle the branch pane below the graph |
+| Branch `o` / `Enter` | Review the selected local or remote branch without switching |
+| Branch `f` | Fetch remotes explicitly |
+| `<Space>dn` | Open native commit details in Diffview |
+| `<Space>dm` | Guarded commit checkout in Diffview; switch/track the selected branch in the branch pane |
+| `<Space>dp` | Hide or restore the Diffview history list |
+| `<Space>dv` | From commit list or message preview, open that commit's file diffs; toggle back to graph |
+| `:q` | Close the complete Git mode from any graph or Diffview pane |
 | `<Space>o` | Normal jumplist back |
 
 ## Language and Tools

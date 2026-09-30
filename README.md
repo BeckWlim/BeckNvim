@@ -7,16 +7,13 @@ system while keeping native Neovim and plugin behavior wherever practical.
 ## Highlights
 
 - **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
-- **Git review:** search remote branches, inspect commits, search collapsed commit filenames with `/` in history, detach HEAD for deeper review, and read pull requests in floating dialogs.
+- **Git review:** explore merge-aware commit graphs, inspect branches and local changes, and resume repository reviews within a Neovim session.
 - **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, move through links without stepping through hidden URLs, and edit source in place with refreshes when external file changes are detected.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
-  
-Tree panels share `o`/`Enter`, `zo`/`zc`/`za`, and `zR`/`zM`. Git history, NvimTree, and the project
-preview search collapsed paths with `/` and reveal matches temporarily. See [keybindings](docs/keybindings.md).
 
 ## See it in action
 
-**Symbol search:** use `Project Worksapce Symbol Search` to explore functions and types across Mooncake.
+**Symbol search:** project-wide function and type discovery across Mooncake.
 
 ![Project-wide symbol search and source previews in Mooncake](examples/media/search.gif)
 
@@ -25,15 +22,13 @@ preview search collapsed paths with `/` and reveal matches temporarily. See [key
 ![Mooncake remote branch search, detached commit review, and PR dialog](examples/media/git.gif)
 
 **Markdown tables:** long descriptions wrap at word boundaries, oversized identifiers split to fit,
-and neighboring cells stay aligned. Move through wrapped lines, select and copy a word, then
-quick-edit a status and undo/redo. The full [table sample](examples/fixtures/project/docs/table.md)
+and neighboring cells stay aligned. The full [table sample](examples/fixtures/project/docs/table.md)
 fits on one page.
 
 ![Long table cells wrapping beside aligned short cells, with cursor movement, copying, and quick editing](examples/media/table.gif)
 
 **Mermaid:** a [five-node flowchart](examples/fixtures/project/docs/mermaid.md) shows node shapes,
-a decision, labeled branches, and a shared result on one page. Navigate and copy a label, edit its
-source, then quick-edit surrounding prose.
+a decision, labeled branches, and a shared result on one page.
 
 ![Mermaid flowchart navigation, copying, and editing on one page](examples/media/mermaid.gif)
 
@@ -41,8 +36,7 @@ source, then quick-edit surrounding prose.
 
 ![Project homepage navigation with live light and dark themes](examples/media/themes.gif)
 
-Regenerate these demos with `bash scripts/record-demos.sh`.
-See [Recording the highlights](examples/README.md) for setup and individual scenes.
+See [Recording the highlights](examples/README.md) for demo generation, setup, and individual scenes.
 
 ## Main Modules
 
@@ -65,7 +59,6 @@ See [Recording the highlights](examples/README.md) for setup and individual scen
 The complete ownership and lifecycle model is documented in
 [Architecture](docs/architecture.md).
 
-Press `<Space>bt` in Normal mode to toggle the file tree.
 Persistent preferences share `~/.local/state/nvim/state.db`; temporary settings stay in process
 memory. Log data lives in `~/.local/state/nvim/logs/` (or the corresponding XDG state directory).
 Without SQLite, Neovim keeps running with preferences limited to the current process.

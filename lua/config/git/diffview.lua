@@ -4,6 +4,8 @@ local panel = require('config.git.panel')
 local lifecycle = require('config.git.lifecycle')
 local events = require('config.git.events')
 local window_state = require('config.ui.window_state')
+local subject = require('config.git.subject')
+local session = require('config.git.session')
 
 local M = {}
 local footer_annotation_namespace = vim.api.nvim_create_namespace('config-git-history-footer')
@@ -11,6 +13,7 @@ local footer_header_namespace = vim.api.nvim_create_namespace('config-git-histor
 local state = {
   closing = false,
   configured = false,
+  quit_mapping_installed = false,
   pending_view_closes = 0,
   pending_history_request_cancel = nil,
   repository_root = nil,
@@ -24,6 +27,7 @@ local history_entry_for_file
 local finalize_history_metadata_focus
 local schedule_footer_detail_render
 local request_footer_decoration
+local close_git_views
 
 local function escaped_winbar_text(value)
   return value:gsub('%%', '%%%%')
@@ -108,15 +112,6 @@ local function cancel_pending_history_request()
   if type(cancel_request) == 'function' then
     cancel_request()
   end
-end
-
-local function close_mapping()
-  return {
-    'n',
-    panel.close_key,
-    M.handle_ctrl_q,
-    { desc = 'Close current Git panel layer' },
-  }
 end
 
 local function history_selection_is_rendering(view)
@@ -258,6 +253,10 @@ end
 
 function M.checkout_selected_commit()
   local view = active_view()
+  if view and view.git_detail_commit then
+    if view.git_detail_commit.kind == 'worktree' then return false end
+    return move_anchor_from_review(view, view.git_detail_commit.hash)
+  end
   local history_panel = view and view.panel
   if not history_panel
       or history_panel.updating
@@ -361,6 +360,88 @@ function M.toggle_commit_list()
   return true
 end
 
+local function history_list_width()
+  return math.max(38, math.min(64, math.floor(vim.o.columns * 0.34)))
+end
+
+local function history_panel_config(mode)
+  if mode == 'list' and vim.o.columns >= 110 then
+    return {
+      position = 'left',
+      width = history_list_width(),
+      win_opts = {},
+    }
+  end
+  return {
+    position = 'bottom',
+    height = 10,
+    win_opts = {},
+  }
+end
+
+local function configure_history_panel(view, mode)
+  view.git_history_layout_mode = mode
+  if view.panel then
+    view.panel.config_producer = history_panel_config(mode)
+  end
+end
+
+function M.return_to_graph(view)
+  local graph_return = view and view.git_graph_return
+  local commit = view and view.git_detail_commit
+  if not graph_return or not commit then return false end
+  if view.git_graph_return_pending then return true end
+  view.git_graph_return_pending = true
+  return close_git_views(nil, nil, function()
+    local saved = session.read(graph_return.root).graph
+    -- Selection comes from the detail being reviewed; the graph keeps its panes.
+    if saved then saved.focus = 'list' end
+    return require('config.git.graph').open(graph_return.root, commit.hash,
+      saved and saved.branches_open, graph_return.history_ref, saved)
+  end)
+end
+
+function M.toggle_history_layout()
+  local view = active_view()
+  if view and view.git_graph_return then
+    return M.return_to_graph(view)
+  end
+  local history_panel = view and view.panel
+  if not history_panel
+      or type(history_panel.close) ~= 'function'
+      or type(history_panel.open) ~= 'function' then
+    return false
+  end
+  local previous_window = vim.api.nvim_get_current_win()
+  local panel_focused = history_panel.winid == previous_window
+  local panel_view
+  if history_panel.winid and vim.api.nvim_win_is_valid(history_panel.winid) then
+    pcall(vim.api.nvim_win_call, history_panel.winid, function()
+      panel_view = vim.fn.winsaveview()
+    end)
+  end
+  local next_mode = view.git_history_layout_mode == 'list' and 'detail' or 'list'
+  history_panel:close()
+  configure_history_panel(view, next_mode)
+  history_panel:open()
+  if panel_view and history_panel.winid and vim.api.nvim_win_is_valid(history_panel.winid) then
+    pcall(vim.api.nvim_win_call, history_panel.winid, function()
+      vim.fn.winrestview(panel_view)
+    end)
+  end
+  if panel_focused then
+    history_panel:focus()
+  elseif vim.api.nvim_win_is_valid(previous_window) then
+    vim.api.nvim_set_current_win(previous_window)
+  end
+  request_footer_decoration(view)
+  return true
+end
+
+local function history_layout_mapping()
+  return { 'n', '<Space>dv', M.toggle_history_layout, { desc = 'Switch Git history layout' } }
+end
+
 local function commit_list_mapping()
   return { 'n', '<Space>dp', M.toggle_commit_list, { desc = 'Toggle Git history panel' } }
 end
@@ -399,7 +480,6 @@ local function ignored_search_repeat_mapping()
 end
 
 local git_mode_mapping_keys = {
-  ['Close current Git panel layer'] = panel.close_key,
   ['Focus next Git pane'] = '<Tab>',
   ['Focus previous Git pane'] = '<S-Tab>',
   ['Toggle Git history panel'] = '<Space>dp',
@@ -425,33 +505,8 @@ local function preserve_global_workspace_search(buffer)
   pcall(vim.keymap.del, 'n', '<Space>fw', { buffer = buffer })
 end
 
-local function is_commit_details_buffer(buffer)
-  local buffer_name = vim.api.nvim_buf_get_name(buffer)
-  return buffer_name:match('/commit_log$') ~= nil
-end
-
-local function close_commit_details()
-  local detail_window = vim.api.nvim_get_current_win()
-  if vim.api.nvim_win_is_valid(detail_window) then
-    vim.api.nvim_win_close(detail_window, true)
-  end
-end
-
 local function protect_view_buffer(buffer)
   preserve_global_workspace_search(buffer)
-  local commit_details_buffer = is_commit_details_buffer(buffer)
-  local close_action = commit_details_buffer
-      and close_commit_details
-    or M.handle_ctrl_q
-  local close_description = commit_details_buffer
-      and 'Close Git commit details'
-    or 'Close current Git panel layer'
-  vim.keymap.set('n', panel.close_key, close_action, {
-    buffer = buffer,
-    nowait = true,
-    silent = true,
-    desc = close_description,
-  })
   vim.keymap.set('n', '<Tab>', focus_next_window, {
     buffer = buffer,
     nowait = true,
@@ -644,7 +699,7 @@ function M.defer_until_settled(action_name, action_callback)
   return true
 end
 
-function M.close(completion_callback, settled_callback)
+close_git_views = function(completion_callback, settled_callback, replacement_callback)
   cancel_pending_history_request()
   local current_git_view = active_view()
   local root_view = state.root_view
@@ -665,6 +720,9 @@ function M.close(completion_callback, settled_callback)
   if root_view and root_view ~= current_git_view then
     closing_views[#closing_views + 1] = root_view
   end
+  local detail_view = root_view and root_view.git_detail_commit and root_view
+    or current_git_view and current_git_view.git_detail_commit and current_git_view
+  if detail_view and detail_view.git_save_session then detail_view.git_save_session() end
   state.pending_view_closes = #closing_views
   state.closing = state.pending_view_closes > 0
   state.repository_root = nil
@@ -689,7 +747,10 @@ function M.close(completion_callback, settled_callback)
       return
     end
     return_completed = true
-    if focus_view then
+    -- A layout switch mounts its destination before retiring the old tab. The
+    -- ordinary exit still returns to the editor immediately.
+    local replacement_mounted = replacement_callback and replacement_callback()
+    if not replacement_mounted and focus_view then
       focus_editing_tab(focus_view)
     end
     if completion_callback then
@@ -697,7 +758,8 @@ function M.close(completion_callback, settled_callback)
     end
     for _, closing_view in ipairs(closing_views) do
       if lifecycle.get(closing_view) then
-        lifecycle.mark_closing(closing_view, 'editor frame rendered')
+        lifecycle.mark_closing(closing_view,
+          replacement_mounted and 'replacement Git panel mounted' or 'editor frame rendered')
       end
     end
   end
@@ -730,6 +792,10 @@ function M.close(completion_callback, settled_callback)
   return true
 end
 
+function M.close(completion_callback, settled_callback)
+  return close_git_views(completion_callback, settled_callback)
+end
+
 function M.return_to_previous_git_panel()
   local view = active_view()
   local parent_view = view and view.git_parent_view
@@ -751,46 +817,6 @@ function M.return_to_previous_git_panel()
     return true
   end
   return M.close()
-end
-
-function M.handle_ctrl_q()
-  if panel.level() == 'git' then
-    return M.return_to_editor_line()
-  end
-  return panel.pop() ~= nil
-end
-
-local function history_editor_target(view)
-  if view and view.git_diff_opened == false then
-    return nil, 'no Git diff was explicitly opened'
-  end
-  if view and view.nulled then
-    return nil, 'rendered AFTER commit has no working-tree line'
-  end
-  if not view
-      or not view.cur_entry
-      or (not view.cur_entry.opened and not lifecycle.render_is_ready(view)) then
-    return nil, 'waiting for the rendered AFTER file'
-  end
-  if not view.cur_entry.absolute_path then
-    return nil, 'rendered AFTER file has no working-tree path'
-  end
-  local target_path = vim.fs.normalize(view.cur_entry.absolute_path)
-  if vim.fn.filereadable(target_path) ~= 1 then
-    return nil, 'rendered AFTER file is absent from the working tree'
-  end
-  local layout = view.cur_layout
-  local after_window = layout and layout.b
-  local historical_cursor = after_window
-      and after_window.id
-      and vim.api.nvim_win_is_valid(after_window.id)
-      and vim.api.nvim_win_get_cursor(after_window.id)
-    or nil
-  return {
-    column = historical_cursor and historical_cursor[2] or nil,
-    line = historical_cursor and historical_cursor[1] or nil,
-    path = target_path,
-  }
 end
 
 local function show_return_wait(view, detail)
@@ -848,123 +874,61 @@ local function close_without_editor_target(view)
       refresh_editor_branch()
     end
     pcall(vim.cmd, 'redraw')
+  end, function()
+    refresh_editor_branch()
+    pcall(vim.cmd, 'redrawstatus')
   end)
 end
 
--- Git mode records only which existing working-tree file the editor should show.
-local function write_editor_return_message(target)
-  if not target or vim.fn.filereadable(target.path) ~= 1 then
-    return nil
-  end
-  local target_buffer = vim.fn.bufadd(target.path)
-  if target_buffer < 1 then
-    return nil
-  end
-  return {
-    buffer = target_buffer,
-    path = target.path,
-  }
-end
-
-local function editor_window_for_return(message)
-  local current_window = vim.api.nvim_get_current_win()
-  if vim.api.nvim_win_get_buf(current_window) == message.buffer then
-    return current_window
-  end
-  for _, tab_window in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-    if vim.api.nvim_win_get_buf(tab_window) == message.buffer then
-      return tab_window
-    end
-  end
-  return current_window
-end
-
-local function apply_editor_return_message(view, message)
-  vim.schedule(function()
-    local applied = false
-    local apply_error
-    local apply_succeeded = xpcall(function()
-      local editor_window = editor_window_for_return(message)
-      if vim.api.nvim_win_get_buf(editor_window) ~= message.buffer then
-        vim.api.nvim_win_set_buf(editor_window, message.buffer)
-      end
-      apply_editor_line_number_options_to_window(view, editor_window)
-      if vim.api.nvim_get_current_win() ~= editor_window then
-        vim.api.nvim_set_current_win(editor_window)
-      end
-      restore_editor_mappings(message.buffer)
-      vim.cmd('redraw')
-      applied = true
-    end, function(execution_error)
-      apply_error = tostring(execution_error)
-    end)
-    if not apply_succeeded then
-      vim.notify(apply_error, vim.log.levels.ERROR)
-    end
-    lifecycle.log(
-      view,
-      'editor render',
-      applied and 'complete' or 'failed',
-      message.path,
-      applied and 'info' or 'error'
-    )
-    events.emit('editor_rendered', {
-      generation = lifecycle.generation(view),
-      path = message.path,
-      rendered = applied,
-    })
-  end)
-end
-
-function M.return_to_editor_line()
+function M.return_to_editor()
   local view = active_view()
   if not M.is_active() then
     return false
   end
-  local lifecycle_state = lifecycle.get(view)
-  local initial_render_pending = lifecycle_state and lifecycle_state.initializing
   cancel_history_footer_enrichment(view)
   cancel_history_head_resolution(view)
   if view then
     view.git_force_close = true
     stop_history_stream(view)
   end
-  if initial_render_pending then
-    return close_without_editor_target(view)
+  return close_without_editor_target(view)
+end
+
+function M.quit_git_mode()
+  if not active_view() then
+    return M.close()
   end
-  local editor_target = history_editor_target(view)
-  if not editor_target then
-    return close_without_editor_target(view)
-  end
-  local return_message = write_editor_return_message(editor_target)
-  if not return_message then
-    return close_without_editor_target(view)
-  end
-  show_return_wait(view, 'restoring editor')
-  return M.close(function()
-    restore_editor_mappings(vim.api.nvim_get_current_buf())
-    refresh_editor_branch()
-    apply_editor_return_message(view, return_message)
-  end, function()
-    if vim.api.nvim_buf_is_valid(return_message.buffer)
-        and vim.api.nvim_get_current_buf() == return_message.buffer then
-      apply_editor_line_number_options_to_window(view, vim.api.nvim_get_current_win())
-      refresh_editor_branch()
-      pcall(vim.cmd, 'redrawstatus')
-    end
-  end)
+  return M.return_to_editor()
 end
 
 local function command_line_enter()
   local command_line = vim.trim(vim.fn.getcmdline())
   local partial_quit = command_line:match('^q!?$') or command_line:match('^quit!?$')
-  if vim.fn.getcmdtype() == ':' and partial_quit and M.is_active() then
+  local graph = package.loaded['config.git.graph']
+  local graph_is_current = graph and graph.is_current()
+  if vim.fn.getcmdtype() == ':' and partial_quit
+      and (graph_is_current or M.is_active()) then
     vim.schedule(function()
-      vim.notify('Use <C-q> to close the current Git panel', vim.log.levels.INFO)
+      if graph_is_current then
+        graph.close()
+      else
+        M.quit_git_mode()
+      end
     end)
     return vim.keycode('<C-c>')
   end
   return vim.keycode('<CR>')
+end
+
+function M.install_quit_command()
+  if state.quit_mapping_installed then
+    return
+  end
+  state.quit_mapping_installed = true
+  vim.keymap.set('c', '<CR>', command_line_enter, {
+    expr = true,
+    desc = 'Quit the complete Git mode with :q',
+  })
 end
 
 local empty_tree_hash = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
@@ -1219,7 +1183,7 @@ local function update_history_panel_winbar(view)
     )
       .. '%<'
       .. escaped_winbar_text(lifecycle.failure_detail(view) or 'history loading stopped')
-      .. escaped_winbar_text(' · <C-q> close ')
+      .. escaped_winbar_text(' · :q quit ')
       .. '%='
     return
   end
@@ -1338,7 +1302,39 @@ local function hashes_match(left, right)
       and (left == right or vim.startswith(left, right) or vim.startswith(right, left))
 end
 
+local function decorate_commit_subject(buffer, component, commit)
+  if not component or component.lstart < 0 or not commit or not commit.subject then
+    return
+  end
+  -- Use Diffview's subject span so identical bracket text in refs or paths
+  -- cannot be mistaken for a commit prefix. Diffview still owns the row text.
+  for _, chunk in ipairs(component.hl or {}) do
+    if chunk.group == 'DiffviewFilePanelSelected'
+        or chunk.group == 'DiffviewFilePanelFileName' then
+      local row = component.lstart + chunk.line_idx
+      local line = vim.api.nvim_buf_get_lines(buffer, row, row + 1, false)[1] or ''
+      local start_col = chunk.first + 1 -- Native subject chunk starts with a space.
+      for _, span in ipairs(subject.spans(commit.subject)) do
+        local first = start_col + span.start_col
+        local last = math.min(start_col + span.end_col, chunk.last, #line)
+        if first < last then
+          vim.api.nvim_buf_set_extmark(buffer, footer_annotation_namespace, row, first, {
+            end_col = last,
+            hl_group = span.group,
+            priority = 150,
+          })
+        end
+      end
+      return
+    end
+  end
+end
+
 decorate_history_footer = function(view)
+  if view and view.git_detail_commit then
+    if view.git_update_detail_chrome then view.git_update_detail_chrome() end
+    return false
+  end
   local history_panel = view and view.panel
   local panel_buffer = history_panel and history_panel.bufid
   if not history_panel
@@ -1354,6 +1350,7 @@ decorate_history_footer = function(view)
     local component_structure = entry_component_for(history_panel, entry)
     local commit_component = component_structure and component_structure.commit
       and component_structure.commit.comp
+    decorate_commit_subject(panel_buffer, commit_component, entry.commit)
     if entry.git_independent_preview
         and commit_component
         and commit_component.lstart >= 0 then
@@ -1517,6 +1514,10 @@ local function prepare_scoped_footer_entries(view, entries)
 end
 
 function M.adapt_history_footer(view)
+  if view and view.git_detail_commit then
+    if view.git_update_detail_chrome then view.git_update_detail_chrome() end
+    return false
+  end
   local history_panel = view and view.panel
   if not view
       or view.git_footer_enriching
@@ -2110,7 +2111,7 @@ complete_history_readiness = function(view, detail)
     vim.notify(render_notice, vim.log.levels.INFO)
   end
   if lifecycle_state.return_requested then
-    show_return_wait(view, 'ready; press <C-q> to return')
+    show_return_wait(view, 'ready; press :q to quit')
   end
   finish_history_render(view, true, detail)
   return true
@@ -2528,18 +2529,20 @@ function M.setup()
     },
     keymaps = {
       view = {
-        close_mapping(),
         next_window_mapping(),
         previous_window_mapping(),
         commit_list_mapping(),
+        history_layout_mapping(),
         search_mapping(),
         ignored_search_repeat_mapping(),
       },
       file_panel = vim.list_extend({
-        close_mapping(),
+        checkout_commit_mapping(),
+        commit_details_mapping(),
         next_window_mapping(),
         previous_window_mapping(),
         commit_list_mapping(),
+        history_layout_mapping(),
         search_mapping(),
         ignored_search_repeat_mapping(),
       }, tree_actions.mappings('tree', vim.tbl_extend('force', fold_actions, {
@@ -2549,15 +2552,15 @@ function M.setup()
         history_entry_mapping('<2-LeftMouse>'),
         checkout_commit_mapping(),
         commit_details_mapping(),
-        close_mapping(),
         next_window_mapping(),
         previous_window_mapping(),
         commit_list_mapping(),
+        history_layout_mapping(),
         search_mapping(),
         ignored_search_repeat_mapping(),
       }, tree_mappings),
-      option_panel = { close_mapping() },
-      help_panel = { close_mapping() },
+      option_panel = {},
+      help_panel = {},
     },
     hooks = {
       diff_buf_read = protect_view_buffer,
@@ -2581,10 +2584,7 @@ function M.setup()
     end,
     desc = 'Protect generated Diffview buffers with Git-mode mappings',
   })
-  vim.keymap.set('c', '<CR>', command_line_enter, {
-    expr = true,
-    desc = 'Protect combined Diffview from partial :q',
-  })
+  M.install_quit_command()
 end
 
 local function prepare_history_search_options(history_options)
@@ -3258,6 +3258,122 @@ function M.apply_history_context(view, options)
   return true
 end
 
+function M.open_commit_detail(options)
+  ensure_loaded()
+  if state.closing then return nil end
+  local commit = options.commit
+  local root = options.location.root
+  local worktree = commit.kind == 'worktree'
+  -- Native Git range parsing uses the first parent (or the empty tree for a
+  -- root commit). DiffView owns a flat changed-file list, with no history walk.
+  -- Native local mode includes staged, unstaged, and untracked files. A HEAD
+  -- revision comparison excludes untracked files in Diffview's Git adapter.
+  local arguments = worktree and { '-C' .. root, '--untracked-files=all' }
+    or { '-C' .. root, commit.hash .. '^!' }
+  local view = require('diffview.lib').diffview_open(arguments)
+  if not view then return nil end
+  view.git_repository_root = root
+  view.git_detail_commit = commit
+  view.git_graph_return = options.graph_return
+  view.git_result_source = worktree and 'WORKTREE' or options.source
+  view.git_editor_line_number_options = resolve_editor_line_number_options(options)
+  view.git_history_options = {
+    kind = 'repository', location = { root = root }, revision = worktree and 'HEAD' or commit.hash,
+    selected_commit = not worktree and commit.hash or nil, source = options.source,
+  }
+  view.git_search_options = prepare_history_search_options(view.git_history_options)
+  local restored = options.session_restore
+  if restored then view.options.selected_file = restored.selected_file end
+  view.panel.config_producer = history_panel_config('detail')
+  if restored and restored.panel_height then
+    view.panel.config_producer.height = restored.panel_height
+  end
+  view.panel.config_producer.win_opts.winhl = {
+    'WinBar:Normal', 'WinBarNC:Normal', opt = { method = 'append' },
+  }
+  view.panel.listing_style = 'list'
+  view.git_save_session = function()
+    local current_window = vim.api.nvim_get_current_win()
+    local layout = view.cur_layout or {}
+    local a_window, b_window = layout.a and layout.a.id, layout.b and layout.b.id
+    local panel_open = view.panel:is_open()
+    local cursor_file = panel_open and view.panel:get_item_at_cursor() or nil
+    session.update(root, { layout = 'detail', detail = {
+      commit = commit, graph_return = view.git_graph_return, source = view.git_result_source,
+      selected_file = view.panel.cur_file and view.panel.cur_file.path,
+      cursor_file = cursor_file and cursor_file.path,
+      panel_open = panel_open,
+      panel_height = panel_open and vim.api.nvim_win_get_height(view.panel.winid) or nil,
+      focus = current_window == a_window and 'a' or current_window == b_window and 'b' or 'panel',
+      a_view = session.capture_window(a_window), b_view = session.capture_window(b_window),
+    } })
+  end
+  state.repository_root = root
+  state.root_view = view
+  local function update_detail_chrome()
+    if not view.tabpage or not vim.api.nvim_tabpage_is_valid(view.tabpage) then return end
+    apply_editor_line_number_options(view)
+    update_history_winbars(view)
+    if view.panel.winid and vim.api.nvim_win_is_valid(view.panel.winid) then
+      local title = commit.subject or ''
+      local chunks = { highlighted_winbar_chunk(worktree and 'DiagnosticWarn' or 'DiagnosticHint',
+        ' ' .. (worktree and '[WORKTREE]' or commit.hash:sub(1, 8)) .. ' ') }
+      local offset = 0
+      for _, span in ipairs(subject.spans(title)) do
+        chunks[#chunks + 1] = highlighted_winbar_chunk('Normal', title:sub(offset + 1, span.start_col))
+        chunks[#chunks + 1] = highlighted_winbar_chunk(span.group,
+          title:sub(span.start_col + 1, span.end_col))
+        offset = span.end_col
+      end
+      chunks[#chunks + 1] = highlighted_winbar_chunk('Normal', title:sub(offset + 1))
+      vim.wo[view.panel.winid].winbar = table.concat(chunks) .. '%*%<'
+    end
+  end
+  local restore_pending = restored ~= nil
+  local files_ready = false
+  local function restore_detail()
+    if not restore_pending or not files_ready or state.root_view ~= view
+        or not view.tabpage or not vim.api.nvim_tabpage_is_valid(view.tabpage) then return end
+    if view.files:len() > 0 and (not view.cur_entry or not view.cur_entry.opened) then return end
+    restore_pending = false
+    local layout = view.cur_layout or {}
+    local a_window, b_window = layout.a and layout.a.id, layout.b and layout.b.id
+    -- Only restore text positions when the same file is still available.
+    if view.cur_entry and view.cur_entry.path == restored.selected_file then
+      session.restore_window(a_window, restored.a_view)
+      session.restore_window(b_window, restored.b_view)
+    end
+    for _, file in ipairs(view.panel:ordered_file_list()) do
+      if file.path == restored.cursor_file then view.panel:highlight_file(file); break end
+    end
+    if restored.panel_open == false then view.panel:close() end
+    local target = restored.focus == 'a' and a_window or restored.focus == 'b' and b_window
+      or view.panel.winid
+    if target and vim.api.nvim_win_is_valid(target) then vim.api.nvim_set_current_win(target) end
+  end
+  view.emitter:on('file_open_post', function()
+    update_detail_chrome()
+    synchronize_history_syntax(view)
+    vim.schedule(restore_detail)
+  end)
+  view.emitter:on('post_layout', update_detail_chrome)
+  local focused = false
+  view.git_update_detail_chrome = update_detail_chrome
+  view.emitter:on('files_updated', function()
+    if state.root_view ~= view then return end
+    update_detail_chrome()
+    if not focused then
+      focused = true
+      files_ready = true
+      if restored then vim.schedule(restore_detail) else view.panel:focus() end
+    end
+  end)
+  view:open()
+  update_detail_chrome()
+  panel.enter_git(view, function() M.return_to_graph(view) end)
+  return view
+end
+
 function M.open_file_history(options)
   ensure_loaded()
   local history_options = vim.deepcopy(options or {})
@@ -3301,6 +3417,8 @@ function M.open_file_history(options)
   view.git_anchor_plan = vim.deepcopy(history_options.anchor_plan)
   view.git_result_source = history_options.source
   view.git_history_kind = history_options.kind
+  configure_history_panel(view, history_options.layout_mode
+    or (history_options.kind == 'repository' and 'list' or 'detail'))
   view.git_footer_tree = history_options.kind == 'file' or history_options.kind == 'symbol'
   view.git_footer_enriching = view.git_footer_tree
   view.git_diff_opened = false
@@ -3341,9 +3459,7 @@ function M.open_file_history(options)
       M.return_to_previous_git_panel()
     end)
   else
-    panel.enter_git(view, function()
-      M.return_to_editor_line()
-    end)
+    panel.enter_git(view, M.return_to_editor)
   end
   if history_options.selected_commit then
     local remaining_attempts = 1500

@@ -61,6 +61,57 @@ local history_row_format = table.concat({
 
 M.commands = {}
 
+function M.commands.graph_history(limit, history_ref)
+  return {
+    'git', '--no-pager', 'log', '--graph', '--topo-order',
+    '--max-count=' .. tostring(limit),
+    '--format=%x1e%H%x1f%P%x1f%s%x1f%D',
+    history_ref or 'HEAD',
+  }
+end
+
+function M.parse_graph_history(output)
+  local rows = {}
+  for _, raw_line in ipairs(M.output_lines(output)) do
+    local marker = raw_line:find(string.char(30), 1, true)
+    local prefix = marker and raw_line:sub(1, marker - 1) or raw_line
+    local graph = prefix:gsub('%*', '●'):gsub('|', '│'):gsub('/', '╱'):gsub('\\', '╲')
+    if marker then
+      local fields = vim.split(raw_line:sub(marker + 1), string.char(31), { plain = true })
+      local hash = fields[1]
+      if hash and hash:match('^[0-9a-fA-F]+$') then
+        local parents = vim.split(fields[2] or '', ' ', { plain = true, trimempty = true })
+        if #parents > 1 then
+          graph = graph:gsub('●', '◆', 1)
+        end
+        rows[#rows + 1] = {
+          graph = graph,
+          commit = {
+            hash = hash,
+            parents = parents,
+            refs = fields[4] or '',
+            subject = (fields[3] or ''):gsub('[\r\n\t]', ' '),
+          },
+        }
+      end
+    elseif graph:match('%S') then
+      rows[#rows + 1] = { graph = graph }
+    end
+  end
+  return rows
+end
+
+function M.commands.commit_message(commit_hash)
+  return { 'git', '--no-pager', 'show', '-s', '--format=%B%x1e%an%x1f%aI', commit_hash }
+end
+
+function M.commands.commit_files(commit_hash)
+  return {
+    'git', '--no-pager', '-c', 'core.quotePath=false', 'show',
+    '--format=', '--name-status', '--first-parent', '-m', '--root', commit_hash,
+  }
+end
+
 function M.output_lines(output)
   local normalized_output = (output or ''):gsub('\r\n', '\n')
   if normalized_output == '' then
@@ -183,6 +234,41 @@ function M.commands.head_state()
   return { 'git', 'status', '--porcelain=v2', '--branch' }
 end
 
+function M.commands.worktree_state()
+  return { 'git', 'status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all' }
+end
+
+function M.parse_worktree_state(output)
+  local records = vim.split(output or '', '\0', { plain = true })
+  local headers, files = {}, {}
+  local index = 1
+  while index <= #records do
+    local record = records[index]
+    local kind = record:sub(1, 1)
+    if kind == '#' then
+      headers[#headers + 1] = record
+    elseif kind == '?' then
+      files[#files + 1] = { status = '??', path = record:sub(3) }
+    else
+      local fields = ({ ['1'] = 8, ['2'] = 9, u = 10 })[kind]
+      local path = fields and record:match('^' .. ('%S+ '):rep(fields) .. '(.*)$')
+      if path then
+        local file = { status = record:match('^%S+ (%S+)'), path = path }
+        if kind == '2' then
+          index = index + 1
+          file.original_path = records[index]
+        end
+        files[#files + 1] = file
+      end
+    end
+    index = index + 1
+  end
+  local state = M.parse_head_state(table.concat(headers, '\n'))
+  state.files = files
+  state.dirty = #files > 0
+  return state
+end
+
 function M.parse_head_state(output)
   local head_state = {
     branch_name = nil,
@@ -228,6 +314,10 @@ end
 
 function M.commands.commit_is_ancestor(commit_hash, refname)
   return { 'git', 'merge-base', '--is-ancestor', commit_hash, refname }
+end
+
+function M.commands.branch_fork_point(history_ref, branch_ref)
+  return { 'git', 'merge-base', history_ref, branch_ref }
 end
 
 function M.commands.commit_position(commit_hash, refname)

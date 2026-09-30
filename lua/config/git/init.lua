@@ -126,9 +126,10 @@ end
 
 local function open_history(kind)
   local git_diffview = require('config.git.diffview')
-  if git_diffview.is_active() then
+  local graph = require('config.git.graph')
+  if git_diffview.is_active() or graph.is_active() then
     vim.notify(
-      'Git mode is already active; use <Space>de to search or <C-q> to close it',
+      'Git mode is already active; use <Space>de to search or :q to close it',
       vim.log.levels.INFO
     )
     return false
@@ -144,6 +145,10 @@ local function open_history(kind)
   if not location then
     vim.notify(location_error, vim.log.levels.INFO)
     return false
+  end
+
+  if kind == 'repository' then
+    return graph.resume(location.root)
   end
 
   if kind ~= 'symbol' then
@@ -359,6 +364,10 @@ end
 
 function M.search_repository()
   local git_diffview = require('config.git.diffview')
+  local graph = require('config.git.graph')
+  if graph.is_active() then
+    return graph.open_detail(true)
+  end
   if git_diffview.defer_until_settled('repository_search', M.search_repository) then
     return true
   end
@@ -483,6 +492,18 @@ local function render_commit_overview(
 )
   local git_diffview = require('config.git.diffview')
   local selected_context = review_context or {}
+  if parent_view and parent_view.git_detail_commit
+      and parent_view.git_detail_commit.hash == commit_hash then
+    -- The historical diff remains valid after checkout; keep its native file
+    -- panel instead of rebuilding a branch history for the same commit.
+    parent_view.git_checked_out_branch = selected_context.checked_out_branch
+    parent_view.git_detached_head_commit = selected_context.detached_head_commit
+    git_diffview.adapt_history_footer(parent_view)
+    if render_ready_callback then
+      render_ready_callback(parent_view, true, 'commit detail retained after checkout')
+    end
+    return true
+  end
   local reviewed_history_ref = selected_context.branch_ref or selected_context.branch_name
   local history_options = {
     anchor_plan = vim.deepcopy(selected_context.anchor_plan),

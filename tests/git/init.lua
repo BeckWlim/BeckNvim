@@ -335,6 +335,7 @@ assert(
 local original_git_module = package.loaded['config.git']
 local original_diffview_module = package.loaded['config.git.diffview']
 local original_search_module = package.loaded['config.git.search']
+local original_graph_module = package.loaded['config.git.graph']
 local original_treesitter_context_module = package.loaded['config.syntax.treesitter_context']
 local original_repository_start = repository.start
 local started_commands = {}
@@ -350,6 +351,14 @@ local focus_history_result = false
 local focus_history_calls = 0
 local anchor_logs = {}
 local opened_history_view = { name = 'direct repository history' }
+local graph_opened_root
+package.loaded['config.git.graph'] = {
+  is_active = function() return false end,
+  resume = function(root)
+    graph_opened_root = root
+    return true
+  end,
+}
 local head_status_output = table.concat({
   '# branch.oid previous',
   '# branch.head main',
@@ -890,11 +899,10 @@ head_status_output = table.concat({
 }, '\n')
 git.history_repository()
 assert(
-  history_operation_order[1] == 'mount'
-    and history_operation_order[2] == 'status'
-    and overview_options.head_resolution_pending == nil
-    and overview_options.branch_name == 'main',
-  'Repository history waited for HEAD metadata before mounting its native panel'
+  graph_opened_root == vim.fn.getcwd()
+    and #history_operation_order == 0,
+  'Repository history did not open its commit graph directly: '
+    .. vim.inspect({ graph_opened_root, history_operation_order })
 )
 
 local original_project_for_buffer = project.for_buffer
@@ -929,6 +937,7 @@ project.detect_repository = original_project_detect_repository
 
 repository.start = original_repository_start
 package.loaded['config.git.diffview'] = original_diffview_module
+package.loaded['config.git.graph'] = original_graph_module
 package.loaded['config.git.search'] = original_search_module
 package.loaded['config.syntax.treesitter_context'] = original_treesitter_context_module
 package.loaded['config.git'] = original_git_module
