@@ -23,6 +23,9 @@ assert(session:read_sync().selected[1] == 'alpha', 'Session reads exposed mutabl
 assert(state.open('selection', { scope = 'session', session_id = 'two' }):read_sync() == nil)
 assert(session.path == nil and not vim.uv.fs_stat(directory .. '/state.db'),
   'Session state wrote to disk')
+local explicit_memory = state.open('explicit-memory', { backend = 'memory', directory = directory })
+assert(explicit_memory.path == nil and explicit_memory:write({ transient = true })
+    and explicit_memory:read_sync().transient, 'Explicit memory backend was not process-local')
 
 assert(first:write({ ratio = 0.1 }))
 for index = 1, 30 do assert(first:write({ ratio = index / 100 })) end
@@ -101,6 +104,42 @@ locked:close()
 assert(first:read_sync().ratio == 0.3, 'Failed transaction damaged committed state')
 assert(first:write_sync({ ratio = 0.4 }), 'Failed save prevented retry')
 assert(first:read_sync().ratio == 0.4)
+
+local backend_documents = {}
+local replacement_backend = { persistent = true }
+function replacement_backend.read_sync(store)
+  return backend_documents[store.key]
+end
+function replacement_backend.write_sync(store, source)
+  backend_documents[store.key] = source
+  return true
+end
+function replacement_backend.read(store, callback)
+  local cancelled = false
+  vim.schedule(function()
+    if not cancelled then callback(backend_documents[store.key]) end
+  end)
+  return function() cancelled = true end
+end
+function replacement_backend.write(store, source)
+  backend_documents[store.key] = source
+  return true
+end
+function replacement_backend.when_idle(_, callback)
+  vim.schedule(function() callback(true) end)
+end
+state.register_backend('sqlite', replacement_backend)
+local replacement = state.open('replacement', { directory = directory })
+assert(replacement:write_sync({ source = 'replaceable' }))
+assert(replacement:read_sync().source == 'replaceable', 'Registered storage backend did not persist data')
+local replacement_callback
+replacement:read(function(document, failure)
+  assert(not failure and document.source == 'replaceable')
+  replacement_callback = true
+end)
+assert(vim.wait(1000, function() return replacement_callback end),
+  'Registered storage backend did not deliver asynchronous reads')
+state.register_backend('sqlite', nil)
 
 local imported = state.open('async-import', { directory = directory, accept_unversioned = true })
 vim.fn.writefile({ '{"name":"async"}' }, imported.legacy_path)

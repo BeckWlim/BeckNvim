@@ -26,6 +26,13 @@ assert(
   'a narrower LSP root overrode the authoritative Git repository root'
 )
 
+local rendered = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_buf_set_name(rendered, 'markdown-preview://project-test')
+vim.b[rendered].markdown_preview_source = current_bufnr
+assert(project.for_buffer(rendered) == selected_root, 'Rendered file lost its source project root')
+assert(project.relative_path(rendered) == 'lua/config/project.lua', 'Rendered file exposed its synthetic path')
+vim.api.nvim_buf_delete(rendered, { force = true })
+
 local temporary_root = vim.fn.tempname()
 local lsp_root = vim.fs.joinpath(temporary_root, 'workspace')
 local nested_lsp_root = vim.fs.joinpath(lsp_root, 'python')
@@ -50,6 +57,10 @@ rawset(vim.lsp, 'get_clients', function(opts)
   return clients
 end)
 local selected_lsp_root = project.for_buffer(lsp_buffer)
+local lsp_preview = vim.api.nvim_create_buf(false, true)
+vim.b[lsp_preview].markdown_preview_source = lsp_buffer
+assert(project.for_buffer(lsp_preview) == nested_lsp_root, 'Rendered file queried LSP roots on its mirror')
+vim.api.nvim_buf_delete(lsp_preview, { force = true })
 local selected_path_root = project.resolve_path(lsp_file)
 rawset(project, 'detect_repository', original_detect_repository)
 assert(

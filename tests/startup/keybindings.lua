@@ -19,6 +19,7 @@ local replaced_modules = {
   'config.type_hierarchy',
   'config.lsp.type_information',
   'config.search.workspace_symbols',
+  'config.search.telescope',
   'telescope.builtin',
 }
 local original_modules = {}
@@ -28,6 +29,12 @@ end
 
 local function no_op() end
 local git_search_calls = 0
+local file_picker_calls = {}
+package.loaded['config.search.telescope'] = {
+  open_file_picker = function(name, options, command)
+    file_picker_calls[#file_picker_calls + 1] = { name = name, options = options, command = command }
+  end,
+}
 
 package.loaded['config.audit.diagnostic'] = { open = no_op }
 package.loaded['config.audit.project'] = { run_or_open = no_op }
@@ -80,7 +87,7 @@ package.loaded['config.startup.keybindings'] = nil
 require('config.startup.keybindings').setup()
 
 local expected_mappings = {
-  '<Space>wh', '<Space>wj', '<Space>wk', '<Space>wl',
+  '<Space>wh', '<Space>wj', '<Space>wk', '<Space>wl', '<Space>ww',
   '<Space>wv', '<Space>ws', '<Space>wq', '<Space>wo',
   '<Space>rh', '<Space>rj', '<Space>rk', '<Space>rl', '<Space>r=',
   '<Tab>', '<S-Tab>', '<Space>o', '<Space>p',
@@ -106,6 +113,19 @@ for _, lhs in ipairs(expected_mappings) do
   )
   assert(mapping.desc and mapping.desc ~= '', 'Mapping has no description: ' .. lhs)
 end
+
+for _, lhs in ipairs({ '<Space>ff', '<Space>fr', '<Space>fb', '<Space>fg', '<Space>fv', '<Space>bv' }) do
+  vim.fn.maparg(lhs, 'n', false, true).callback()
+end
+assert(vim.deep_equal(vim.tbl_map(function(call) return call.name end, file_picker_calls),
+  { 'find_files', 'oldfiles', 'buffers', 'live_grep', 'find_files', 'buffers' }),
+  'File shortcuts bypassed the shared picker launcher')
+for index = 1, 4 do
+  assert(file_picker_calls[index].command == nil, 'Ordinary file shortcut requested an implicit split')
+end
+assert(file_picker_calls[2].options.cwd == vim.fn.getcwd(), 'Recent files lost their directory scope')
+assert(file_picker_calls[5].command == 'vnew' and file_picker_calls[6].command == 'vnew',
+  'Explicit vertical split shortcuts lost their split intent')
 
 local visual_gx_mapping = vim.fn.maparg('gx', 'x', false, true)
 assert(
@@ -145,7 +165,9 @@ vim.fn.maparg('<Space>de', 'n', false, true).callback()
 assert(git_search_calls == 1, 'Space-de did not open standalone repository Git search')
 
 local jump_back_mapping = vim.fn.maparg('<Space>o', 'n', false, true)
-assert(jump_back_mapping.rhs == '<C-o>', 'Space-o is not a pure jump-back mapping')
+assert(type(jump_back_mapping.callback) == 'function', 'Space-o bypasses the shared navigation manager')
+assert(type(vim.fn.maparg('<Space>p', 'n', false, true).callback) == 'function',
+  'Space-p bypasses the shared navigation manager')
 
 local append_mapping = vim.fn.maparg('a', 'n', false, true)
 assert(vim.tbl_isempty(append_mapping), 'Native Normal-mode append is overridden')

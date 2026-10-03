@@ -247,6 +247,7 @@ local function move_anchor_from_review(view, commit_hash)
       branch_name = view.git_branch_name,
       anchor_plan = view.git_anchor_plan,
       source = view.git_result_source,
+      is_current = function() return active_view() == view end,
     }
   )
 end
@@ -917,7 +918,7 @@ local function command_line_enter()
     end)
     return vim.keycode('<C-c>')
   end
-  return vim.keycode('<CR>')
+  return require('config.navigation').command_line_enter()
 end
 
 function M.install_quit_command()

@@ -37,7 +37,7 @@ function M.open_float()
 end
 
 function M.open_picker()
-  require('telescope.builtin').diagnostics({ bufnr = 0 })
+  require('config.search.telescope').open_file_picker('diagnostics', { bufnr = 0 })
 end
 
 function M.setup()

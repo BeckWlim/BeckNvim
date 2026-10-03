@@ -55,6 +55,7 @@ diagnostics.open_picker()
 
 assert(picker_options, 'diagnostic picker was not opened')
 assert(picker_options.bufnr == 0, 'diagnostic picker did not target the current buffer')
+assert(type(picker_options.attach_mappings) == 'function', 'Diagnostic picker bypassed focused-pane file actions')
 
 package.loaded['telescope.builtin'] = original_telescope_builtin
 package.loaded['config.lsp.detail_window'] = original_detail_window

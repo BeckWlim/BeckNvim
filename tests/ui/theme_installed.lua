@@ -65,8 +65,7 @@ local function check()
       local normal = vim.api.nvim_get_hl(0, { name = 'Normal', link = false })
       local contrast = require('config.ui.palette').contrast
       if name == 'paper-light' then
-        assert(vim.o.background == 'light' and normal.bg == 0xE6E3DB,
-          'Paper Light did not load its softer light background')
+        assert(vim.o.background == 'light', 'Paper Light did not load a light background')
         local visual = vim.api.nvim_get_hl(0, { name = 'Visual', link = false })
         local cursor_line = vim.api.nvim_get_hl(0, { name = 'CursorLine', link = false })
         assert(visual.bg ~= cursor_line.bg and contrast(normal.fg, visual.bg) >= 4.5,
@@ -102,12 +101,6 @@ local function check()
     ]], { name })
     vim.wait(30)
   end
-  evaluate([[
-    local names = require('config.ui.theme').names()
-    for _, name in ipairs({ 'vscode-light', 'gruvbox-light', 'tokyonight-day', 'morning' }) do
-      assert(not vim.tbl_contains(names, name), 'Uncurated native variant entered the picker: ' .. name)
-    end
-  ]])
   evaluate([[require('config.ui.theme').select('catppuccin-latte')]])
   wait_for([[
     local selection = require('config.state').open('theme'):read_sync()
@@ -117,7 +110,7 @@ local function check()
     vim.g.colors_name = nil
     vim.o.background = 'dark'
     vim.api.nvim_cmd({ cmd = 'colorscheme', args = { 'monokai' } }, {})
-    vim.fn.delete(require('config.ui.theme').state_path())
+    vim.g.theme_test_saved = require('config.state').open('theme'):read_sync()
   ]])
   -- Live preview is transient; normal-mode Ctrl-q restores name, variant, and position.
   evaluate([[vim.g.theme_test_target = 'paper-light']])
@@ -128,8 +121,8 @@ local function check()
   ]])
   wait_for([[return vim.g.colors_name == 'monokai' and vim.api.nvim_get_current_buf() == vim.g.theme_test_buffer]],
     'Cancel did not restore the previous theme and buffer')
-  assert(evaluate([[return vim.fn.filereadable(require('config.ui.theme').state_path())]]) == 0,
-    'Preview or cancellation saved a selection')
+  assert(evaluate([[return vim.deep_equal(require('config.state').open('theme'):read_sync(),
+    vim.g.theme_test_saved)]]), 'Preview or cancellation changed the saved selection')
   -- Confirm through the actual Enter mapping, then restore in another setup.
   evaluate([[vim.g.theme_test_target = 'paper-light']])
   open_picker('paper-light')

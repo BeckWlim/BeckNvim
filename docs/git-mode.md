@@ -56,11 +56,18 @@ File and symbol histories retain their commit/file hierarchy and native folding.
 Only one root Git history can be active. The history entry keys refuse to mount another Git pane
 until `:q` closes the current mode; use `<Space>de` for temporary search inside Git mode.
 
+`<Space>de` works from the graph, commit preview, branch pane, and Diffview without changing layouts.
+Cancelling with `<C-q>` returns to the same panes and selection. In the graph, selecting a branch
+reviews it in place; selecting a commit focuses its graph row or previews it beside the retained
+history when it lies outside the list. Issue details return to the same search. `<Space>dv` opens
+file diffs explicitly.
+
 Branch history reviews opened through search also add a newest `WORKTREE` row when the checkout is dirty.
 Opening that row previews the complete live worktree against `HEAD`, including untracked files.
 
-Search and preview do not change HEAD. In Diffview detail, `<Space>dm` is the explicit commit
-checkout action and refuses to move HEAD when buffers or the worktree are dirty. Selecting a branch
+Search and preview do not change HEAD. In the graph's commit list or message preview and Diffview
+detail, `<Space>dm` is the explicit commit checkout action and refuses to move HEAD when buffers or
+the worktree are dirty. Graph checkout retains the reviewed branch, panes, and focus. Selecting a branch
 in either the search picker or branch pane reviews it without switching; `<Space>dm` in the branch
 pane performs the guarded branch switch or remote tracking action.
 

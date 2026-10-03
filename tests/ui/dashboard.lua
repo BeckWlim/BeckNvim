@@ -73,9 +73,19 @@ assert(
 )
 
 local original_buffer = vim.api.nvim_get_current_buf()
+local original_tabpage = vim.api.nvim_get_current_tabpage()
+vim.cmd('tabnew')
 local dashboard_buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_win_set_buf(0, dashboard_buffer)
 local dashboard_window = vim.api.nvim_get_current_win()
+-- Unit dimensions stay independent of headless message-area resizing; the
+-- installed UI test below exercises actual terminal and split dimensions.
+local original_window_height = vim.api.nvim_win_get_height
+local dashboard_height = 40
+vim.api.nvim_win_get_height = function(winid)
+  if winid == dashboard_window then return dashboard_height end
+  return original_window_height(winid)
+end
 local original_global_number = vim.go.number
 local original_global_relativenumber = vim.go.relativenumber
 local original_global_signcolumn = vim.go.signcolumn
@@ -227,6 +237,34 @@ assert(type(open_with_o.callback) == 'function', 'dashboard has no shared o sele
 assert(type(open_folder.callback) == 'function', 'dashboard has no open-folder action')
 assert(type(close.callback) == 'function', 'dashboard has no close action')
 
+next_file.callback()
+next_file.callback()
+for _, height in ipairs({ 14, 10, 6 }) do
+  dashboard_height = height
+  vim.api.nvim_exec_autocmds('WinResized', { modeline = false })
+  assert(vim.wait(1000, function()
+    local lines = vim.api.nvim_buf_get_lines(dashboard_buffer, 0, -1, false)
+    local text = table.concat(lines, '\n')
+    return not text:find('███╗   ██╗', 1, true)
+      and text:find('Recent projects', 1, true)
+      and text:find('Recent files', 1, true)
+      and text:find('README.md', 1, true)
+      and #lines <= vim.api.nvim_win_get_height(dashboard_window)
+  end, 10), 'Short homepage did not prioritize projects and the selected recent file')
+  assert(vim.api.nvim_get_current_line():find('README.md', 1, true),
+    'Height adjustment changed the selected recent file')
+end
+dashboard_height = 40
+vim.api.nvim_exec_autocmds('WinResized', { modeline = false })
+assert(vim.wait(1000, function()
+  return table.concat(vim.api.nvim_buf_get_lines(dashboard_buffer, 0, -1, false), '\n')
+    :find('███╗   ██╗', 1, true) ~= nil
+end, 10), 'Homepage did not restore its icon after growing')
+assert(vim.api.nvim_get_current_line():find('README.md', 1, true),
+  'Growing the homepage changed the selected file')
+buffer_mapping('k').callback()
+buffer_mapping('k').callback()
+
 next_project.callback()
 local next_project_lines = vim.api.nvim_buf_get_lines(dashboard_buffer, 0, -1, false)
 rendered_text = table.concat(next_project_lines, '\n')
@@ -251,6 +289,10 @@ assert(
 )
 
 next_file.callback()
+local file_operations = require('config.navigation')
+local original_file_open = file_operations.open
+local opened_files = {}
+rawset(file_operations, 'open', function(path) opened_files[#opened_files + 1] = path end)
 local original_command = vim.cmd
 local opened_commands = {}
 vim.cmd = function(command)
@@ -258,14 +300,15 @@ vim.cmd = function(command)
 end
 open_selection.callback()
 assert(
-  opened_commands[#opened_commands] == 'edit ' .. vim.fn.fnameescape(third_file),
-  'dashboard recent file did not open directly'
+  opened_files[#opened_files] == third_file,
+  'dashboard recent file did not use shared file operations'
 )
 open_with_o.callback()
 assert(
-  opened_commands[#opened_commands] == 'edit ' .. vim.fn.fnameescape(third_file),
-  'dashboard o did not open the selected recent file'
+  opened_files[#opened_files] == third_file,
+  'dashboard o did not use shared file operations'
 )
+rawset(file_operations, 'open', original_file_open)
 
 local activated_root = dashboard.activate_project(first_root)
 assert(activated_root == first_root, 'project action activated the wrong root')
@@ -345,6 +388,9 @@ vim.api.nvim_set_current_buf(original_buffer)
 vim.go.number = original_global_number
 vim.go.relativenumber = original_global_relativenumber
 vim.go.signcolumn = original_global_signcolumn
+vim.api.nvim_win_get_height = original_window_height
+vim.cmd('tabclose')
+assert(vim.api.nvim_get_current_tabpage() == original_tabpage, 'Dashboard test did not restore its source tab')
 vim.fn.delete(temporary_root, 'rf')
 package.loaded['config.ui.dashboard'] = original_dashboard
 package.loaded['config.ui.folder_picker'] = original_folder_picker

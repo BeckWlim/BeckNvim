@@ -11,7 +11,7 @@ local open_target = require('config.ui.open_target')
 
 local opened_targets = {}
 local opener_waited = false
-vim.ui.open = function(target)
+rawset(vim.ui, 'open', function(target)
   opened_targets[#opened_targets + 1] = target
   return {
     wait = function()
@@ -19,7 +19,7 @@ vim.ui.open = function(target)
       return { code = 1 }
     end,
   }, nil
-end
+end)
 
 assert(open_target.open('https://example.com/report'), 'Detached URL handoff failed')
 assert(
@@ -90,12 +90,12 @@ assert(
 )
 
 local notification
-vim.ui.open = function()
+rawset(vim.ui, 'open', function()
   return nil, 'vim.ui.open: no handler found'
-end
-vim.notify = function(message, level)
+end)
+rawset(vim, 'notify', function(message, level)
   notification = { level = level, message = message }
-end
+end)
 assert(not open_target.open('https://example.com/missing'), 'Missing handler reported success')
 assert(
   notification
@@ -126,9 +126,8 @@ assert(
 )
 
 local original_confirm = vim.fn.confirm
-local original_edit = vim.cmd.edit
-local original_split = vim.cmd.split
-local original_vsplit = vim.cmd.vsplit
+local navigation = require('config.navigation')
+local original_navigation_open = navigation.open
 local original_buffer = vim.api.nvim_get_current_buf()
 local source_buffer = vim.api.nvim_create_buf(true, false)
 local source_path = vim.fs.joinpath(
@@ -146,84 +145,38 @@ vim.api.nvim_buf_set_lines(source_buffer, 0, -1, false, {
   '[browser report](https://example.com/rendered) and [source](example.lua#L2)',
 })
 
-local confirmation_message
-local confirmation_choices
-local confirmation_default
-local selected_confirmation = 2
-vim.fn.confirm = function(message, choices, default_choice)
-  confirmation_message = message
-  confirmation_choices = choices
-  confirmation_default = default_choice
-  return selected_confirmation
-end
+rawset(vim.fn, 'confirm', function() error('Local gx still uses the strategy question') end)
 
 local invoked_commands = {}
-local function record_command(command_name)
-  return function(command_options)
-    invoked_commands[#invoked_commands + 1] = {
-      name = command_name,
-      options = command_options,
-    }
-  end
-end
-vim.cmd.edit = record_command('edit')
-vim.cmd.split = record_command('split')
-vim.cmd.vsplit = record_command('vsplit')
+notification = nil
+rawset(navigation, 'open', function(path, options)
+  invoked_commands[#invoked_commands + 1] = { name = options.command, path = path, options = options }
+  return { succeeded = true }
+end)
 
-vim.ui.open = function(target)
+rawset(vim.ui, 'open', function(target)
   opened_targets[#opened_targets + 1] = target
-  return {
-    wait = function()
-      opener_waited = true
-      return { code = 1 }
-    end,
-  }, nil
-end
+  return { wait = function() opener_waited = true end }, nil
+end)
 vim.api.nvim_win_set_cursor(0, { 1, 2 })
 open_target.open_at_cursor()
-assert(
-  opened_targets[#opened_targets] == 'https://example.com/rendered' and not opener_waited,
-  'Rendered Markdown label did not resolve to its URL destination'
-)
-
+assert(opened_targets[#opened_targets] == 'https://example.com/rendered' and not opener_waited,
+  'Rendered Markdown label did not resolve to its URL destination')
 vim.api.nvim_win_set_cursor(0, { 1, 58 })
-
-assert(
-  not open_target.open_at_cursor() and #invoked_commands == 0,
-  'No did not cancel a local-file jump'
-)
-assert(
-  confirmation_message:match("replaces this window's render")
-    and confirmation_choices == '&Yes (current window)\n&No\n&Vertical split\n&Horizontal split'
-    and confirmation_default == 2,
-  'Local-file confirmation omitted its render warning or y/n/v/h choices'
-)
-
-notification = nil
-for _, confirmation_case in ipairs({
-  { choice = 1, command = 'edit' },
-  { choice = 3, command = 'vsplit' },
-  { choice = 4, command = 'split' },
-}) do
-  selected_confirmation = confirmation_case.choice
-  assert(open_target.open('example.lua#L2'), 'Confirmed local-file jump failed')
-  local invoked_command = invoked_commands[#invoked_commands]
-  assert(
-    invoked_command.name == confirmation_case.command
-      and invoked_command.options.args[1] == expected_target_path,
-    'Local-file confirmation dispatched the wrong window action or path'
-  )
-end
-assert(
-  not notification and vim.b[source_buffer].gx_lightweight_render ~= true,
-  'Same-project split did not retain the ordinary FileType and LSP lifecycle'
-)
+open_target.open_at_cursor()
+assert(#invoked_commands == 1, 'Cursor local-file navigation bypassed the shared manager')
+assert(open_target.open('example.lua#L2'), 'Local-file navigation request failed')
+local invoked_command = invoked_commands[#invoked_commands]
+assert(invoked_command.name == 'edit' and invoked_command.path == expected_target_path
+  and invoked_command.options.select_destination and invoked_command.options.line == 2
+  and invoked_command.options.push_cursor,
+  'Local gx did not request an existing destination pane and native location history')
+assert(not notification and vim.b[source_buffer].gx_lightweight_render ~= true,
+  'Same-project navigation lost the ordinary FileType and LSP lifecycle')
 
 notification = nil
-vim.cmd.edit = original_edit
-vim.cmd.split = original_split
-vim.cmd.vsplit = original_vsplit
-selected_confirmation = 1
+rawset(navigation, 'open', original_navigation_open)
+vim.bo[source_buffer].modified = false
 assert(open_target.open('example.lua#L2'), 'Real current-window file jump failed')
 local target_buffer = vim.api.nvim_get_current_buf()
 assert(
@@ -242,7 +195,6 @@ vim.api.nvim_create_autocmd('FileType', {
     filetype_events = filetype_events + 1
   end,
 })
-selected_confirmation = 3
 assert(open_target.open(external_file_path .. '#L2'), 'External-project file jump failed')
 local external_buffer = vim.api.nvim_get_current_buf()
 assert(
@@ -254,7 +206,6 @@ assert(
   'External-project jump did not preserve lightweight syntax-only rendering'
 )
 assert(not notification, 'External-project lightweight rendering emitted a needless notification')
-vim.api.nvim_win_close(0, true)
 vim.api.nvim_buf_delete(external_buffer, { force = true })
 vim.api.nvim_del_augroup_by_id(filetype_group)
 vim.fn.delete(external_file_path)

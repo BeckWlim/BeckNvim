@@ -424,9 +424,9 @@ local function render_files(rendered, state, layout_width, maximum_file_rows)
   end
 end
 
-function M.footer_padding(content_line_count, window_height, footer_line_count)
-  local target_footer_row = window_height - M.bottom_padding - footer_line_count
-  local content_end_row = content_line_count + M.top_padding
+function M.footer_padding(content_line_count, window_height, footer_line_count, top_padding, bottom_padding)
+  local target_footer_row = window_height - (bottom_padding or M.bottom_padding) - footer_line_count
+  local content_end_row = content_line_count + (top_padding or M.top_padding)
   return math.max(0, target_footer_row - content_end_row)
 end
 
@@ -444,19 +444,8 @@ local function build_render(state)
     highlights = {},
     left_column = math.max(0, math.floor((window_width - layout_width) / 2)),
   }
-
-  for _, icon_line in ipairs(brand_icon) do
-    local icon_row = add_centered_line(rendered, icon_line, layout_width)
-    add_highlight(rendered, icon_row, 0, -1, 'TypeInformationSection')
-  end
-  add_line(rendered, '')
-  render_title(rendered, layout_width)
-  local separator_row = add_line(
-    rendered,
-    (' '):rep(rendered.left_column) .. ('─'):rep(math.max(1, layout_width))
-  )
-  add_highlight(rendered, separator_row, 0, -1, 'TypeInformationSeparator')
-  add_line(rendered, '')
+  state.rendered_width = window_width
+  state.rendered_height = window_height
 
   local visible_project_index = math.min(state.project_index, #state.projects)
   local project_heading = ('Recent projects  ‹ %d/%d ›'):format(
@@ -482,13 +471,67 @@ local function build_render(state)
     'TypeInformationHint'
   )
   render_project_drawer(rendered, state, layout_width)
-  add_line(rendered, '')
   local has_active_context = state.context ~= nil and state.context.root ~= nil
+  local desired_file_rows = selected_project(state) and math.max(1, #selected_files(state)) + 1 or 1
+  local top_padding = M.top_padding
+  local bottom_padding = M.bottom_padding
   local footer_line_count = has_active_context and 4 or 1
-  local reserved_bottom_lines = M.top_padding
-    + M.bottom_padding
-    + footer_line_count
-    + 1
+  local header_line_count = 3
+  local section_gap = 1
+  local footer_gap = 1
+  local show_context = has_active_context
+  local content_height = #rendered.lines + section_gap + desired_file_rows + header_line_count
+    + top_padding + bottom_padding + footer_line_count + footer_gap
+  local show_icon = content_height + #brand_icon + 1 <= window_height
+  if show_icon then
+    header_line_count = header_line_count + #brand_icon + 1
+  else
+    -- Remove decoration before reducing the bounded recent-file list.
+    local shortage = math.max(0, content_height - window_height)
+    local removed_top = math.min(top_padding, shortage)
+    top_padding = top_padding - removed_top
+    shortage = shortage - removed_top
+    local removed_bottom = math.min(bottom_padding, shortage)
+    bottom_padding = bottom_padding - removed_bottom
+    shortage = shortage - removed_bottom
+    if shortage > 0 and show_context then
+      show_context = false
+      footer_line_count = 1
+    end
+    local minimum_files = math.min(2, desired_file_rows)
+    local minimum_height = #rendered.lines + section_gap + minimum_files + header_line_count
+      + footer_line_count + footer_gap
+    if minimum_height > window_height then
+      header_line_count = 0
+      footer_gap = 0
+    end
+    if #rendered.lines + section_gap + minimum_files + footer_line_count > window_height then
+      section_gap = 0
+    end
+    if #rendered.lines + minimum_files + footer_line_count > window_height then
+      footer_line_count = 0
+    end
+  end
+  local header = { lines = {}, highlights = {}, left_column = rendered.left_column }
+  if show_icon then
+    for _, icon_line in ipairs(brand_icon) do
+      local icon_row = add_centered_line(header, icon_line, layout_width)
+      add_highlight(header, icon_row, 0, -1, 'TypeInformationSection')
+    end
+    add_line(header, '')
+  end
+  if header_line_count > 0 then
+    render_title(header, layout_width)
+    local separator_row = add_line(
+      header,
+      (' '):rep(rendered.left_column) .. ('─'):rep(math.max(1, layout_width))
+    )
+    add_highlight(header, separator_row, 0, -1, 'TypeInformationSeparator')
+    add_line(header, '')
+  end
+  for _ = 1, section_gap do add_line(rendered, '') end
+  local vertical_padding = top_padding + #header.lines
+  local reserved_bottom_lines = vertical_padding + bottom_padding + footer_line_count + footer_gap
   local file_section_capacity = math.max(
     0,
     window_height - #rendered.lines - reserved_bottom_lines
@@ -499,29 +542,39 @@ local function build_render(state)
   local footer_padding = M.footer_padding(
     #rendered.lines,
     window_height,
-    footer_line_count
+    footer_line_count,
+    vertical_padding,
+    bottom_padding
   )
   for _ = 1, footer_padding do
     add_line(rendered, '')
   end
-  render_active_context(rendered, state, layout_width)
-  if has_active_context then
+  if show_context then
+    render_active_context(rendered, state, layout_width)
     add_line(rendered, '')
   end
 
-  local hint = 'h/l project  ·  j/k file  ·  f switch project  ·  o/<Enter> activate/open  ·  q close'
-  local hint_row = add_centered_line(rendered, truncate_display(hint, layout_width), layout_width)
-  add_highlight(rendered, hint_row, 0, -1, 'TypeInformationHint')
-  for _ = 1, M.bottom_padding do
+  if footer_line_count > 0 then
+    local hint = 'h/l project  ·  j/k file  ·  f switch project  ·  o/<Enter> activate/open  ·  q close'
+    local hint_row = add_centered_line(rendered, truncate_display(hint, layout_width), layout_width)
+    add_highlight(rendered, hint_row, 0, -1, 'TypeInformationHint')
+  end
+  for _ = 1, bottom_padding do
     add_line(rendered, '')
   end
 
-  local vertical_padding = M.top_padding
-  for _ = 1, vertical_padding do
+  for index = #header.lines, 1, -1 do
+    table.insert(rendered.lines, 1, header.lines[index])
+  end
+  for _ = 1, top_padding do
     table.insert(rendered.lines, 1, '')
   end
   for _, highlight in ipairs(rendered.highlights) do
     highlight.row = highlight.row + vertical_padding
+  end
+  for _, highlight in ipairs(header.highlights) do
+    highlight.row = highlight.row + top_padding
+    rendered.highlights[#rendered.highlights + 1] = highlight
   end
   if state.project_cursor then
     state.project_cursor.row = state.project_cursor.row + vertical_padding
@@ -563,7 +616,10 @@ local function render(state)
 end
 
 local function schedule_initial_render(state)
+  if state.render_pending then return end
+  state.render_pending = true
   vim.schedule(function()
+    state.render_pending = false
     if dashboard_states[state.bufnr] ~= state then
       return
     end
@@ -613,7 +669,7 @@ local function open_selected_file(state)
     return
   end
   M.activate_project(project_entry.root)
-  vim.cmd('edit ' .. vim.fn.fnameescape(file_entry.path))
+  require('config.navigation').open(file_entry.path)
 end
 
 local function open_selection(state)
@@ -729,57 +785,7 @@ local function move_file(state, offset)
   render(state)
 end
 
-local function capture_window_options(winid)
-  return {
-    breakindent = vim.wo[winid].breakindent,
-    colorcolumn = vim.wo[winid].colorcolumn,
-    cursorcolumn = vim.wo[winid].cursorcolumn,
-    cursorline = vim.wo[winid].cursorline,
-    foldcolumn = vim.wo[winid].foldcolumn,
-    list = vim.wo[winid].list,
-    number = vim.wo[winid].number,
-    relativenumber = vim.wo[winid].relativenumber,
-    signcolumn = vim.wo[winid].signcolumn,
-    spell = vim.wo[winid].spell,
-    wrap = vim.wo[winid].wrap,
-  }
-end
-
-local function configured_window_options()
-  return {
-    breakindent = vim.go.breakindent,
-    colorcolumn = vim.go.colorcolumn,
-    cursorcolumn = vim.go.cursorcolumn,
-    cursorline = vim.go.cursorline,
-    foldcolumn = vim.go.foldcolumn,
-    list = vim.go.list,
-    number = vim.go.number,
-    relativenumber = vim.go.relativenumber,
-    signcolumn = vim.go.signcolumn,
-    spell = vim.go.spell,
-    wrap = vim.go.wrap,
-  }
-end
-
-local function restore_window_options(winid, window_options)
-  if not vim.api.nvim_win_is_valid(winid) then
-    return
-  end
-  vim.wo[winid].breakindent = window_options.breakindent
-  vim.wo[winid].colorcolumn = window_options.colorcolumn
-  vim.wo[winid].cursorcolumn = window_options.cursorcolumn
-  vim.wo[winid].cursorline = window_options.cursorline
-  vim.wo[winid].foldcolumn = window_options.foldcolumn
-  vim.wo[winid].list = window_options.list
-  vim.wo[winid].number = window_options.number
-  vim.wo[winid].relativenumber = window_options.relativenumber
-  vim.wo[winid].signcolumn = window_options.signcolumn
-  vim.wo[winid].spell = window_options.spell
-  vim.wo[winid].wrap = window_options.wrap
-end
-
 local function close_dashboard(state)
-  restore_window_options(state.winid, state.original_window_options)
   if vim.api.nvim_buf_is_valid(state.bufnr) then
     vim.api.nvim_buf_delete(state.bufnr, { force = true })
   end
@@ -832,17 +838,7 @@ local function configure_buffer(bufnr, winid)
   vim.bo[bufnr].filetype = 'dashboard'
   vim.bo[bufnr].swapfile = false
   vim.bo[bufnr].modifiable = true
-  vim.wo[winid].breakindent = false
-  vim.wo[winid].colorcolumn = ''
-  vim.wo[winid].cursorcolumn = false
-  vim.wo[winid].cursorline = false
-  vim.wo[winid].foldcolumn = '0'
-  vim.wo[winid].list = false
-  vim.wo[winid].number = false
-  vim.wo[winid].relativenumber = false
-  vim.wo[winid].signcolumn = 'no'
-  vim.wo[winid].spell = false
-  vim.wo[winid].wrap = false
+  window_state.apply(winid)
 end
 
 function M.restore_after_folder_picker(bufnr)
@@ -864,9 +860,10 @@ function M.attach(bufnr, winid, projects, context)
     return bufnr
   end
 
-  local original_window_options = requested_window_options or configured_window_options()
+  local original_window_options = requested_window_options or window_state.defaults()
   requested_window_options = nil
   configure_buffer(bufnr, winid)
+  window_state.apply(winid, original_window_options)
   local dashboard_context = context or requested_context or context_from_buffer(bufnr)
   requested_context = nil
   local context_path = dashboard_context.file_path or dashboard_context.root
@@ -874,7 +871,6 @@ function M.attach(bufnr, winid, projects, context)
   local state = {
     bufnr = bufnr,
     winid = winid,
-    original_window_options = original_window_options,
     projects = dashboard_projects,
     project_index = #dashboard_projects > 0 and (dashboard_projects.current_index or 1) or 0,
     file_index = 1,
@@ -882,36 +878,57 @@ function M.attach(bufnr, winid, projects, context)
     context = dashboard_context,
   }
   dashboard_states[bufnr] = state
+  require('config.navigation').register_close(bufnr, function() close_dashboard(state) end)
   attach_mappings(state)
   schedule_initial_render(state)
   if not projects then
     schedule_recent_projects(state, context_path)
   end
 
+  local resize_autocmd = vim.api.nvim_create_autocmd('WinResized', {
+    callback = function()
+      if vim.api.nvim_win_is_valid(state.winid)
+          and vim.api.nvim_win_get_buf(state.winid) == bufnr
+          and (vim.api.nvim_win_get_width(state.winid) ~= state.rendered_width
+            or vim.api.nvim_win_get_height(state.winid) ~= state.rendered_height) then
+        schedule_initial_render(state)
+      end
+    end,
+    desc = 'Adapt project dashboard to its pane size',
+  })
+  vim.api.nvim_create_autocmd('BufWinEnter', {
+    buffer = bufnr,
+    callback = function() schedule_initial_render(state) end,
+    desc = 'Refresh project dashboard layout when shown',
+  })
+
   vim.api.nvim_create_autocmd('BufWipeout', {
     buffer = bufnr,
     once = true,
     callback = function()
       dashboard_states[bufnr] = nil
+      vim.api.nvim_del_autocmd(resize_autocmd)
     end,
     desc = 'Release project dashboard state',
-  })
-  vim.api.nvim_create_autocmd({ 'BufWinLeave', 'BufWipeout' }, {
-    buffer = bufnr,
-    once = true,
-    callback = function()
-      restore_window_options(winid, original_window_options)
-    end,
-    desc = 'Restore window options after leaving project dashboard',
   })
   return bufnr
 end
 
-window_state.register('dashboard', function(winid)
-  local dashboard_buffer = vim.api.nvim_win_get_buf(winid)
-  local state = dashboard_states[dashboard_buffer]
-  return state and state.original_window_options or nil
-end)
+window_state.register('dashboard', function()
+  return window_state.defaults()
+end, {
+  breakindent = false,
+  colorcolumn = '',
+  cursorcolumn = false,
+  cursorline = false,
+  foldcolumn = '0',
+  list = false,
+  number = false,
+  relativenumber = false,
+  signcolumn = 'no',
+  spell = false,
+  wrap = false,
+})
 
 function M.options()
   return {
@@ -927,7 +944,7 @@ function M.open()
   local current_buffer = vim.api.nvim_get_current_buf()
   local current_window = vim.api.nvim_get_current_win()
   requested_context = context_from_buffer(current_buffer)
-  requested_window_options = capture_window_options(current_window)
+  requested_window_options = window_state.resolve(current_window)
   vim.cmd('Dashboard')
 end
 

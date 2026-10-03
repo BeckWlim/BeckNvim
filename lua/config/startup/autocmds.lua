@@ -26,18 +26,6 @@ function M.setup()
     end,
     desc = 'Reload files changed outside Neovim',
   })
-
-  local tree_group = vim.api.nvim_create_augroup('close_file_tree_on_exit', { clear = true })
-  vim.api.nvim_create_autocmd('QuitPre', {
-    group = tree_group,
-    callback = function()
-      if vim.b.telescope_quit_guard then return end
-      if vim.fn.exists(':NvimTreeClose') == 2 then
-        vim.cmd.NvimTreeClose()
-      end
-    end,
-    desc = 'Close nvim-tree before exiting',
-  })
 end
 
 return M

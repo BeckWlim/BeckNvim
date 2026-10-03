@@ -6,39 +6,67 @@ local preview_focused_preview_width = 0.65
 local results_focused_preview_height = 0.36
 local preview_focused_preview_height = 0.58
 
-local function selection_window()
-  if vim.bo.filetype ~= 'NvimTree' then return 0 end
-
-  local function is_editor(winid)
-    if not vim.api.nvim_win_is_valid(winid) then return false end
-    local buffer = vim.api.nvim_win_get_buf(winid)
-    return vim.api.nvim_win_get_config(winid).relative == ''
-      and vim.bo[buffer].buftype == '' and not vim.wo[winid].winfixbuf
-  end
-  local target_window
-  local previous_window = vim.fn.win_getid(vim.fn.winnr('#'))
-  if is_editor(previous_window) then
-    target_window = previous_window
-  else
-    for _, winid in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
-      if is_editor(winid) then
-        target_window = winid
-        break
-      end
+-- Install only on file-result pickers. Project/theme/Git choices keep their owners.
+function M.attach_file_actions(prompt_buffer)
+  local picker = require('telescope.actions.state').get_current_picker(prompt_buffer)
+  picker.navigation_context = picker.navigation_context
+    or require('config.navigation').capture(picker.original_win_id)
+  vim.api.nvim_create_autocmd('BufWipeout', {
+    buffer = prompt_buffer, once = true,
+    callback = picker.navigation_context.restore_layout,
+    desc = 'Keep native split proportions when file search closes',
+  })
+  local commands = { edit = 'edit', new = 'split', vnew = 'vsplit', tabedit = 'tabedit' }
+  require('telescope.actions.set').edit:replace_if(function(_, command)
+    return commands[command] ~= nil
+  end, function(prompt_buffer, command)
+    local action_state = require('telescope.actions.state')
+    local picker = action_state.get_current_picker(prompt_buffer)
+    local entry = action_state.get_selected_entry()
+    if not entry then return end
+    local path = entry.path or entry.filename
+    if not path and not entry.bufnr then
+      vim.notify('The selected result has no file or buffer', vim.log.levels.WARN)
+      return
     end
+    local open_command = commands[command]
+    local Path = require('plenary.path')
+    local entry_path = path and Path:new(path) or nil
+    local resolved_path = entry_path and (entry_path:is_absolute() and entry_path:absolute()
+      or Path:new(picker.cwd or vim.uv.cwd(), path):absolute()) or ''
+    local open_options = {
+      context = picker.navigation_context,
+      command = open_command, buffer = entry.bufnr,
+      line = entry.row or entry.lnum, column = entry.col,
+      push_cursor = picker.push_cursor_on_edit, push_tagstack = picker.push_tagstack_on_edit,
+    }
+    require('telescope.actions').close(prompt_buffer)
+    require('config.navigation').open(resolved_path, open_options)
+  end)
+  return true
+end
+
+-- Capture the launch surface before a builtin loads data or creates windows.
+-- Prompt and preview Enter retain the same explicit edit/split intent.
+function M.open_file_picker(name, options, command)
+  local context = require('config.navigation').capture()
+  local picker_options = vim.tbl_extend('force', {}, options or {})
+  local attach = picker_options.attach_mappings
+  picker_options.attach_mappings = function(prompt_buffer, map)
+    local picker = require('telescope.actions.state').get_current_picker(prompt_buffer)
+    picker.navigation_context = context
+    M.attach_file_actions(prompt_buffer)
+    local actions = require('telescope.actions')
+    local select = command == 'vnew' and actions.file_vsplit or actions.select_default
+    picker.preview_enter_action = select
+    if command == 'vnew' then
+      map('i', '<CR>', select)
+      map('n', '<CR>', select)
+    end
+    if attach then return attach(prompt_buffer, map) end
+    return true
   end
-  if target_window then
-    -- Telescope records jump/tag history after this callback: use the code pane.
-    vim.api.nvim_set_current_win(target_window)
-  else
-    local editor_options = assert(require('config.ui.window_state').resolve(
-      vim.api.nvim_get_current_win(), { 'number', 'relativenumber' }))
-    vim.cmd('botright vnew')
-    target_window = vim.api.nvim_get_current_win()
-    vim.wo.number = editor_options.number
-    vim.wo.relativenumber = editor_options.relativenumber
-  end
-  return target_window
+  require('telescope.builtin')[name](picker_options)
 end
 
 local function unlock_preview(buffer)
@@ -54,6 +82,7 @@ local function bind_pane(buffer, prompt_buffer, picker, is_preview)
     if picker.ctrl_q_action then picker.ctrl_q_action()
     else require('telescope.actions').close(prompt_buffer) end
   end
+  require('config.navigation').register_close(buffer, close_picker)
   vim.keymap.set({ 'n', 'i', 'x', 's', 'o', 't' }, '<C-q>', close_picker,
     { buffer = buffer, silent = true, nowait = true, desc = 'Close Telescope' })
   vim.keymap.set('c', '<C-q>', function()
@@ -120,6 +149,19 @@ local function resize_for_focus(picker, preview_focused)
   picker:full_layout_update()
 end
 
+local function return_to_prompt(picker, buffer)
+  if not picker.prompt_win or not vim.api.nvim_win_is_valid(picker.prompt_win) then return end
+  local previewer = picker.previewer
+  local preview_buffer = buffer or (previewer and previewer.state and previewer.state.bufnr)
+  if preview_buffer then unlock_preview(preview_buffer) end
+  local return_to_insert_mode = picker.preview_focus_return_mode == 'i'
+  picker.preview_focus_return_mode = nil
+  resize_for_focus(picker, false)
+  if not picker.prompt_win or not vim.api.nvim_win_is_valid(picker.prompt_win) then return end
+  set_current_window_without_autocommands(picker.prompt_win)
+  if return_to_insert_mode then vim.cmd('startinsert') end
+end
+
 local function bind_focused_preview(buffer, prompt_buffer, picker)
   if not buffer or not vim.api.nvim_buf_is_valid(buffer) then return end
   bind_pane(buffer, prompt_buffer, picker, true)
@@ -128,16 +170,7 @@ local function bind_focused_preview(buffer, prompt_buffer, picker)
   end
   vim.bo[buffer].modifiable = false
   vim.keymap.set('n', '<Tab>', function()
-    local active_prompt_window = picker.prompt_win
-    if not active_prompt_window or not vim.api.nvim_win_is_valid(active_prompt_window) then return end
-    unlock_preview(buffer)
-    local return_to_insert_mode = picker.preview_focus_return_mode == 'i'
-    picker.preview_focus_return_mode = nil
-    resize_for_focus(picker, false)
-    local resized_prompt_window = picker.prompt_win
-    if not resized_prompt_window or not vim.api.nvim_win_is_valid(resized_prompt_window) then return end
-    set_current_window_without_autocommands(resized_prompt_window)
-    if return_to_insert_mode then vim.cmd('startinsert') end
+    return_to_prompt(picker, buffer)
   end, {
     buffer = buffer,
     nowait = true,
@@ -299,6 +332,11 @@ function M.setup()
       and { mapping[3], type = 'command' } or mapping[3]
   end
   local pane_group = vim.api.nvim_create_augroup('telescope_pane_policy', { clear = true })
+  local function owns_window(picker, window)
+    local preview_window = picker.layout and picker.layout.preview and picker.layout.preview.winid
+    return (picker.navigation_context and window == picker.navigation_context.source_window)
+      or window == picker.prompt_win or window == picker.results_win or window == preview_window
+  end
   vim.api.nvim_create_autocmd('User', {
     group = pane_group,
     pattern = { 'TelescopeFindPre', 'TelescopePreviewerLoaded' },
@@ -312,13 +350,15 @@ function M.setup()
       if not state then return end
       for _, prompt_buffer in ipairs(state.get_existing_prompt_bufnrs()) do
         local picker = state.get_status(prompt_buffer).picker
-        local previewer = picker and picker.previewer
-        local preview_window = previewer and previewer.state and previewer.state.winid
-        if picker and (closed_window == picker.prompt_win or closed_window == picker.results_win
-            or closed_window == preview_window) then
+        if picker and owns_window(picker, closed_window) then
           vim.schedule(function()
-            if state.get_status(prompt_buffer).picker == picker then
+            -- A native layout update may intentionally retire the old preview.
+            -- Recheck ownership after Telescope publishes the replacement panes.
+            if state.get_status(prompt_buffer).picker ~= picker then return end
+            if owns_window(picker, closed_window) then
               require('telescope.actions').close(prompt_buffer)
+            elseif picker.preview_focus_return_mode then
+              return_to_prompt(picker)
             end
           end)
         end
@@ -327,7 +367,6 @@ function M.setup()
   })
   telescope.setup({
     defaults = {
-      get_selection_window = selection_window,
       grep_previewer = contextual_previewer,
       qflist_previewer = contextual_previewer,
       layout_strategy = 'flex',
@@ -376,7 +415,18 @@ function M.setup()
         '--hidden',
         '--no-ignore-vcs',
       },
-      file_ignore_patterns = { '.git/', 'node_modules/', '__pycache__/' },
+      -- Telescope interprets these as Lua patterns; escape the dot so a
+      -- project directory named `git/` remains searchable.
+      file_ignore_patterns = { '%.git/', 'node_modules/', '__pycache__/' },
+    },
+    pickers = {
+      find_files = { layout_strategy = 'flex', attach_mappings = M.attach_file_actions },
+      oldfiles = { layout_strategy = 'flex', attach_mappings = M.attach_file_actions },
+      buffers = { layout_strategy = 'flex', attach_mappings = M.attach_file_actions },
+      live_grep = { layout_strategy = 'flex', attach_mappings = M.attach_file_actions },
+      grep_string = { layout_strategy = 'flex', attach_mappings = M.attach_file_actions },
+      diagnostics = { layout_strategy = 'flex', attach_mappings = M.attach_file_actions },
+      lsp_document_symbols = { layout_strategy = 'flex', attach_mappings = M.attach_file_actions },
     },
     extensions = {
       ['ui-select'] = require('telescope.themes').get_dropdown({

@@ -6,6 +6,8 @@ local float = require('config.ui.float')
 ---@field refresh fun(self: QueryPickerHandle, finder: table, options: table)
 ---@field set_selection fun(self: QueryPickerHandle, record: table)
 ---@field layout? table
+---@field register_completion_callback fun(self: QueryPickerHandle, callback: function)
+---@field navigation_context? NavigationContext
 
 local function picker_title(title, status, active)
   local action_name = active and 'cancel' or 'close'
@@ -14,6 +16,7 @@ local function picker_title(title, status, active)
 end
 
 function M.open(options)
+  local context = require('config.navigation').capture()
   local actions = require('telescope.actions')
   local finders = require('telescope.finders')
   local pickers = require('telescope.pickers')
@@ -143,17 +146,22 @@ function M.open(options)
 
   local picker = pickers.new(options.picker_options or {}, {
     prompt_title = picker_title(options.title, 'querying…', true),
+    layout_strategy = 'flex',
     finder = finder({}),
     previewer = options.previewer,
     sorter = options.sorter,
     push_cursor_on_edit = true,
     push_tagstack_on_edit = true,
     attach_mappings = function(prompt_buffer, map)
+      local active_picker = assert(state.picker)
+      active_picker.navigation_context = context
+      require('config.search.telescope').attach_file_actions(prompt_buffer)
       state.prompt_buffer = prompt_buffer
       local function cancel_and_close()
         session:cancel()
         actions.close(prompt_buffer)
       end
+      require('config.navigation').register_close(prompt_buffer, cancel_and_close)
       float.bind_close({
         accepts_input = true,
         close = cancel_and_close,

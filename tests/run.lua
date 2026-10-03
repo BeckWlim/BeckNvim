@@ -1,10 +1,13 @@
 vim.opt.runtimepath:prepend(vim.fn.getcwd())
 dofile('tests/markdown_runtime.lua')
+require('config.navigation.write_guard').setup()
 
-for _, test_file in ipairs({
+local test_files = {
   'tests/state.lua',
   'tests/user.lua',
   'tests/project.lua',
+  'tests/navigation.lua',
+  'tests/navigation/write_guard.lua',
   'tests/keybindings.lua',
   'tests/audit/workflow.lua',
   'tests/git/diffview.lua',
@@ -12,6 +15,7 @@ for _, test_file in ipairs({
   'tests/git/footer_loader.lua',
   'tests/git/footer_search.lua',
   'tests/git/graph.lua',
+  'tests/git/graph_search.lua',
   'tests/git/github.lua',
   'tests/git/init.lua',
   'tests/git/issue.lua',
@@ -45,6 +49,8 @@ for _, test_file in ipairs({
   'tests/type_hierarchy/init.lua',
   'tests/ui/dashboard.lua',
   'tests/ui/filetree.lua',
+  'tests/ui/file_operations.lua',
+  'tests/ui/file_operations_markdown.lua',
   'tests/ui/tree_search.lua',
   'tests/ui/float.lua',
   'tests/ui/folder_picker.lua',
@@ -52,12 +58,32 @@ for _, test_file in ipairs({
   'tests/ui/statusline.lua',
   'tests/ui/terminal.lua',
   'tests/ui/window_state.lua',
+  'tests/ui/window_context.lua',
   'tests/ui/theme.lua',
   'tests/ui/tmux.lua',
-}) do
+}
+
+-- Optional module/family filters keep focused changes from requiring every case.
+local selected, matched = {}, {}
+for _, test_file in ipairs(test_files) do
+  local relative = test_file:sub(7, -5)
+  local included = #arg == 0
+  for index, filter in ipairs(arg) do
+    local name = filter:gsub('^tests/', ''):gsub('%.lua$', ''):gsub('/+$', '')
+    if relative == name or relative:sub(1, #name + 1) == name .. '/' then
+      included, matched[index] = true, true
+    end
+  end
+  if included then selected[#selected + 1] = test_file end
+end
+for index, filter in ipairs(arg) do
+  assert(matched[index], 'No test matches: ' .. filter)
+end
+
+for _, test_file in ipairs(selected) do
   local test_chunk, load_error = loadfile(test_file)
   assert(test_chunk, load_error)
   test_chunk()
 end
 
-print('All tests passed')
+print(('All %d selected tests passed'):format(#selected))

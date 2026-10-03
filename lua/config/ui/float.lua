@@ -102,6 +102,7 @@ function M.bind_close(options)
   end
 
   local buffer_number = options.buffer
+  require('config.navigation').register_close(buffer_number, close_callback)
   local description = options.description or 'Close floating window'
   vim.keymap.set('n', M.normal_close_key, close_callback, {
     buffer = buffer_number,

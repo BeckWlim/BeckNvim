@@ -4,10 +4,10 @@ BeckNvim is a project-oriented Neovim configuration focused on navigation, seman
 inspection, language tooling, and readable code review. Its features share a consistent visual
 system while keeping native Neovim and plugin behavior wherever practical.
 
-## Highlights
+## Features
 
 - **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
-- **Git review:** explore merge-aware commit graphs, inspect branches and local changes, and resume repository reviews within a Neovim session.
+- **Git review:** explore merge-aware commit graphs, inspect branches and local changes, and resume repository reviews within a Neovim session. Search and guarded checkout work in both graph and detail views.
 - **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, move through links without stepping through hidden URLs, and edit source in place with refreshes when external file changes are detected.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
 
@@ -44,6 +44,7 @@ See [Recording the highlights](examples/README.md) for demo generation, setup, a
 | --- | --- |
 | `config/startup/` | Editor options, autocmds, keymap assembly, and plugin bootstrap |
 | `config/project.lua` | Project-root discovery, activation, containment, and cached project state |
+| `config/navigation.lua` | Shared file opens, launch context, pane selection, closing, and native jump navigation |
 | `config/ui/` | Theme selection and palette, dashboard, file tree, statusline, terminal, shared floats, and window state |
 | `config/search/` | Telescope configuration, project search, previews, and LSP location results |
 | `config/git/` | Git history workflows, Diffview lifecycle, repository data, and GitHub details |
@@ -59,8 +60,25 @@ See [Recording the highlights](examples/README.md) for demo generation, setup, a
 The complete ownership and lifecycle model is documented in
 [Architecture](docs/architecture.md).
 
-Persistent preferences share `~/.local/state/nvim/state.db`; temporary settings stay in process
-memory. Log data lives in `~/.local/state/nvim/logs/` (or the corresponding XDG state directory).
+File-tree, terminal, file-search, and interactive `:e` opens share editor-pane selection: panel-origin opens
+show a/b/c pane labels when several editors are available; editor-origin opens use the current pane.
+Ordinary selection replaces that pane's view and preserves existing split proportions.
+File and definition searches size their prompt, results, and preview across the full editor;
+selecting a result replaces only the launch pane and preserves the split layout.
+Replacing a file unlists its unused buffer. If the destination has unsaved edits,
+a boundary extension asks whether to write it now (y/n); only a successful write permits replacement.
+`<Space>o` / `<Space>p` retain native jump history across searches and file opens.
+Local-file `gx` uses the same a/b/c chooser to replace an existing editor pane.
+`<Space>ww` uses these badges to focus any existing pane, including the tree and terminal.
+Ordinary tree selection replaces rendered Markdown in its existing pane; explicit split keys add panes.
+For editor and tree splits, `:q` closes only the focused pane and leaves the other panes open.
+`<Space>wq` closes the current pane while keeping its file buffer available; new splits use equal
+sizes. Splits from the homepage restore editor line numbers and gutters when a file opens.
+See [Default keybindings](docs/keybindings.md).
+
+Persistent preferences use the replaceable SQLite backend through `config.state`; temporary settings
+use the process-memory backend. SQLite-backed preferences share `~/.local/state/nvim/state.db`.
+Log data lives in `~/.local/state/nvim/logs/` (or the corresponding XDG state directory).
 Without SQLite, Neovim keeps running with preferences limited to the current process.
 
 ## Installation

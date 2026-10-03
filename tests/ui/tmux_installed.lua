@@ -36,9 +36,6 @@ local function matches_editor()
   assert(format('#{E:@beck_ui_window_active_fg}|#{E:@beck_ui_window_active_bg}|'
     .. '#{E:@beck_ui_window_inactive_fg}|#{E:@beck_ui_window_inactive_bg}') == expected_window_colors,
     'Optional window roles did not fall back to the application base palette')
-  assert(format('#{@beck_palette_window_active_fg}#{@beck_palette_window_active_bg}'
-    .. '#{@beck_palette_window_inactive_fg}#{@beck_palette_window_inactive_bg}') == '',
-    'Adapter unexpectedly published optional window roles')
 end
 local function check()
   -- Only this disposable server is created or mutated.

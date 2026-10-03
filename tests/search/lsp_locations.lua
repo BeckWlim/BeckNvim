@@ -5,6 +5,8 @@ local original_finders = package.loaded['telescope.finders']
 local original_make_entry = package.loaded['telescope.make_entry']
 local original_pickers = package.loaded['telescope.pickers']
 local original_query_picker = package.loaded['config.search.query_picker']
+local original_telescope = package.loaded['config.search.telescope']
+package.loaded['config.search.telescope'] = { attach_file_actions = function() end }
 local original_lsp_locations = package.loaded['config.search.lsp_locations']
 local original_buf_request_all = vim.lsp.buf_request_all
 local original_get_client_by_id = vim.lsp.get_client_by_id
@@ -339,6 +341,7 @@ package.loaded['telescope.finders'] = original_finders
 package.loaded['telescope.make_entry'] = original_make_entry
 package.loaded['telescope.pickers'] = original_pickers
 package.loaded['config.search.query_picker'] = original_query_picker
+package.loaded['config.search.telescope'] = original_telescope
 package.loaded['config.search.lsp_locations'] = original_lsp_locations
 rawset(vim.lsp, 'buf_request_all', original_buf_request_all)
 rawset(vim.lsp, 'get_client_by_id', original_get_client_by_id)

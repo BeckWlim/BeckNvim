@@ -2,6 +2,14 @@
 local original_nvim_tree_api = package.loaded['nvim-tree.api']
 local original_filetree = package.loaded['config.ui.filetree']
 local original_project = package.loaded['config.project']
+local original_file_operations = package.loaded['config.navigation']
+local opened_path
+local file_open_options
+package.loaded['config.navigation'] = {
+  register_close = function() end,
+  close = function() end,
+  open = function(path, options) opened_path = path; file_open_options = options end,
+}
 
 local tree_buffer = vim.api.nvim_create_buf(false, true)
 local selected_node = { name = '..' }
@@ -137,8 +145,11 @@ selected_node = {
   type = 'file',
 }
 enter_mapping.callback()
-assert(opened_node == selected_node, '<CR> no longer opens regular tree nodes')
-assert(open_options and open_options.focus == true, '<CR> did not keep focus in the tree')
+assert(opened_path == selected_node.absolute_path, '<CR> did not delegate the file to shared operations')
+assert(file_open_options and file_open_options.keep_focus, '<CR> did not keep focus in the tree')
+selected_node = { name = 'folder', type = 'directory', nodes = {}, parent = {}, absolute_path = vim.fn.getcwd() }
+enter_mapping.callback()
+assert(opened_node == selected_node and open_options == nil, 'Directory toggles lost their native owner')
 assert(type(root_back_mapping.callback) == 'function', 'file tree has no gh root-back mapping')
 root_back_mapping.callback()
 assert(parent_change_count == 1, 'gh did not change to the parent root')
@@ -176,3 +187,4 @@ pcall(vim.api.nvim_del_augroup_by_name, 'project_filetree_sync')
 package.loaded['nvim-tree.api'] = original_nvim_tree_api
 package.loaded['config.ui.filetree'] = original_filetree
 package.loaded['config.project'] = original_project
+package.loaded['config.navigation'] = original_file_operations

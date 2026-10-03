@@ -89,6 +89,13 @@ local function check_surfaces()
       'Mermaid section lost the table background')
   end
   local colors = palette.resolve()
+  local pane_label, pane_border = hl('FilePaneLabel'), hl('FilePaneBorder')
+  assert(pane_label.bg == normal.bg and pane_label.bold
+      and palette.contrast(pane_label.fg, normal.bg) >= 7,
+    'Pane letters must remain bold and highly readable on the shared editor background')
+  assert(pane_label.fg == colors.pane_picker.label and pane_border.fg == colors.pane_picker.border
+      and pane_border.bg == normal.bg and palette.contrast(pane_border.fg, normal.bg) >= 4.5,
+    'Pane labels and their borders lost their theme accent or contrast')
   assert(hl('RenderMarkdownTableIcon').fg == colors.table.icon, 'Table icon lost its semantic accent')
   assert(hl('RenderMarkdownMermaidIcon').fg == colors.mermaid.icon, 'Mermaid icon lost its semantic accent')
   for _, feature in ipairs({ 'Table', 'Mermaid' }) do

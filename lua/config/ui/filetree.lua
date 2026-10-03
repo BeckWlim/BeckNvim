@@ -195,7 +195,9 @@ end
 
 function M.on_attach(bufnr)
   local api = require('nvim-tree.api')
+  local navigation = require('config.navigation')
   api.map.on_attach.default(bufnr)
+  navigation.register_close(bufnr, function() api.tree.close() end)
   local function displayed_node(node)
     -- A grouped directory's final component owns its visible open state.
     local current = node
@@ -263,6 +265,28 @@ function M.on_attach(bufnr)
   pcall(vim.keymap.del, 'n', '-', { buffer = bufnr })
   pcall(vim.keymap.del, 'n', '<C-]>', { buffer = bufnr })
 
+  local function open_selected(command)
+    local selected_node = api.tree.get_node_under_cursor()
+    if not selected_node or selected_node.name == '..' then return end
+    if selected_node.type == 'file'
+        or (selected_node.type == 'link' and type(selected_node.nodes) ~= 'table') then
+      navigation.open(selected_node.absolute_path, { command = command, keep_focus = true })
+    else
+      api.node.open.edit(selected_node)
+    end
+  end
+  for key, command in pairs({
+    O = 'edit', ['<2-LeftMouse>'] = 'edit', ['<C-v>'] = 'vsplit',
+    ['<C-x>'] = 'split', ['<C-t>'] = 'tabedit',
+  }) do
+    vim.keymap.set('n', key, function() search.manual(); open_selected(command) end, {
+      buffer = bufnr, nowait = true, silent = true, desc = 'nvim-tree: Open (' .. command .. ')',
+    })
+  end
+  vim.keymap.set('n', 'q', function() navigation.close() end, {
+    buffer = bufnr, nowait = true, silent = true, desc = 'nvim-tree: Close',
+  })
+
   require('config.keybindings').attach('tree', bufnr, {
     before_action = search.manual,
     expand = function() folder_action(true) end,
@@ -270,12 +294,7 @@ function M.on_attach(bufnr)
     toggle = function() folder_action(nil) end,
     expand_all = function() api.tree.expand_all(root_node()) end,
     collapse_all = function() api.tree.collapse_all() end,
-    select = function()
-      local selected_node = api.tree.get_node_under_cursor()
-      if selected_node and selected_node.name ~= '..' then
-        api.node.open.edit(selected_node, { focus = true })
-      end
-    end,
+    select = function() open_selected('edit') end,
   })
   vim.keymap.set('n', 'gh', function()
     local tree_root = current_tree_root()

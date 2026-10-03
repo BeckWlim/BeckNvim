@@ -17,6 +17,7 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 | `<C-v>` / `<C-x>` | Open a result in a vertical/horizontal split |
 | `<C-q>` | Cancel an input dialog or picker |
 | `<Space>o` / `<Space>p` | Jump back / forward within the current Neovim run |
+| `<Space>ww` | Choose an existing pane to focus using a/b/c labels |
 
 Jump history starts fresh in each Neovim instance. Recent files, saved marks, registers, and
 search history remain available across restarts through ShaDa.
@@ -41,6 +42,35 @@ In NvimTree, `o` / `Enter` opens a file while keeping focus and selection in the
 Telescope searches launched from the tree, such as `<Space>fw`, jump into a code pane with
 its line-number settings preserved; cancelling returns to the tree.
 
+File opens from an editor use the current pane. Opens from the tree, file-result searches
+launched there, and interactive `:e file` from the tree or terminal show a/b/c labels when several
+editor panes are available. The bold labels use a contrasting theme accent. Press a letter to choose,
+or `Esc`/`<C-q>` to cancel; one editor is selected automatically, and a panel-only layout creates one.
+Cancelling the pane choice leaves files and layout unchanged. `<Space>wq` closes the current file
+pane while keeping its buffer available,
+or delegates a panel/picker close to its owner. New splits use equal sizes; reopening a split
+does not restore an earlier layout's proportions.
+`<Space>ww` uses the same labels to switch focus across all existing tiled panes, including
+the tree, terminal, and protected editors. `Esc` / `<C-q>` cancels and restores launch focus.
+Local-file `gx` asks which existing editor pane to replace when several are available; one editor
+is selected automatically. It preserves split proportions and uses the same unsaved-edit guard.
+
+`<C-t>` opens ToggleTerm in shell input mode. Press `Esc` to enter terminal Normal mode, then use
+`:e file` or `<Space>ff` to open in an editor pane. The shell buffer and process remain available;
+cancelling pane selection returns to terminal Normal mode.
+
+`<Space>fr` follows the same rule when selected from its prompt or preview: launching from the
+tree or terminal asks when several editors are available. Ordinary Enter preserves the layout;
+`<Space>fv` and `<Space>bv` explicitly open a vertical split from either picker pane.
+File, definition, grep, and LSP search prompts, results, and previews use the full editor.
+The search covers the project, and ordinary selection returns to the launch pane and preserves split proportions.
+
+Replacing a file through these pickers or typed `:e file` unlists its old buffer once no pane
+displays it. The optional write boundary asks “Write this file now? (y/n)” before covering unsaved
+edits. Yes writes and continues; No, cancelled input, and failed writes retain the existing view.
+The same boundary applies to cross-file `<Space>o` / `<Space>p`; same-file jumps remain available.
+Another pane's view and explicit splits retain their buffers.
+
 Git history, NvimTree, and the focused project preview also share `/`, `?`, and `n`/`N` for
 searching collapsed paths. Search-opened parents collapse when moving to a different match;
 manually expanded parents stay open. Cancelling restores the previous expansion.
@@ -60,7 +90,7 @@ already active.
 
 | Key | Action |
 | --- | --- |
-| `<Space>de` | Search branches, commits, issues, and pull requests |
+| `<Space>de` | Search branches, commits, issues, and pull requests over the current graph or detail view |
 | `<Space>df` | Current-file history with rename tracking |
 | `<Space>ds` | Current-symbol line history |
 | `<Space>dr` | Merge-aware repository graph and commit preview |
@@ -70,7 +100,7 @@ already active.
 | Branch `o` / `Enter` | Review the selected local or remote branch without switching |
 | Branch `f` | Fetch remotes explicitly |
 | `<Space>dn` | Open native commit details in Diffview |
-| `<Space>dm` | Guarded commit checkout in Diffview; switch/track the selected branch in the branch pane |
+| `<Space>dm` | Guarded checkout of the list/preview commit in graph or detail; switch/track in the branch pane |
 | `<Space>dp` | Hide or restore the Diffview history list |
 | `<Space>dv` | From commit list or message preview, open that commit's file diffs; toggle back to graph |
 | `:q` | Close the complete Git mode from any graph or Diffview pane |
@@ -131,11 +161,16 @@ Resize keys change the current window's size; the border that moves depends on t
 | --- | --- |
 | `<C-a>` / `<C-e>` | Move to beginning/end of line in Normal, Visual, Insert, and command-line modes, including Telescope input |
 | `<C-h>` / `<C-j>` / `<C-k>` / `<C-l>` | Move left/down/up/right in Normal, Visual, and Insert modes |
-| `p` / `P` | Paste after/before the cursor in Normal mode; uses the system clipboard with `unnamedplus` |
-| `<C-r>+` | Paste the system clipboard in Insert mode or a command-line prompt (`/`, `?`, `:`) |
+| `p` / `P` | Paste after/before the cursor in Normal mode; uses the selected clipboard provider with `unnamedplus` |
+| `<C-r>+` | Paste from the clipboard provider in Insert mode or a command-line prompt (`/`, `?`, `:`) |
 | `<C-c>` | Return from Insert, Visual, or Select mode to Normal mode using normal Escape cleanup; keeps Telescope open |
 | `q` | Exit Visual mode; retains macro recording in Normal mode |
 | `a` | Enter Insert mode after the cursor (native append) |
+
+Inside tmux, Neovim uses tmux's clipboard provider so yanks reach the attached terminal,
+including over SSH. Direct SSH sessions use OSC 52; local sessions outside tmux use
+the desktop clipboard. To paste local clipboard text over SSH, enter Insert mode and
+use the terminal's Paste action; reading the clipboard with `p` depends on terminal support.
 
 `<C-a>` goes before indentation. Visual mode extends the selection; Insert mode dismisses
 completion before moving. These replace native number increment (`<C-a>`) and scroll-down

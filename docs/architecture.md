@@ -8,7 +8,9 @@ lua/
 ├── config/                       Reusable, testable feature modules, grouped by area
 │   ├── init.lua                  Startup assembly
 │   ├── project.lua               Project-root authority and path containment
+│   ├── navigation.lua            Shared pane selection, file opens, closing, and native history
 │   ├── state.lua                 Shared preference storage and scoped session documents
+│   ├── storage/                  Replaceable memory and SQLite document backends
 │   ├── startup/                  options.lua, autocmds.lua, lazy.lua, keybindings.lua
 │   ├── ui/                       window_state.lua, float.lua, folder_picker.lua, dashboard.lua,
 │   │                             statusline.lua, filetree.lua, terminal.lua, theme.lua, palette.lua
@@ -33,11 +35,16 @@ lua/
 | Module | Responsibility |
 | --- | --- |
 | `config/project.lua` | Project-root authority, activation gate, path containment, markers, and cached Git-host detection |
-| `config/state.lua` | Shared SQLite storage, namespaced global/project persistence, process-local session documents, JSON migration, and asynchronous writes |
-| `config/storage/sqlite.lua` | SQLite C API boundary shared by the main VM and libuv workers |
+| `config/state.lua` | Shared storage API, replaceable memory/SQLite backends, namespaced global/project persistence, process-local session documents, JSON migration, and asynchronous writes |
+| `config/storage/document.lua` | Versioned JSON validation shared by storage backends |
+| `config/storage/memory.lua` | Process-local storage backend |
+| `config/storage/sqlite.lua` | Low-level SQLite C API boundary shared by the main VM and libuv workers |
+| `config/storage/sqlite_store.lua` | Replaceable long-term SQLite storage backend, migrations, async workers, and writes |
 | `config/startup/logs.lua` | Direct native/plugin log destinations under the log subfolder |
 | `config/startup/` | Editor options, global autocmds, lazy.nvim bootstrap, and the single keymap assembly |
-| `config/ui/window_state.lua` | Per-tab split proportions, opt-in panel size memory, and registered editor-facing window options across UI transitions |
+| `config/ui/window_state.lua` | Window-owned editor intent and surface-option delivery, native transition reconciliation, live split proportions, and opt-in panel size memory |
+| `config/navigation.lua` | Shared launch context, native file/buffer opens and jump history, cancellable editor-pane selection, and owner-aware closing |
+| `config/navigation/write_guard.lua` | Optional transition boundary asking y/n to write unsaved destination contents before replacement |
 | `config/ui/statusline.lua` | Explicit project identity and project-relative current-file state |
 | `config/ui/theme.lua` | Theme selection, Telescope preview/rollback, and preference validation through shared storage |
 | `config/ui/palette.lua` | Shared semantic palette resolved from the selected colorscheme, light/dark fallbacks, contrast, and background tints |
@@ -45,8 +52,8 @@ lua/
 | `config/ui/dashboard.lua` | Bounded project drawer, project-relative MRU state, and dashboard actions |
 | `config/ui/folder_picker.lua` | Telescope project switching, bounded system-folder search, and asynchronous file-tree previews |
 | `config/ui/filetree.lua` | Nvim-tree mappings, authoritative root synchronization, window-switching Tab preservation, and project-boundary confirmation |
-| `config/ui/open_target.lua` | Shared URL routing/handoff and confirmed local-file navigation for global and feature-owned actions |
-| `config/ui/terminal.lua` | ToggleTerm-local escape from terminal input to scrollable Normal mode |
+| `config/ui/open_target.lua` | Shared URL routing/handoff and local-file target resolution into the navigation manager |
+| `config/ui/terminal.lua` | ToggleTerm-local escape to Normal mode and registered editor-facing window options |
 | `config/ui/float.lua` | Shared close-key and background-focus lock policy for ordinary floating dialogs |
 | `config/search/workspace_symbols.lua` | Project-wide definition search and Telescope result entries |
 | `config/search/query_picker.lua` | Empty-first Telescope lifecycle, incremental refresh, status, and cancellation |
@@ -88,10 +95,18 @@ windows opened with startup split arguments. ShaDa still preserves recent files,
 registers, and search history; ordinary navigation continues to use native window-local jumplists.
 
 `config.ui.window_state` remembers nested split proportions per tab during the current session.
-Opening files keeps pane sizes; new splits divide the active pane without equalizing unrelated
-windows. Terminal resizing scales the current layout, with hidden tabs restored when entered.
+Replacing files keeps pane sizes; opening or closing splits uses Neovim's default equal-size
+policy. Each topology change replaces the in-memory layout snapshot; reopening a split does not
+restore proportions from a previous layout. Terminal resizing scales the current live layout,
+with hidden tabs restored when entered.
 Manual resizing and explicit equalization establish new proportions. Floats are excluded, and
 changed split topology is adopted rather than reconstructing closed windows.
+`capture_layout()` gives each file-opening session a restore callback for its native split
+proportions. Definition, file, grep, buffer, diagnostic, document-symbol, and shared LSP/type pickers capture it before opening
+temporary panes; closing the picker and replacing a file restore it after plugin callbacks.
+Restoration requires the same tab, window topology, and editor dimensions, so explicit splits,
+closed panes, and terminal resizing retain their native behavior. Ordinary selection changes only
+the launch editor's file view; panel-origin selection retains its existing destination policy.
 Panels can use `panel_size(filetype, axis, default_size)` in their native size callback and call
 `track_panel(winid)` after opening. Nvim-tree uses this shared memory to restore its width after
 closing and reopening, including terminal resizing while hidden; its initial width is 30 columns.
@@ -99,16 +114,96 @@ closing and reopening, including terminal resizing while hidden; its initial wid
 persist their last adjusted ratio through `config.state`, so new tabs and later Neovim processes
 inherit it; existing tabs retain their own overrides. A late startup read only adjusts an untouched
 panel. Window IDs and complete split layouts stay in memory.
+The same owner separates underlying editor options from temporary surface presentation.
+`register(filetype, resolver, presentation)` declares a surface's editor fallback and optional
+display overrides; `resolve(winid)` reads editor intent and `apply(winid, editor_options)` delivers
+options with explicit window-local scope, preserving defaults for later windows. `file_buffer(winid)`
+resolves a rendered Markdown pane to its real source buffer for destination selection, unsaved-change
+checks, unused-buffer disposal, and statusline identity. Context snapshots
+belong to each window and its displayed buffer/filetype. `WinNew` inherits intent from the source
+window before Neovim replaces the copied buffer; `BufEnter`, `BufWinEnter`, `WinEnter`, and `FileType`
+reconcile the actual target, restoring editor intent before applying the next registered surface.
+`FileType` reconciles every view of the buffer, and `WinClosed` releases its snapshot. Ordinary editor
+windows retain local changes; native horizontal, vertical, empty, and tab splits use this pipeline
+without depending on the file-opening adapter. Floats do not inherit tiled-surface context.
 NvimTree registers its underlying editor line-number settings with `window_state`, using the
-same resolver contract as the dashboard. Telescope's selection-window callback routes tree-origin
-file selections to an existing editor; if none remains, it creates one using the resolved settings.
-Tree `o`/`Enter` uses NvimTree's native keep-focus option for ordinary file opens.
+same resolver contract as the dashboard. `config.navigation` owns file-opening and history policy:
+an editor or dashboard opens in its own pane; a panel uses the sole eligible editor or asks through
+transient a/b/c badges when several remain. The shared layer owns the letter picker, its buffer-local
+keys, and teardown; it does not replace NvimTree's renderer or depend on its private picker.
+Local-file `gx` requests destination selection even from an editor, replacing the selected existing
+pane through the same guards. It offers no split strategy menu. `focus_window()` reuses the badge
+renderer for `<Space>ww`, with all native tiled windows eligible, including panels and `winfixbuf`
+editors; it changes focus without opening files. Cancellation restores launch focus.
+Floats, special buffers, and `winfixbuf` panes are excluded
+from destinations. Rendered Markdown remains an eligible editor through its underlying source;
+ordinary tree selection replaces it in the existing pane, and only explicit split commands add
+panes when an editor is available. Moving to another file uses the renderer's native leave/enter
+lifecycle, retaining the generated buffer for native jump history and restoring pane presentation.
+Explicitly reopening the current source calls the renderer's public `leave_preview()` API after
+transition boundaries permit the operation. With no eligible editor, the open
+layer creates one with resolved editor options. Requests
+are scoped to a tab and reject superseded choices, changed sources, and replaced destination
+buffers. A replacement unlists the previous ordinary file buffer only after a successful open
+and when no window still displays it. Its hidden identity remains available to native jump history,
+including search and file-picker navigation. Native
+guards still apply to all other operations. Existing files in
+another pane do not override the chosen destination. Only terminal resizing reuses live ratios;
+file replacement preserves sizes and explicit splits adopt the default equal-size policy.
+The tree adapts file-selection and split keys while NvimTree retains directory actions. Telescope
+adapts its native file action set for file/buffer/grep, project definition, LSP location, and type
+hierarchy pickers; custom theme, project, historical-buffer, and Git choices retain their owners.
+Tree opens retain tree focus; file-result pickers focus the chosen editor. `capture()` returns a
+shared navigation context containing the launch window, displayed buffer, tab, and proportion
+restore callback. File/definition pickers and shared LSP/type sessions capture this context before
+creating temporary windows and pass it to `open()` after teardown. A changed source buffer or tab
+invalidates the context before any file mutation. Global file-picker
+shortcuts capture their launch window before creating a picker; preview
+focus and Telescope's return-window changes cannot reclassify a panel-origin open. Prompt and
+preview Enter retain the same explicit split intent for `<Space>fv` and `<Space>bv`.
+File results resolve against the picker's root before teardown. The open layer reconciles Normal
+mode on the next loop turn when closing a prompt has already emitted `ModeChanged`.
+`jump()`, `back()`, and `forward()` use native window-local jumplists, including `/` searches and
+file/symbol navigation, and preserve live split proportions. Counts and the selected pane remain
+native; a file already visible elsewhere does not redirect history. `<Space>o` and `<Space>p`
+dispatch through this manager. There is no additional history store.
+`register_boundary(name, callback)` is the manager's optional policy extension point; it returns
+an unregister function and passes the transition's action, destination window, underlying file,
+and target buffer. A veto cancels before the view or jump index changes. The manager contains no
+save-question UI. Startup enables `config.navigation.write_guard`, which asks the native y/n
+“Write this file now?” question for unwritten destinations. Yes performs a normal write before
+continuing; No, write errors, and stale view/content choices abort the transition. The extension
+protects both file replacement and cross-file native history, including rendered Markdown sources
+and files displayed in several panes. Same-file cursor jumps and explicit splits do not replace
+the protected view. There is no discard action or additional decision picker.
+Dashboard and local `gx` file actions use the same native open layer. Local links retain their
+lightweight syntax policy; a command wrapper applies that policy only after
+the manager's destination and unsaved-change guards. Referenced-file LSP navigation uses the shared
+location picker. Interactive `:e file` from NvimTree or a
+terminal uses the same destination policy;
+the command-line Enter adapter preserves parsed native command modifiers and dirty-buffer checks.
+Editor-origin `:e file` keeps current-pane targeting and uses the same replacement guard.
+Programmatic and chained Ex commands and other plugin-owned panels remain native.
+Git's existing command-line
+dispatcher delegates non-quit input to this adapter, preserving whole-mode Git quit behavior.
+ToggleTerm registers the underlying editor line-number defaults for creating an editor from a
+terminal. Terminal buffers remain excluded from destinations; cancelling selection returns to
+terminal Normal mode after ToggleTerm's scheduled mode restoration.
+`<Space>wq` delegates registered panel/picker/detail cleanup to its owner and otherwise closes the
+current file pane without deleting its buffer. Native `:q` closes only the focused ordinary pane,
+including the last editor beside a tree; it leaves other panes and tabs open. UI adapters are
+released on buffer wipeout. Telescope closes its entire picker, preserving lower UI layers.
 Diffview's existing code panes and history footer use the same split tracking when selecting files
 and resizing the terminal. Diffview retains ownership of panel toggles and rebuilt layouts.
 
 ## Shared State Storage
 
 Feature modules open small document stores with `require('config.state').open(namespace, options)`.
+The default `memory` backend is process-scoped and never writes files; global and project stores
+default to the long-term `sqlite` backend. A consumer can select `backend = 'memory'` explicitly,
+or replace/register a backend with `config.state.register_backend(name, backend)`. Backends store
+encoded JSON and implement synchronous/asynchronous read and write plus `when_idle`; this keeps
+SQLite behind one replaceable boundary rather than making plugins depend on its C API.
 Global and project scopes share `<stdpath('state')>/state.db`. Records use a key containing scope,
 project-root hash, and namespace; the payload is a versioned JSON object inside SQLite.
 Project scope requires an absolute `project_root` supplied by `config.project`.
@@ -118,7 +213,7 @@ the session ID. View owners capture selection, scope, dimensions, and focus befo
 restore them after native data loading. Snapshots exclude Git contents, jobs, and window handles;
 the repository entry point resumes them only within the current Neovim process.
 Storage does not detect projects or take ownership of feature lifecycles.
-If the SQLite shared library cannot load, all scopes use isolated Lua memory for this process.
+If the SQLite shared library cannot load, SQLite-backed scopes use isolated Lua memory for this process.
 Startup warns once, existing database/JSON files remain untouched, and setting changes are transient.
 `persistent_available()` exposes this capability without requiring consumers to load SQLite.
 
@@ -212,6 +307,9 @@ changing colors does not rerun Mermaid jobs or rebuild panels. The native `Statu
 inactive variant. Lualine consumes these same palette roles through its public theme callback;
 all sections share the footer surface and the mode label uses bold text. ToggleTerm background
 shading is disabled.
+Pane-selection labels use a bold theme accent adjusted to at least 7:1 contrast against the shared
+editor background; their matching borders have at least 4.5:1 contrast. Named `FilePaneLabel` and
+`FilePaneBorder` groups refresh through the same colorscheme coordinator.
 
 Saved name/background pairs have a 4 KiB bound. Before `VimEnter`, startup reads the saved record
 synchronously and applies it directly, avoiding a visible default-to-saved theme switch. Database
@@ -311,6 +409,11 @@ are read-only and reject Insert/Replace mode; Tab unlocks native preview updates
 prompt. Telescope may replace the preview buffer during a layout refresh, so the shared previewer
 loaded handler binds the return action to the current buffer while preview focus is active. Git
 pickers retain their existing layer-pop action.
+File, grep, buffer, definition, diagnostic, and shared LSP/type pickers use Telescope's native
+`flex` layout across the full editor. Picker size is independent of the launch pane; the captured
+navigation context still targets that pane when selecting a result and restores native split
+proportions after teardown. When a native resize hides the focused preview, focus returns to the
+prompt without retiring the search. Project-wide query scope is independent of the layout.
 Renderer-owned scratch buffers do not set `readonly`, which would raise W10 on native result and
 preview updates. Grep/definition preview text and cursor placement precede asynchronous structural
 context; the winbar accepts a completion only for the current selection, buffer revision, and window.
@@ -331,8 +434,12 @@ copy displayed text. Edit keys return to the mapped source position; leaving the
 preview. Writes, undo, and redo operate on the source. Explicit source mode remains raw.
 
 The host integrations use the plugin's public `source_location()`, `display_position()`, and
-`leave_preview()` APIs for link opening, pinned heading context, and dashboard transitions.
-The documented `b:markdown_preview_source` marker lets the statusline use the original file identity.
+`leave_preview()` APIs for link opening, pinned heading context, dashboard transitions, and file
+replacement. The documented `b:markdown_preview_source` marker lets shared window context resolve
+the original file identity for both the statusline and file-opening policy.
+Multiple panes of one source keep separate generated projections, source maps, and cursor positions
+in the renderer. Closing or replacing one pane preserves the other panes' rendered views.
+Project roots and relative paths resolve the source file, including searches launched from a preview.
 `config.syntax.highlights` retains BeckNvim's palette overrides for the plugin's semantic highlight
 groups. Read-only Markdown detail buffers continue to use the ordinary upstream renderer.
 
@@ -377,7 +484,7 @@ The query policy is shared across every supported language:
 - A query emits up to 1,000 Telescope candidates.
 - A new prompt cycle retires the previous generation and releases its active jobs.
 - Search results enter Telescope through Neovim's scheduled main-loop callbacks.
-- Picker readiness activates after Telescope setup; an earlier invocation reports its loading state.
+- An invocation loads Telescope synchronously; picker readiness activates at the end of setup.
 
 This finder is deliberately separate from `config.search.query_picker`. A query-picker session is
 empty-first and async-filled, while the definition finder is prompt-driven — the prompt is the
@@ -456,6 +563,10 @@ Its active and inactive winbars use the editor's `Normal` surface via native pan
 Toggling back mounts the graph directly before asynchronously disposing the detail tab, restoring
 its branch and commit without exposing the editor or homepage. Retired detail callbacks cannot
 refocus their panel. Checkout retains the same immutable diff.
+Graph and detail commit checkout share `config.git.detach_commit_overview` for target resolution,
+dirty-worktree and modified-buffer guards, and HEAD mutation. The graph supplies owner-validity and
+render callbacks instead of mounting Diffview; its reload retains the reviewed branch, pane sizes,
+focus, and preview. Retiring the graph rejects pending checkout callbacks before mutation.
 Diffview owns file-list rendering, file selection, and historical buffers.
 File and symbol views begin directly with its compact bottom panel. Git's own graph output owns
 the repository topology rendering so merge connections remain aligned with selectable rows.
@@ -604,7 +715,12 @@ Git search can be a standalone editor layer or a temporary layer above ordinary 
 Diffview. `<Space>dr` passes through the same repository gate and mounts the graph tab
 immediately. Selecting a standalone branch or commit opens Git mode directly at that review route;
 selecting an issue opens its Markdown detail directly over the editor and does not mount Diffview.
-The graph's `<Space>de` enters Diffview detail before opening search. The same buffer-local
+The graph's `<Space>de` opens search directly over its list, preview, or branch pane. Search dispatches
+branch and commit reviews through graph-owned callbacks: branch selection reloads the existing graph,
+an existing commit is selected in place, and an off-graph commit opens in the existing message preview
+without replacing the retained branch history. Canonical commit IDs and branch-preview rows use the
+same callbacks; retired graph owners reject late commit resolution. Cancelling search or returning
+from an issue preserves the graph's panes, selection, and focus. The same buffer-local
 `<Space>de` reopens search from Diffview Git mode, where the history view retains its commit/file panel,
 selected entry, checkout, and split layout while the picker is active. Buffer-local
 `<Space>de` opens `config.git.search` directly from view-owned repository/options state, including
@@ -672,11 +788,12 @@ same detail float; failure emits a warning with the provider error before fallin
 asynchronous browser handoff. Direct PR resolution
 carries its resource kind through the public-page fallback, preserving `/pull/` and the shared
 body-and-discussion renderer. Local
-file targets resolve from the current buffer and ask in the command-line footer whether to use the
-current window, a vertical split, a horizontal split, or cancel. Targets within the source project
+file targets resolve from the current buffer or rendered source, then use the shared a/b/c chooser
+to replace an existing editor pane. A sole editor is reused automatically; cancellation preserves
+files, focus, and proportions. Targets within the source project
 follow the ordinary file lifecycle. Cross-project targets suppress `FileType` consumers during the
 open and start only Tree-sitter highlighting, preventing an unrelated workspace index from starting.
-Same-project targets always follow the ordinary `FileType` and LSP lifecycle, including split opens;
+Same-project targets always follow the ordinary `FileType` and LSP lifecycle;
 lightweight external rendering is silent. Issues and pull requests use this
 same renderer: the canonical URL is part of the top metadata card, and the complete available body
 is followed by the shared conversation-comment pipeline. GitHub metadata normalizes CRLF and lone
@@ -878,12 +995,16 @@ project homepage. The local
 `dashboard.theme.project` module delegates its compact rendering and navigation to
 `config.ui.dashboard`; the first paint contains the current project, while optional recent-file
 enrichment runs after that paint. Recent files come from `vim.v.oldfiles`, are grouped through the
-shared project authority policy, and are capped before rendering. Activating a project updates the dashboard
+shared project authority policy, and are capped before rendering. The homepage layout hides the
+large brand icon before reducing recent-file rows when height is limited, then
+reduces padding and optional footer context. Terminal and pane resizing preserve the selected
+project/file and restore the icon when space permits. Activating a project updates the dashboard
 window's local working directory and context in place; an existing file tree follows the same root
-without being opened or focused. The dashboard restores editor window options on `BufWinLeave`, not
-ordinary `BufLeave`, so switching to Git mode does not expose a line-number gutter on the preserved
-homepage. Its registered window-state resolver still lets Git panes and returned files inherit the
-underlying editor line-number intent.
+without being opened or focused. The dashboard declares its gutter-free presentation through
+`config.ui.window_state`; each displaying window retains its own underlying editor intent. Buffer
+replacement restores that intent through the shared transition pipeline, including native splits
+from the homepage. Leaving the window or tab preserves its dashboard presentation, while Git panes
+and returned files resolve the underlying editor settings.
 
 Startup-only modules remain small: keymaps retain deferred module callbacks for feature-owned
 actions, and plugins that serve files, insert mode, or explicit commands load on their first relevant

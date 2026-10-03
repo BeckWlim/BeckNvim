@@ -352,8 +352,14 @@ local focus_history_calls = 0
 local anchor_logs = {}
 local opened_history_view = { name = 'direct repository history' }
 local graph_opened_root
+local graph_mode_active = false
+local graph_search_calls = 0
 package.loaded['config.git.graph'] = {
-  is_active = function() return false end,
+  is_active = function() return graph_mode_active end,
+  search = function()
+    graph_search_calls = graph_search_calls + 1
+    return true
+  end,
   resume = function(root)
     graph_opened_root = root
     return true
@@ -595,6 +601,13 @@ project.detect_repository = original_detect_repository
 vim.api.nvim_set_current_buf(original_location_buffer)
 vim.api.nvim_buf_delete(history_location_buffer, { force = true })
 overview_options = nil
+
+graph_mode_active = true
+assert(git.search_repository() and graph_search_calls == 1,
+  'Global Git search did not dispatch directly to the active graph')
+assert(direct_search_call == nil and overview_options == nil,
+  'Graph search mounted another history before opening the picker')
+graph_mode_active = false
 
 defer_git_search = true
 assert(git.search_repository())

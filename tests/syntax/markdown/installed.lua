@@ -70,6 +70,9 @@ local function check()
     'Markdown rendering left its Termaid dependency unloaded in lazy.nvim')
   evaluate([[
     local rendered = vim.api.nvim_get_current_buf()
+    -- This fixture has synthetic initial contents. Dirty replacement choices
+    -- are tested separately; exercise the link and history lifecycle here.
+    vim.bo[vim.g.preview_test_source].modified = false
     local position = { 1, 4 }
     vim.api.nvim_win_set_cursor(0, position)
     for _ = 1, 3 do
@@ -129,21 +132,22 @@ local function check()
     local rendered = vim.api.nvim_get_current_buf()
     vim.api.nvim_win_set_cursor(0, { 3, 47 })
     local position = vim.api.nvim_win_get_cursor(0)
-    local original_confirm = vim.fn.confirm
-    vim.fn.confirm = function() return 1 end
     vim.api.nvim_feedkeys('gx', 'xt', false)
-    vim.fn.confirm = original_confirm
     vim.g.preview_link_origin = rendered
     vim.g.preview_link_position = position
   ]])
   assert(vim.wait(1000, function()
     return evaluate([[
       local source = vim.b.markdown_preview_source
-      return source and vim.api.nvim_buf_get_name(source) == vim.g.preview_test_project .. '/docs/production/replicas.md'
+      return vim.bo.filetype ~= 'TelescopePrompt' and source
+        and vim.api.nvim_buf_get_name(source) == vim.g.preview_test_project .. '/docs/production/replicas.md'
     ]])
   end, 20), 'Installed gx did not open the source-relative Markdown link')
   evaluate([[
-    assert(vim.api.nvim_win_get_cursor(0)[1] == 2, 'Installed gx lost its line anchor')
+    local _, source_position = require('render-markdown').source_location(vim.api.nvim_get_current_win())
+    assert(source_position and source_position[1] == 2, 'Installed gx lost its source line anchor: '
+      .. vim.inspect({ cursor = vim.api.nvim_win_get_cursor(0), source = source_position,
+        lines = vim.api.nvim_buf_get_lines(0, 0, -1, false), messages = vim.api.nvim_exec2('messages', { output = true }).output }))
     vim.api.nvim_feedkeys(vim.keycode('<Space>o'), 'xt', false)
   ]])
   assert(vim.wait(1000, function()
@@ -152,6 +156,7 @@ local function check()
   evaluate([[
     assert(vim.deep_equal(vim.api.nvim_win_get_cursor(0), vim.g.preview_link_position),
       'Returning from gx lost the link cursor position')
+    vim.bo[vim.g.preview_test_source].modified = true
   ]])
   evaluate([[
     vim.cmd('redraw!')

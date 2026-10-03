@@ -104,15 +104,6 @@ local function resolve_file_reference(target)
   }, nil
 end
 
-local function jump_to_referenced_line(referenced_line)
-  if not referenced_line then
-    return
-  end
-  local buffer_line_count = vim.api.nvim_buf_line_count(0)
-  local bounded_line = math.max(1, math.min(referenced_line, buffer_line_count))
-  vim.api.nvim_win_set_cursor(0, { bounded_line, 0 })
-end
-
 local function eventignore_with_filetype(previous_eventignore)
   local ignored_events = vim.split(previous_eventignore, ',', { plain = true, trimempty = true })
   if vim.list_contains(ignored_events, 'FileType') then
@@ -122,31 +113,12 @@ local function eventignore_with_filetype(previous_eventignore)
   return table.concat(ignored_events, ',')
 end
 
-local function execute_safely(action)
-  local action_error
-  local action_ok = xpcall(action, function(execution_error)
-    action_error = tostring(execution_error)
-  end)
-  return action_ok, action_error
-end
-
 local function execute_while_ignoring_filetype(action)
   local previous_eventignore = vim.o.eventignore
   vim.o.eventignore = eventignore_with_filetype(previous_eventignore)
-  local action_ok, action_error = execute_safely(action)
+  local action_ok, action_error = xpcall(action, debug.traceback)
   vim.o.eventignore = previous_eventignore
   return action_ok, action_error
-end
-
-local function execute_open_command(open_command, command_options, lightweight)
-  if lightweight then
-    return execute_while_ignoring_filetype(function()
-      open_command(command_options)
-    end)
-  end
-  return execute_safely(function()
-    open_command(command_options)
-  end)
 end
 
 local function set_lightweight_filetype(buffer)
@@ -173,37 +145,21 @@ local function start_lightweight_syntax(buffer)
 end
 
 local function open_file_reference(file_reference)
-  local display_path = vim.fn.fnamemodify(file_reference.path, ':~:.')
-  local confirmation = vim.fn.confirm(
-    ('Open local file? A current-window jump replaces this window\'s render.\n%s'):format(
-      display_path
-    ),
-    '&Yes (current window)\n&No\n&Vertical split\n&Horizontal split',
-    2
-  )
-  if confirmation == 0 or confirmation == 2 then
-    return false
-  end
-
-  local command_name = confirmation == 3 and 'vsplit'
-    or confirmation == 4 and 'split'
-    or 'edit'
   local lightweight = file_reference.outside_project
-  local open_command = vim.cmd[command_name]
-  local command_options = { args = { file_reference.path } }
-  local open_ok, command_error = execute_open_command(
-    open_command,
-    command_options,
-    lightweight
-  )
-  if not open_ok then
-    return notify_error(assert(command_error))
-  end
-  if lightweight then
-    start_lightweight_syntax(vim.api.nvim_get_current_buf())
-  end
-  jump_to_referenced_line(file_reference.line)
-  return true
+  local request = require('config.navigation').open(file_reference.path, {
+    command = 'edit', select_destination = true,
+    line = file_reference.line, push_cursor = true, reopen = true,
+    run_command = lightweight and function(command)
+      local succeeded, failure = execute_while_ignoring_filetype(function()
+        vim.api.nvim_cmd(command, {})
+      end)
+      if not succeeded then error(failure) end
+    end or nil,
+    on_open = function(window)
+      if lightweight then start_lightweight_syntax(vim.api.nvim_win_get_buf(window)) end
+    end,
+  })
+  return request ~= nil and not request.cancelled and request.succeeded ~= false
 end
 
 local function open_external_uri(target)

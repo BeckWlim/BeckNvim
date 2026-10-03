@@ -58,7 +58,12 @@ assert(#calls == 1 and contains(1, '--owner') and contains(1, '4242'),
 assert(calls[1].command[1] == hook_path and calls[1].options.timeout == 1000,
   'Hook argv/path or timeout changed')
 assert(calls[1].options.env.TMUX_PANE == '%7', 'Pane target was not captured')
-assert(#calls[1].command == 15, 'Not all eleven palette roles were published')
+for _, role in ipairs({ 'bg', 'surface', 'cursor', 'border', 'fg', 'muted',
+  'green', 'cyan', 'yellow', 'purple', 'red' }) do
+  assert(vim.iter(calls[1].command):any(function(argument)
+    return argument:match('^' .. role .. '=#%x%x%x%x%x%x$') ~= nil
+  end), 'Palette publication omitted ' .. role)
+end
 -- Palette switches coalesce while the previous publication is running. The
 -- deferred read sees the final highlights, including custom-preset rollback.
 vim.api.nvim_set_hl(0, 'Normal', { bg = 0x123456, fg = 0xFFFFFF })

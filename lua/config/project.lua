@@ -43,6 +43,12 @@ M.python_markers = {
   'setup.py',
 }
 
+local function file_buffer(bufnr)
+  local displayed_buffer = bufnr or vim.api.nvim_get_current_buf()
+  local source = vim.b[displayed_buffer].markdown_preview_source
+  return type(source) == 'number' and vim.api.nvim_buf_is_valid(source) and source or displayed_buffer
+end
+
 local function normalized_buffer_path(bufnr)
   local buffer_path = vim.api.nvim_buf_get_name(bufnr)
   if buffer_path == '' then
@@ -105,7 +111,7 @@ function M.resolve_path(path)
 end
 
 function M.for_buffer(bufnr)
-  local selected_buffer = bufnr or vim.api.nvim_get_current_buf()
+  local selected_buffer = file_buffer(bufnr)
   local buffer_path = normalized_buffer_path(selected_buffer)
 
   if buffer_path then
@@ -182,7 +188,7 @@ function M.is_python(root)
 end
 
 function M.relative_path(bufnr)
-  local selected_buffer = bufnr or vim.api.nvim_get_current_buf()
+  local selected_buffer = file_buffer(bufnr)
   local buffer_path = normalized_buffer_path(selected_buffer)
   if not buffer_path then
     return '[No Name]'

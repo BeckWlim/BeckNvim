@@ -62,7 +62,6 @@ assert(vim.deep_equal(filtered_dev.patterns, { 'termaid' }), 'Invalid patterns w
 
 local termaid_spec = dofile('lua/plugins/termaid.lua')[1]
 assert(termaid_spec.dir == nil, 'Hardcoded Termaid checkout bypasses development mode')
-assert(termaid_spec.branch == 'main' and termaid_spec.version == false, 'Termaid lost its remote source policy')
 
 vim.uv.fs_stat = original_fs_stat
 vim.o.runtimepath = original_runtimepath

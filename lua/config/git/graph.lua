@@ -507,7 +507,15 @@ local function select_cursor(view)
   end, 65)
 end
 
-local function load_history(view, selected_hash)
+local function finish_history(view, succeeded, detail)
+  local completion = view.history_completion
+  view.history_completion = nil
+  if completion then completion(succeeded, detail) end
+end
+
+local function load_history(view, selected_hash, completion)
+  finish_history(view, false, 'graph history superseded')
+  view.history_completion = completion
   if view.cancel_list then view.cancel_list() end
   if view.cancel_head then view.cancel_head() end
   cancel_fork_anchors(view)
@@ -538,10 +546,13 @@ local function load_history(view, selected_hash)
       if view.restore_graph and view.history_ref ~= 'HEAD' then
         view.restore_graph = nil
         view.history_ref = 'HEAD'
-        load_history(view)
+        local retry_completion = view.history_completion
+        view.history_completion = nil
+        load_history(view, nil, retry_completion)
         return
       end
       set_lines(view.list_buffer, { 'Could not load commit history: ' .. repository.concise_error(result) })
+      finish_history(view, false, 'graph history failed to load')
       return
     end
     view.history_rows = M.with_worktree(repository.parse_graph_history(result.stdout), view.worktree_state)
@@ -590,6 +601,7 @@ local function load_history(view, selected_hash)
           or target_row and view.commits[target_row].kind == 'worktree') then
       load_preview(view, saved.preview_commit, saved.preview_history_ref)
     end
+    finish_history(view, true, 'graph history refreshed')
   end
   view.cancel_list = repository.start(repository.commands.graph_history(
     repository.footer_list_max_entries, view.history_ref), view.root, function(result)
@@ -667,7 +679,7 @@ end
 
 local function review_branch(view)
   local branch = selected_branch(view)
-  if not branch or view.switching or view.fetching
+  if not branch or view.switching or view.fetching or view.checking_out
       or not branch.tip_commit or branch.tip_commit == '' then
     return false
   end
@@ -691,7 +703,7 @@ end
 
 local function switch_branch(view)
   local branch = selected_branch(view)
-  if not branch or view.switching or view.fetching then
+  if not branch or view.switching or view.fetching or view.checking_out then
     return false
   end
   if branch.current then
@@ -733,7 +745,7 @@ local function switch_branch(view)
 end
 
 local function fetch_branches(view)
-  if view.fetching or view.switching then
+  if view.fetching or view.switching or view.checking_out then
     return
   end
   view.fetching = true
@@ -798,6 +810,8 @@ function M.toggle_branches()
     { buffer = buffer, silent = true, desc = 'Fetch Git remotes' })
   vim.keymap.set('n', '<Space>db', M.toggle_branches,
     { buffer = buffer, silent = true, desc = 'Hide Git branches' })
+  vim.keymap.set('n', '<Space>de', M.search,
+    { buffer = buffer, silent = true, desc = 'Search Git history' })
   vim.keymap.set('n', '<Tab>', function() vim.api.nvim_set_current_win(view.list_window) end,
     { buffer = buffer, silent = true, desc = 'Focus commit history' })
   view.autocmds[#view.autocmds + 1] = vim.api.nvim_create_autocmd('CursorMoved', {
@@ -818,16 +832,12 @@ function M.is_current()
   return active ~= nil and active.tab == vim.api.nvim_get_current_tabpage()
 end
 
-function M.close()
-  local view = active
-  if not view then
-    return false
-  end
+local function capture_graph(view)
   local branch = selected_branch(view)
   local current_window = vim.api.nvim_get_current_win()
   local row = vim.api.nvim_win_get_cursor(view.list_window)[1]
   local commit = view.commits[row]
-  session.update(view.root, { layout = 'graph', graph = {
+  return {
     history_ref = view.history_ref,
     selected_hash = commit and commit.hash or view.selected_hash,
     branches_open = view.branch_window ~= nil and vim.api.nvim_win_is_valid(view.branch_window),
@@ -842,8 +852,17 @@ function M.close()
     preview_history_ref = view.preview_history_ref,
     focus = current_window == view.preview_window and 'preview'
       or current_window == view.branch_window and 'branches' or 'list',
-  } })
+  }
+end
+
+function M.close()
+  local view = active
+  if not view then
+    return false
+  end
+  session.update(view.root, { layout = 'graph', graph = capture_graph(view) })
   active = nil
+  finish_history(view, false, 'graph closed')
   panel.leave_git(view)
   clear_autocmds(view)
   cancel_preview(view)
@@ -867,7 +886,78 @@ function M.close()
   return true
 end
 
-function M.open_detail(search_after_open)
+function M.checkout_selected_commit()
+  local view = active
+  if not view or view.switching or view.fetching or view.checking_out then return false end
+  local from_preview = vim.api.nvim_get_current_win() == view.preview_window
+  local commit = from_preview and view.preview_commit
+    or not from_preview and view.commits[commit_row_at_cursor(view)]
+  if not commit or commit.kind == 'worktree' then return false end
+  local retained_ref = view.history_ref == 'HEAD' and view.worktree_state
+    and view.worktree_state.branch_name and ('refs/heads/' .. view.worktree_state.branch_name)
+    or view.history_ref
+  view.checking_out = true
+  local started = require('config.git').detach_commit_overview(view.root, commit.hash, nil, {
+    source = 'LOCAL',
+    is_current = function() return active == view end,
+    on_finished = function() view.checking_out = false end,
+    render_review = function(_commit_hash, _review_context, finished)
+      if active ~= view then return false end
+      view.restore_graph = capture_graph(view)
+      view.history_ref = retained_ref
+      load_history(view, view.selected_hash, function(succeeded, detail)
+        finished(nil, succeeded, detail)
+      end)
+      return true
+    end,
+  })
+  if not started then view.checking_out = false end
+  return started
+end
+
+function M.search()
+  local view = active
+  if not view then return false end
+  return require('config.git.search').open(view.root, {
+    kind = 'repository',
+    location = { root = view.root },
+    checked_out_branch = view.worktree_state and view.worktree_state.branch_name,
+    detached_head_commit = view.worktree_state and view.worktree_state.branch_name == nil
+      and view.head_commit or nil,
+  }, nil, {
+    is_current = function() return active == view end,
+    branch = function(branch)
+      if active ~= view or view.checking_out then return false end
+      view.history_ref = branch.refname or branch.short_name
+      vim.api.nvim_set_current_win(view.list_window)
+      load_history(view, branch.tip_commit)
+      return true
+    end,
+    commit = function(commit)
+      if active ~= view then return false end
+      for row, candidate in pairs(view.commits) do
+        if candidate.hash == commit.hash then
+          vim.api.nvim_set_current_win(view.list_window)
+          vim.api.nvim_win_set_cursor(view.list_window, { row, 0 })
+          view.selected_hash = candidate.hash
+          load_preview(view, candidate)
+          return true
+        end
+      end
+      -- A result outside the retained graph is still readable without replacing
+      -- its branch or list. The explicit detail key uses this preview's target.
+      load_preview(view, {
+        hash = commit.hash,
+        refs = commit.branch_name or '',
+        subject = commit.subject or ('Commit ' .. commit.hash:sub(1, 12)),
+      }, commit.history_ref or view.history_ref)
+      vim.api.nvim_set_current_win(view.preview_window)
+      return true
+    end,
+  })
+end
+
+function M.open_detail()
   local view = active
   if not view then
     return false
@@ -896,9 +986,6 @@ function M.open_detail(search_after_open)
   if not detail_view then
     M.open(root, selected_hash, nil, history_ref)
     return false
-  end
-  if search_after_open then
-    git_diffview.search()
   end
   return true
 end
@@ -977,7 +1064,8 @@ function M.open(root, selected_hash, open_branches, history_ref, saved)
   end
   for _, buffer in ipairs({ view.list_buffer, view.preview_buffer }) do
     map(buffer, '<Space>dv', M.open_detail, 'Open Diffview commit details')
-    map(buffer, '<Space>de', function() M.open_detail(true) end, 'Search Git history')
+    map(buffer, '<Space>de', M.search, 'Search Git history')
+    map(buffer, '<Space>dm', M.checkout_selected_commit, 'Checkout selected Git history commit')
     map(buffer, '<Space>db', M.toggle_branches, 'Toggle Git branch pane')
     map(buffer, '<Tab>', function()
       local current_window = vim.api.nvim_get_current_win()
@@ -1024,6 +1112,7 @@ function M.open(root, selected_hash, open_branches, history_ref, saved)
     callback = function()
       if active == view and not vim.api.nvim_tabpage_is_valid(view.tab) then
         active = nil
+        finish_history(view, false, 'graph tab closed')
         panel.leave_git(view)
         clear_autocmds(view)
         cancel_preview(view)

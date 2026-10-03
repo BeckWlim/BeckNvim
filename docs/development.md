@@ -81,8 +81,12 @@ XDG_CACHE_HOME=/tmp/nvim-test-cache XDG_STATE_HOME=/tmp/nvim-test-state \
   nvim --headless -u init.lua -i NONE '+qa'
 ```
 
-The test runner includes the binding audit. Exercise Diffview lifecycle changes against a disposable
-or read-only Git repository.
+The test runner accepts module or family filters, for example
+`nvim --headless -u NONE -i NONE -l tests/run.lua ui/theme ui/tmux`. With no filters it
+runs the full suite, including keymap checks. First-frame theme restoration belongs to
+`theme_startup_installed.lua`; runtime theme tests wait for asynchronous reads. Storage
+validation and migration belong to `tests/state.lua`. Exercise Diffview lifecycle changes
+against a disposable or read-only Git repository.
 
 With plugins, Markdown parsers, and Termaid installed, verify Markdown modes, screen colors, source
 navigation, and input responsiveness during multiple diagram completions and resizing in an embedded
@@ -99,6 +103,11 @@ nvim --headless -u NONE -i NONE -l tests/ui/tmux_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/dashboard_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/window_state_installed.lua
 nvim --headless -u NONE -i NONE -l tests/search/telescope_installed.lua
+nvim --headless -u NONE -i NONE -l tests/search/workspace_symbols_installed.lua
+nvim --headless -u NONE -i NONE -l tests/search/file_selection_installed.lua
+nvim --headless -u NONE -i NONE -l tests/git/search_installed.lua
+nvim --headless -u NONE -i NONE -l tests/ui/file_operations_installed.lua
+nvim --headless -u NONE -i NONE -l tests/ui/shared_markdown_installed.lua
 nvim --headless -u init.lua -i NONE '+luafile tests/ui/filetree_navigation_installed.lua'
 nvim --headless -u NONE -i NONE -l tests/syntax/visuals_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/treesitter_installed.lua

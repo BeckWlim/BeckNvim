@@ -7,6 +7,8 @@ vim.opt.clipboard = "unnamedplus"
 vim.opt.scrolloff = 8
 vim.opt.sidescrolloff = 8
 vim.opt.number = true
+-- Keep diagnostic signs close to line numbers; grow the gutter for larger files.
+vim.opt.numberwidth = 2
 vim.opt.cursorline = true
 vim.opt.signcolumn = "auto"
 vim.opt.colorcolumn = "160"
@@ -33,11 +35,12 @@ vim.opt.autoread = true
 
 vim.opt.guifont = "Hack Nerd Font:h14"
 
--- Let local sessions use the native clipboard provider. Sending every yank
--- through OSC 52 makes large visual selections noticeably slower because the
--- text has to be encoded and handled by the terminal. Remote sessions still
--- need OSC 52 so their clipboard reaches the local terminal.
-if vim.env.SSH_TTY or vim.env.SSH_CONNECTION then
+-- A tmux pane may predate an SSH attachment and still inherit desktop display
+-- variables. Let tmux reach the attached terminal instead of that desktop.
+-- Outside tmux, local sessions retain the native provider and SSH uses OSC 52.
+if vim.env.TMUX and vim.fn.executable("tmux") == 1 then
+  vim.g.clipboard = "tmux"
+elseif vim.env.SSH_TTY or vim.env.SSH_CONNECTION then
   vim.g.clipboard = {
     name = "OSC 52",
     copy = {

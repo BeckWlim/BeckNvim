@@ -1,5 +1,5 @@
 -- nvim --headless -u init.lua -i NONE -l tests/ui/theme_git_installed.lua
--- Exercise repository history and real theme actions in the editor event loop.
+-- Exercise a Git history view and real theme actions in the editor event loop.
 local directory = vim.fn.tempname()
 local original_directory = vim.fn.getcwd()
 vim.fn.mkdir(directory, 'p')
@@ -56,19 +56,23 @@ local function check()
   local telescope = require('telescope') --[[@as { setup: fun(options: table) }]]
   telescope.setup({ defaults = { history = { path = directory .. '/telescope_history' } } })
   require('diffview')
-  local variants = { 'monokai', 'vscode-dark', 'darcula-dark', 'tokyonight-night',
-    'catppuccin-mocha', 'catppuccin-latte', 'gruvbox-dark', 'paper-light' }
+  -- All preset plugins and preview parity are covered by the theme suites.
+  -- Git needs representative dark/light transitions from both owning panes.
+  local variants = { 'monokai', 'paper-light' }
   local expected = {}
   for _, name in ipairs(variants) do
     assert(theme.select(name))
     settle()
     expected[name] = snapshot()
   end
-  input(' dr')
+  -- This suite owns detail/footers, not the default repository navigation layout.
+  assert(require('config.git.diffview').open_file_history({
+    kind = 'repository', location = { root = directory },
+  }), 'Could not open the history fixture')
   assert(vim.wait(5000, function()
     local view = require('diffview.lib').get_current_view()
     return view and require('config.git.lifecycle').is_ready(view)
-  end, 10), 'Space-dr did not load repository history')
+  end, 10), 'History fixture did not load')
   local view = require('diffview.lib').get_current_view()
   local entry = view.panel.entries[1]
   local details_loaded = false
@@ -116,9 +120,9 @@ local function check()
       assert(vim.deep_equal(windows, vim.api.nvim_tabpage_list_wins(0)), 'Theme switch rebuilt Git panes')
     end
   end
-  input('<C-q>')
-  assert(vim.wait(3000, function() return not require('config.git.diffview').is_active() end, 10),
-    'Git mode did not close')
+  local closed = false
+  require('config.git.diffview').close(nil, function() closed = true end)
+  assert(vim.wait(3000, function() return closed end, 10), 'History fixture cleanup did not finish')
 end
 local passed, failure = xpcall(check, debug.traceback)
 vim.api.nvim_set_current_dir(original_directory)

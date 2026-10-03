@@ -523,6 +523,7 @@ end
 
 function M.open_buffer(buffer, options)
   local buffer_options = options or {}
+  require('telescope')
   if not ready then
     vim.notify('Definition search is loading; retry shortly', vim.log.levels.INFO)
     return
@@ -567,10 +568,7 @@ function M.open_buffer(buffer, options)
 end
 
 function M.setup()
-  ready = false
-  vim.schedule(function()
-    ready = true
-  end)
+  ready = true
 end
 
 function M.is_ready()
@@ -579,6 +577,9 @@ end
 
 function M.open(options)
   local open_options = options or {}
+  local context = require('config.navigation').capture()
+  -- Trigger lazy.nvim's synchronous setup before checking picker readiness.
+  require('telescope')
   if not ready then
     vim.notify('Project definition search is loading; retry shortly', vim.log.levels.INFO)
     return
@@ -591,6 +592,12 @@ function M.open(options)
 
   pickers.new(picker_opts, {
     prompt_title = 'Project Definitions (type 2+ characters)',
+    layout_strategy = 'flex',
+    attach_mappings = function(prompt_buffer)
+      local picker = require('telescope.actions.state').get_current_picker(prompt_buffer)
+      picker.navigation_context = context
+      return require('config.search.telescope').attach_file_actions(prompt_buffer)
+    end,
     finder = multi_job_finder(root, symbol_entry_maker(root, picker_opts)),
     previewer = telescope_config.grep_previewer(picker_opts),
     sorter = telescope_config.generic_sorter(picker_opts),

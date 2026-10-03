@@ -31,6 +31,12 @@ local function apply()
     bg = editor_background,
     fg = editor_foreground,
   })
+  vim.api.nvim_set_hl(0, 'FilePaneLabel', {
+    bg = editor_background, fg = colors.pane_picker.label, bold = true,
+  })
+  vim.api.nvim_set_hl(0, 'FilePaneBorder', {
+    bg = editor_background, fg = colors.pane_picker.border,
+  })
   vim.api.nvim_set_hl(0, 'StatusLine', {
     bg = colors.statusline.background,
     fg = colors.statusline.foreground,

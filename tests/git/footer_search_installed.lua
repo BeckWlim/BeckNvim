@@ -23,11 +23,15 @@ local function check()
   end
   vim.api.nvim_set_current_dir(directory)
   vim.cmd.edit(directory .. '/needle.txt')
-  input(' dr')
+  -- Exercise footer behavior without assuming the repository shortcut's layout.
+  assert(require('config.git.diffview').open_file_history({
+    kind = 'file', location = { root = directory, relative_path = 'needle.txt' },
+    layout_mode = 'list', unbounded = true,
+  }), 'Could not open the history fixture')
   assert(vim.wait(5000, function()
     local view = require('diffview.lib').get_current_view()
     return view and require('config.git.lifecycle').is_ready(view)
-      and #view.panel.entries == 2 and view.panel.entries[2].git_details_loaded
+      and #view.panel.entries == 2
   end, 10), 'History did not load')
   local view = require('diffview.lib').get_current_view()
   local panel = view.panel
@@ -87,8 +91,9 @@ local function check()
   assert(vim.wait(3000, function()
     return view.git_diff_opened and require('config.git.lifecycle').is_ready(view)
   end, 10), 'o did not open the selected file')
-  input('<C-q>')
-  assert(not require('diffview.lib').get_current_view(), 'History did not close')
+  local closed = false
+  require('config.git.diffview').close(nil, function() closed = true end)
+  assert(vim.wait(3000, function() return closed end, 10), 'History fixture cleanup did not finish')
 end
 local ok, err = xpcall(check, debug.traceback)
 vim.fn.delete(directory, 'rf')

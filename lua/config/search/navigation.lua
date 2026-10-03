@@ -20,7 +20,7 @@ local function referenced_path()
 end
 
 local function find_referenced_file(path)
-  require('telescope.builtin').find_files({
+  require('config.search.telescope').open_file_picker('find_files', {
     default_text = path:match('[^/]+$') or path,
   })
 end
@@ -29,7 +29,7 @@ function M.goto_referenced_file()
   local referenced_file = referenced_path()
   local clients = vim.lsp.get_clients({ bufnr = 0, method = 'textDocument/definition' })
   if #clients > 0 then
-    vim.lsp.buf.definition()
+    require('config.search.lsp_locations').definitions()
     return
   end
 

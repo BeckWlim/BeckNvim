@@ -536,6 +536,52 @@ assert(
   'Standalone issue selection mounted Git mode instead of opening above the editor'
 )
 
+-- Graph and Diffview share the picker, while each owner reviews results in its
+-- current layout. This dispatch also covers preview rows and canonical IDs.
+local graph_commit, graph_branch
+local graph_current = true
+local graph_actions = {
+  is_current = function() return graph_current end,
+  commit = function(commit) graph_commit = commit end,
+  branch = function(branch) graph_branch = branch end,
+}
+jump_call, branch_review_call = nil, nil
+assert(search.open('/work/repository', history_options, nil, graph_actions))
+selected_entry = emitted_records[1]
+select_action(41)
+assert(graph_branch == selected_entry.branch and branch_review_call == nil,
+  'Graph branch search fell through to Diffview history')
+assert(search.open('/work/repository', history_options, nil, graph_actions))
+selected_entry = emitted_records[2]
+select_action(41)
+assert(graph_commit.hash == selected_entry.commit.hash and jump_call == nil,
+  'Graph commit search fell through to Diffview history')
+
+assert(search.open('/work/repository', history_options, nil, graph_actions))
+selected_entry = emitted_records[1]
+local graph_preview_window = vim.api.nvim_open_win(preview_buffer, false, {
+  col = 0, height = 2, relative = 'editor', row = 0, width = 20,
+})
+picker.previewer = { state = { winid = graph_preview_window } }
+vim.b[preview_buffer].git_search_commit_by_line = { string.rep('e', 40) }
+vim.api.nvim_win_set_cursor(graph_preview_window, { 1, 0 })
+picker.preview_enter_action(41)
+assert(graph_commit.hash == string.rep('e', 40)
+  and graph_commit.history_ref == selected_entry.branch.refname and jump_call == nil,
+  'Graph branch-preview selection fell through to Diffview history')
+vim.api.nvim_win_close(graph_preview_window, true)
+
+assert(search.open('/work/repository', history_options, nil, graph_actions))
+selected_entry = require('config.git.ui').commit_id_record('abcdef0')
+select_action(41)
+assert(graph_commit.hash == string.rep('d', 40) and jump_call == nil,
+  'Canonical commit-ID selection did not use the graph reviewer')
+graph_current = false
+graph_commit = nil
+assert(search.open('/work/repository', history_options, nil, graph_actions))
+select_action(41)
+assert(graph_commit == nil, 'Commit resolution reviewed a retired graph')
+
 for _, module_name in ipairs(replaced_modules) do
   package.loaded[module_name] = original_modules[module_name]
 end

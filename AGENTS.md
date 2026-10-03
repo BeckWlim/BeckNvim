@@ -49,6 +49,8 @@ candidates when semantic results arrive. `q` closes the picker after cancelling 
 - Keep project detection in `lua/config/project.lua`.
 - Keep asynchronous workflows and custom pickers in responsibility-focused `lua/config/` modules.
 - Keep plugin specifications focused on dependencies, loading conditions, and module setup.
+- Do not modify installed plugin modules under `~/.local/share/nvim/lazy/`. Make plugin source
+  changes in the corresponding development checkout under `~/dev`.
 - Add focused fixtures and tests with every project-definition language extension.
 - Preserve stable semantic roles and static types for parameters and local bindings.
 - Treat `README.md` as stable project documentation. Update it only when the current work adds or

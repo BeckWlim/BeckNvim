@@ -1,4 +1,4 @@
--- Theme persistence, first-frame restoration, and failed selection.
+-- Runtime theme restoration, selection, and failure recovery.
 local theme = require('config.ui.theme')
 local original = {
   name = vim.g.colors_name or 'default',
@@ -25,26 +25,14 @@ local function assert_theme(name)
   assert(vim.wait(1000, function() return vim.g.colors_name == name end, 10), 'Expected theme ' .. name)
 end
 -- An absent preference uses the configured default.
+vim.cmd('colorscheme morning')
 theme.setup({ default = 'habamax', state_file = path })
-vim.wait(30)
-assert(vim.g.colors_name == 'habamax')
-vim.fn.writefile({ '{"name":"morning","background":"light"}' }, path)
-local startup_schemes = {}
-local startup_observer = vim.api.nvim_create_autocmd('ColorScheme', {
-  callback = function(event) startup_schemes[#startup_schemes + 1] = event.match end,
-})
+assert_theme('habamax')
+assert(preference:write_sync({ name = 'morning', background = 'light' }))
 theme.setup({ default = 'habamax', state_file = path })
-assert(vim.g.colors_name == 'morning', 'Saved theme was deferred beyond startup setup')
-assert(vim.deep_equal(startup_schemes, { 'morning' }),
-  'Startup applied a default theme before the saved choice: ' .. vim.inspect(startup_schemes))
-vim.api.nvim_del_autocmd(startup_observer)
 assert_theme('morning')
-assert(not vim.uv.fs_stat(path), 'Migrated theme JSON was not removed')
 assert(theme.select('morning'))
 assert(saved('morning'), 'Confirmed theme was not saved')
-assert(vim.wait(1000, function()
-  return preference:read_sync().version == 1
-end), 'Confirmed legacy theme was not saved through versioned shared storage')
 assert(preference:read_sync().background == 'light', 'Saved theme lost its variant')
 theme.setup({ default = 'habamax', state_file = path })
 assert_theme('morning')
@@ -95,19 +83,22 @@ assert(saved('habamax'), 'Native colorscheme unexpectedly persisted a preference
 assert(not theme.select('habamax | quit'))
 assert(not theme.select('becknvim_missing_theme'))
 assert(vim.g.colors_name == 'morning' and saved('habamax'))
--- Malformed, oversized, and removed preferences fall back without blocking startup.
-for _, document in ipairs({ '{', string.rep('x', 4097),
-  vim.json.encode({ name = 'becknvim_missing_theme', background = 'light' }),
-  vim.json.encode({ name = 'morning', background = 'invalid' }),
+-- Storage validation lives in tests/state.lua. Here test theme-specific choices
+-- through independent saved records, rather than rewriting migrated JSON files.
+for index, selection in ipairs({
+  { name = 'becknvim_missing_theme', background = 'light' },
+  { name = 'morning', background = 'invalid' },
 }) do
-  vim.fn.writefile({ document }, path)
-  theme.setup({ default = 'habamax', state_file = path })
-  vim.wait(50)
-  assert(vim.g.colors_name == 'habamax', 'Invalid saved preference displaced the default')
+  local invalid_path = directory .. '/invalid-' .. index .. '/theme.json'
+  local invalid = require('config.state').open('theme', { path = invalid_path })
+  assert(invalid:write_sync(selection))
+  vim.cmd('colorscheme morning')
+  theme.setup({ default = 'habamax', state_file = invalid_path })
+  assert_theme('habamax')
 end
 -- A missing preferred default still starts with a built-in theme.
-vim.fn.delete(path)
-theme.setup({ default = 'becknvim_missing_theme', state_file = path })
+vim.cmd('colorscheme morning')
+theme.setup({ default = 'becknvim_missing_theme', state_file = directory .. '/absent/theme.json' })
 assert_theme('habamax')
 vim.wait(50)
 vim.o.background = original.background

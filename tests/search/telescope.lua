@@ -60,6 +60,14 @@ local telescope_config = require('config.search.telescope')
 telescope_config.setup()
 
 assert(telescope_options, 'Telescope was not configured')
+for _, name in ipairs({ 'find_files', 'oldfiles', 'buffers', 'live_grep', 'grep_string',
+  'diagnostics', 'lsp_document_symbols' }) do
+  assert(telescope_options.pickers[name].attach_mappings == telescope_config.attach_file_actions,
+    name .. ' does not use shared file operations')
+  assert(telescope_options.pickers[name].layout_strategy == 'flex',
+    name .. ' does not use the native editor-sized layout')
+end
+
 local mappings = telescope_options.defaults.mappings
 assert(mappings.i['<C-q>'] == close_action, 'insert-mode <C-q> did not close Telescope')
 assert(mappings.n['<C-q>'] == close_action, 'normal-mode <C-q> did not close Telescope')

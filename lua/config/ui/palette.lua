@@ -116,6 +116,10 @@ function M.resolve()
   return {
     background = background, foreground = text, muted = muted, border = border,
     selection = selection, focus = readable(neutral, selection, 4.5), block = block,
+    pane_picker = {
+      label = readable(syntax.special, background, 7),
+      border = readable(syntax.special, background, 4.5),
+    },
     scope = M.blend(background, neutral, 0.04),
     inline_code = readable(foreground({ '@markup.raw.markdown_inline' }, syntax.constant), selection, 4.5),
     syntax = syntax,

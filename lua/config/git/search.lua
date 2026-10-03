@@ -84,11 +84,15 @@ local function commit_target(commit, branch)
     hash = commit.hash,
     history_ref = history_ref,
     source = commit.source,
+    subject = commit.subject,
   }
 end
 
 local function review_commit(context, commit, branch)
   local target_commit = commit_target(commit, branch)
+  if context.review_actions then
+    return context.review_actions.commit(target_commit)
+  end
   require('config.git.diffview').jump_to_search_commit(
     context.parent_view,
     context.history_options,
@@ -99,6 +103,7 @@ end
 local function review_commit_id(context, commit_id)
   local function resolve(fetch_attempted)
     repository.start(repository.commands.resolve_commit(commit_id), context.root, function(resolve_process)
+      if context.review_actions and not context.review_actions.is_current() then return end
       if resolve_process.code ~= 0 then
         if not fetch_attempted then
           vim.notify(('Fetching remotes to find commit %s…'):format(commit_id:sub(1, 12)), vim.log.levels.INFO)
@@ -478,11 +483,15 @@ local function open_picker(context, restore_query)
             end,
           })
         elseif selected_entry.kind == 'branch' then
-          require('config.git').review_branch(
-            context.root,
-            selected_entry.branch,
-            context.parent_view
-          )
+          if context.review_actions then
+            context.review_actions.branch(selected_entry.branch)
+          else
+            require('config.git').review_branch(
+              context.root,
+              selected_entry.branch,
+              context.parent_view
+            )
+          end
         elseif selected_entry.kind == 'commit_id' then
           review_commit_id(context, selected_entry.commit.hash)
         else
@@ -502,7 +511,7 @@ local function open_picker(context, restore_query)
   return true
 end
 
-function M.open(root, history_options, parent_view)
+function M.open(root, history_options, parent_view, review_actions)
   local context = {
     cache = {},
     history_options = vim.deepcopy(history_options or {}),
@@ -510,6 +519,7 @@ function M.open(root, history_options, parent_view)
     parent_view = parent_view,
     query = '',
     records = {},
+    review_actions = review_actions,
     root = vim.fs.normalize(root),
   }
   return open_picker(context)

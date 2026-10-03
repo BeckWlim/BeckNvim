@@ -9,16 +9,9 @@ local function telescope_builtin(name)
   end
 end
 
-local function telescope_builtin_in_vertical_split(name)
+local function telescope_file_picker(name, command)
   return function()
-    local actions = require('telescope.actions')
-    require('telescope.builtin')[name]({
-      attach_mappings = function(_, map)
-        map('i', '<CR>', actions.file_vsplit)
-        map('n', '<CR>', actions.file_vsplit)
-        return true
-      end,
-    })
+    require('config.search.telescope').open_file_picker(name, nil, command)
   end
 end
 
@@ -43,7 +36,8 @@ local function map_windows()
   }, { prefix = '<Space>w', description = 'Window ' })
   map('<Space>wv', '<C-w>v', 'Vertical split')
   map('<Space>ws', '<C-w>s', 'Horizontal split')
-  map('<Space>wq', '<C-w>q', 'Close window')
+  map('<Space>wq', module_function('config.navigation', 'close'), 'Close window or active panel')
+  map('<Space>ww', module_function('config.navigation', 'focus_window'), 'Choose window to focus')
   map('<Space>wo', '<C-w>o', 'Only window')
 
   keybindings.attach('directions', nil, {
@@ -53,8 +47,8 @@ local function map_windows()
 
   map('<Tab>', '<C-w>w', 'Next window')
   map('<S-Tab>', '<C-w>W', 'Previous window')
-  map('<Space>o', '<C-o>', 'Jump back')
-  map('<Space>p', '<C-i>', 'Jump forward')
+  map('<Space>o', module_function('config.navigation', 'back'), 'Jump back')
+  map('<Space>p', module_function('config.navigation', 'forward'), 'Jump forward')
 end
 
 local function map_editing_aids()
@@ -106,17 +100,17 @@ end
 
 local function map_finders()
   map('<Space>s', '/', 'Search forward in current buffer', { silent = false })
-  map('<Space>ff', telescope_builtin('find_files'), 'Find files')
-  map('<Space>fv', telescope_builtin_in_vertical_split('find_files'), 'Find files (vertical split)')
-  map('<Space>fg', telescope_builtin('live_grep'), 'Live grep')
-  map('<Space>fb', telescope_builtin('buffers'), 'Find buffers')
+  map('<Space>ff', telescope_file_picker('find_files'), 'Find files')
+  map('<Space>fv', telescope_file_picker('find_files', 'vnew'), 'Find files (vertical split)')
+  map('<Space>fg', telescope_file_picker('live_grep'), 'Live grep')
+  map('<Space>fb', telescope_file_picker('buffers'), 'Find buffers')
   map('<Space>fr', function()
-    require('telescope.builtin').oldfiles({ cwd = vim.fn.getcwd() })
+    require('config.search.telescope').open_file_picker('oldfiles', { cwd = vim.fn.getcwd() })
   end, 'Recent files')
-  map('<Space>bv', telescope_builtin_in_vertical_split('buffers'), 'Find buffers (vertical split)')
+  map('<Space>bv', telescope_file_picker('buffers', 'vnew'), 'Find buffers (vertical split)')
   map('<Space>fh', telescope_builtin('help_tags'), 'Search help')
   map('<Space>fk', telescope_builtin('keymaps'), 'Search keymaps')
-  map('<Space>fs', telescope_builtin('lsp_document_symbols'), 'Document symbols')
+  map('<Space>fs', telescope_file_picker('lsp_document_symbols'), 'Document symbols')
   map('<Space>fw', module_function('config.search.workspace_symbols', 'open'),
     'Project workspace symbols')
   map('<Space>ft', module_function('config.search.workspace_symbols', 'open_for_cursor'),
@@ -196,6 +190,9 @@ local function map_lsp()
 end
 
 function M.setup()
+  vim.keymap.set('c', '<CR>', require('config.navigation').command_line_enter, {
+    expr = true, desc = 'Open files from panels through shared pane selection',
+  })
   map_windows()
   map_editing_aids()
   map_line_movement()

@@ -90,6 +90,8 @@ assert(symbols.commands('', fixture_root) == nil, 'Empty definition query trigge
 assert(symbols.commands('x', fixture_root) == nil, 'One-character query triggered a broad scan')
 
 local original_notify = vim.notify
+local original_telescope = package.loaded['telescope']
+package.loaded['telescope'] = {}
 local loading_message
 rawset(vim, 'notify', function(message, _level)
   loading_message = message
@@ -99,7 +101,7 @@ rawset(vim, 'notify', original_notify)
 assert(loading_message == 'Project definition search is loading; retry shortly')
 
 symbols.setup()
-assert(vim.wait(1000, symbols.is_ready), 'Project definition search did not become ready')
+assert(symbols.is_ready(), 'Project definition search was not ready when setup completed')
 
 local original_get_clients = vim.lsp.get_clients
 local original_pickers = package.loaded['telescope.pickers']
@@ -247,3 +249,4 @@ for job_index = 1, superseded_job_count do
 end
 picker_finder.close()
 assert(second_query_completions == 0, 'Closed definition query finalized the picker')
+package.loaded['telescope'] = original_telescope

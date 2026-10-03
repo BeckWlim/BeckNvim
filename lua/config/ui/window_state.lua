@@ -1,5 +1,111 @@
 local M = {}
 local option_resolvers_by_filetype = {}
+local presentations_by_filetype = {}
+local contexts_by_window = {}
+local context_events_ready = false
+local focused_window
+local editor_option_names = {
+  'breakindent', 'colorcolumn', 'cursorcolumn', 'cursorline', 'foldcolumn',
+  'list', 'number', 'relativenumber', 'signcolumn', 'spell', 'wrap',
+}
+
+local function set_options(winid, options)
+  for name, value in pairs(options) do
+    -- Without scope=local, Neovim also changes defaults for later windows.
+    vim.api.nvim_set_option_value(name, value, { win = winid, scope = 'local' })
+  end
+end
+
+function M.defaults(option_names)
+  local options = {}
+  for _, name in ipairs(option_names or editor_option_names) do
+    options[name] = vim.go[name]
+  end
+  return options
+end
+
+-- A renderer may display a generated buffer while the pane still owns a file.
+function M.file_buffer(winid)
+  if not vim.api.nvim_win_is_valid(winid) then return nil end
+  local buffer = vim.api.nvim_win_get_buf(winid)
+  local source = vim.b[buffer].markdown_preview_source
+  if type(source) == 'number' and vim.api.nvim_buf_is_valid(source) then return source end
+  return buffer
+end
+
+-- Editor intent belongs to a window; a surface only borrows its presentation.
+-- Buffer transitions restore intent before the next surface applies its policy.
+function M.apply(winid, editor_options)
+  if not vim.api.nvim_win_is_valid(winid) then return end
+  local buffer = vim.api.nvim_win_get_buf(winid)
+  local filetype = vim.bo[buffer].filetype
+  local context = contexts_by_window[winid]
+  if context and (context.buffer ~= buffer or context.filetype ~= filetype) then
+    set_options(winid, context.options)
+    contexts_by_window[winid] = nil
+    context = nil
+  end
+  local presentation = presentations_by_filetype[filetype]
+  if not presentation then
+    if editor_options then set_options(winid, editor_options) end
+    return
+  end
+  local baseline = editor_options or (context and context.options) or M.resolve(winid)
+  contexts_by_window[winid] = { buffer = buffer, filetype = filetype, options = vim.deepcopy(baseline) }
+  set_options(winid, presentation)
+end
+
+local function setup_context_events()
+  if context_events_ready then return end
+  context_events_ready = true
+  focused_window = vim.api.nvim_get_current_win()
+  local group = vim.api.nvim_create_augroup('workspace_window_context', { clear = true })
+  vim.api.nvim_create_autocmd({ 'BufEnter', 'BufWinEnter', 'WinEnter' }, {
+    group = group,
+    callback = function(event)
+      local winid = vim.api.nvim_get_current_win()
+      M.apply(winid)
+      if event.event == 'WinEnter' then focused_window = winid end
+    end,
+    desc = 'Reconcile editor intent with the displayed window surface',
+  })
+  vim.api.nvim_create_autocmd('FileType', {
+    group = group,
+    callback = function(event)
+      for _, winid in ipairs(vim.fn.win_findbuf(event.buf)) do M.apply(winid) end
+    end,
+    desc = 'Apply surface policy to every window displaying the buffer',
+  })
+  vim.api.nvim_create_autocmd('WinNew', {
+    group = group,
+    callback = function()
+      local winid = vim.api.nvim_get_current_win()
+      if vim.api.nvim_win_get_config(winid).relative ~= '' then return end
+      local buffer = vim.api.nvim_win_get_buf(winid)
+      local filetype = vim.bo[buffer].filetype
+      -- Splits copy local presentation, including a hidden dashboard gutter.
+      -- Copy its underlying intent before the new window changes buffers.
+      local source_context = focused_window and contexts_by_window[focused_window]
+      if source_context and focused_window ~= winid and vim.api.nvim_win_is_valid(focused_window)
+          and source_context.buffer == buffer and source_context.filetype == filetype then
+        contexts_by_window[winid] = vim.deepcopy(source_context)
+        M.apply(winid)
+        return
+      end
+      local resolver = option_resolvers_by_filetype[filetype]
+      local options = resolver and resolver(winid) or nil
+      if options then
+        contexts_by_window[winid] = { buffer = buffer, filetype = filetype, options = vim.deepcopy(options) }
+      end
+      M.apply(winid)
+    end,
+    desc = 'Inherit editor context when a native split copies a surface',
+  })
+  vim.api.nvim_create_autocmd('WinClosed', {
+    group = group,
+    callback = function(event) contexts_by_window[tonumber(event.match)] = nil end,
+  })
+end
 local layouts_by_tabpage = {}
 local layout_generation = 0
 local resize_pending = false
@@ -194,7 +300,30 @@ local function restore_tab(tabpage)
   remember_panels(tabpage)
 end
 
+-- File replacement may trigger plugin callbacks, but owns no split changes.
+-- A session captures its native layout before opening temporary picker panes.
+-- Restore proportions only while both topology and editor dimensions match;
+-- intentional splits, closed panes, and real terminal resizes remain native.
+function M.capture_layout(tabpage)
+  local target_tabpage = tabpage or vim.api.nvim_get_current_tabpage()
+  local layout = vim.fn.winlayout(vim.api.nvim_tabpage_get_number(target_tabpage))
+  local sizes = measure(layout)
+  local columns, lines = vim.o.columns, vim.o.lines
+  local generation = layout_generation
+  return function()
+    if generation ~= layout_generation or not vim.api.nvim_tabpage_is_valid(target_tabpage)
+        or vim.api.nvim_get_current_tabpage() ~= target_tabpage
+        or vim.o.columns ~= columns or vim.o.lines ~= lines then return end
+    local current_layout = vim.fn.winlayout(vim.api.nvim_tabpage_get_number(target_tabpage))
+    if not vim.deep_equal(layout, current_layout) then return end
+    if vim.deep_equal(measure(current_layout), sizes) then return end
+    restore(current_layout, sizes)
+    remember(target_tabpage)
+  end
+end
+
 function M.setup(options)
+  setup_context_events()
   local settings = options or {}
   preference_directory = settings.state_directory
   for _, preference in pairs(panel_preferences) do
@@ -208,8 +337,9 @@ function M.setup(options)
   tracked_panels = {}
   resize_pending = false
   resized_tabs = {}
-  -- New splits divide the active pane without equalizing unrelated panes.
-  vim.o.equalalways = false
+  -- Topology changes adopt Neovim's default equal-size layout. Remember only
+  -- the resulting live layout; old proportions must not shape reopened splits.
+  vim.o.equalalways = true
   local group = vim.api.nvim_create_augroup('workspace_window_proportions', { clear = true })
   for _, tabpage in ipairs(vim.api.nvim_list_tabpages()) do
     remember(tabpage)
@@ -286,7 +416,7 @@ function M.setup(options)
   })
 end
 
-function M.register(filetype, option_resolver)
+function M.register(filetype, option_resolver, presentation)
   if type(filetype) ~= 'string' or filetype == '' then
     error('window-state filetype must be a non-empty string')
   end
@@ -294,6 +424,8 @@ function M.register(filetype, option_resolver)
     error('window-state option resolver must be a function')
   end
   option_resolvers_by_filetype[filetype] = option_resolver
+  presentations_by_filetype[filetype] = presentation and vim.deepcopy(presentation) or nil
+  setup_context_events()
 end
 
 function M.resolve(winid, option_names)
@@ -304,9 +436,14 @@ function M.resolve(winid, option_names)
   local window_filetype = vim.bo[window_buffer].filetype
   local option_resolver = option_resolvers_by_filetype[window_filetype]
   local registered_options = option_resolver and option_resolver(winid) or nil
+  local context = contexts_by_window[winid]
+  local context_options = context and context.options
   local resolved_options = {}
-  for _, option_name in ipairs(option_names) do
-    local registered_value = registered_options and registered_options[option_name]
+  for _, option_name in ipairs(option_names or editor_option_names) do
+    local registered_value = context_options and context_options[option_name]
+    if registered_value == nil then
+      registered_value = registered_options and registered_options[option_name]
+    end
     if registered_value ~= nil then
       resolved_options[option_name] = registered_value
     else

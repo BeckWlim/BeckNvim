@@ -44,11 +44,24 @@ local function set_anchor_footer(operation, status)
   require('config.git.diffview').adapt_history_footer(parent_view)
 end
 
-local function finish_anchor_lifecycle(view, succeeded, detail)
+local function finish_anchor_lifecycle(operation, succeeded, detail)
   local git_diffview = require('config.git.diffview')
   if type(git_diffview.finish_anchor_operation) == 'function' then
-    git_diffview.finish_anchor_operation(view, succeeded, detail)
+    git_diffview.finish_anchor_operation(operation.parent_view, succeeded, detail)
   end
+  if operation.on_finished then operation.on_finished(succeeded, detail) end
+end
+
+local function anchor_is_current(operation)
+  if operation.cancelled then return false end
+  if operation.is_current and not operation.is_current() then
+    operation.cancelled = true
+    commit_transitioning = false
+    set_anchor_footer(operation, nil)
+    finish_anchor_lifecycle(operation, false, 'checkout owner retired')
+    return false
+  end
+  return true
 end
 
 local function current_file_location()
@@ -366,7 +379,7 @@ function M.search_repository()
   local git_diffview = require('config.git.diffview')
   local graph = require('config.git.graph')
   if graph.is_active() then
-    return graph.open_detail(true)
+    return graph.search()
   end
   if git_diffview.defer_until_settled('repository_search', M.search_repository) then
     return true
@@ -556,7 +569,7 @@ local function open_detached_overview(
     commit_transitioning = false
     set_anchor_footer(operation, nil)
     finish_anchor_lifecycle(
-      operation.parent_view,
+      operation,
       render_succeeded,
       detail
     )
@@ -592,6 +605,14 @@ local function open_detached_overview(
     )
   end
 
+  local function render_review(rendered_context, force_rebuild)
+    if operation.render_review then
+      return operation.render_review(commit_hash, rendered_context, finish_render)
+    end
+    return render_commit_overview(repository_root, commit_hash, rendered_context,
+      parent_view, finish_render, force_rebuild)
+  end
+
   if already_at_commit and not (already_detached and attach_branch_name) then
     local detached_head_commit = already_detached and commit_hash or nil
     local rendered_context = vim.tbl_extend('force', review_context, {
@@ -601,14 +622,7 @@ local function open_detached_overview(
     operation.action = 'none'
     log_anchor_operation(operation, 'HEAD already at target; rendering review', 'info')
     set_anchor_footer(operation, 'HEAD unchanged; rendering ' .. commit_hash:sub(1, 12))
-    local render_started = render_commit_overview(
-      repository_root,
-      commit_hash,
-      rendered_context,
-      parent_view,
-      finish_render,
-      false
-    )
+    local render_started = render_review(rendered_context, false)
     if not render_started then
       finish_render(nil, false, 'failed to mount replacement history')
     end
@@ -630,13 +644,15 @@ local function open_detached_overview(
       and ('attaching %s'):format(attach_branch_name)
     or ('moving HEAD to %s'):format(commit_hash:sub(1, 12))
   set_anchor_footer(operation, pending_status)
+  if not anchor_is_current(operation) then return end
   repository.start(anchor_command, repository_root,
     function(completed_process)
+      if not anchor_is_current(operation) then return end
       if completed_process.code ~= 0 then
         commit_transitioning = false
         set_anchor_footer(operation, nil)
         finish_anchor_lifecycle(
-          operation.parent_view,
+          operation,
           false,
           'git switch failed'
         )
@@ -652,14 +668,7 @@ local function open_detached_overview(
       })
       log_anchor_operation(operation, 'HEAD state updated; rebuilding review', 'info')
       set_anchor_footer(operation, 'HEAD ready; rendering ' .. commit_hash:sub(1, 12))
-      local render_started = render_commit_overview(
-        repository_root,
-        commit_hash,
-        rendered_context,
-        parent_view,
-        finish_render,
-        true
-      )
+      local render_started = render_review(rendered_context, true)
       if not render_started then
         finish_render(nil, false, 'failed to mount replacement history')
       end
@@ -674,7 +683,10 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
   local repository_root = vim.fs.normalize(root)
   local selected_context = commit_context or {}
   local operation = {
+    is_current = selected_context.is_current,
+    on_finished = selected_context.on_finished,
     parent_view = parent_view,
+    render_review = selected_context.render_review,
     requested_commit = commit_id,
     resolved_commit = nil,
     started_at_ns = vim.uv.hrtime(),
@@ -690,11 +702,12 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
   )
   repository.start(repository.commands.resolve_commit(commit_id), repository_root,
     function(resolve_process)
+      if not anchor_is_current(operation) then return end
       if resolve_process.code ~= 0 then
         commit_transitioning = false
         set_anchor_footer(operation, nil)
         finish_anchor_lifecycle(
-          parent_view,
+          operation,
           false,
           'commit resolution failed'
         )
@@ -707,7 +720,7 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
         commit_transitioning = false
         set_anchor_footer(operation, nil)
         finish_anchor_lifecycle(
-          parent_view,
+          operation,
           false,
           'commit resolution returned no object'
         )
@@ -719,11 +732,12 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
       log_anchor_operation(operation, 'commit resolved; reading HEAD state', 'info')
       repository.start(repository.commands.head_state(), repository_root,
         function(head_process)
+          if not anchor_is_current(operation) then return end
           if head_process.code ~= 0 then
             commit_transitioning = false
             set_anchor_footer(operation, nil)
             finish_anchor_lifecycle(
-              parent_view,
+              operation,
               false,
               'HEAD state read failed'
             )
@@ -738,7 +752,7 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
               commit_transitioning = false
               set_anchor_footer(operation, nil)
               finish_anchor_lifecycle(
-                parent_view,
+                operation,
                 false,
                 'dirty worktree'
               )
@@ -754,7 +768,7 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
               commit_transitioning = false
               set_anchor_footer(operation, nil)
               finish_anchor_lifecycle(
-                parent_view,
+                operation,
                 false,
                 'modified editor buffers'
               )
@@ -824,6 +838,7 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
                 repository.commands.commit_is_ancestor(resolved_commit, match_branch_ref),
                 repository_root,
                 function(ancestor_process)
+                  if not anchor_is_current(operation) then return end
                   local context_for_render
                   if ancestor_process.code == 0 then
                     context_for_render = {
@@ -874,6 +889,7 @@ function M.detach_commit_overview(root, commit_id, parent_view, commit_context)
             local local_branch_ref = branch_ref or ('refs/heads/' .. local_branch_name)
             repository.start(repository.commands.resolve_commit(local_branch_ref), repository_root,
               function(branch_tip_process)
+                if not anchor_is_current(operation) then return end
                 if branch_tip_process.code ~= 0 then
                   log_anchor_operation(
                     operation,

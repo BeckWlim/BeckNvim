@@ -2,12 +2,7 @@ local M = {}
 M.project_icons = require('config.project').provider_icons
 
 local function file_buffer()
-  local current_buffer = vim.api.nvim_get_current_buf()
-  local source_buffer = vim.b[current_buffer].markdown_preview_source
-  if type(source_buffer) == 'number' and vim.api.nvim_buf_is_valid(source_buffer) then
-    return source_buffer
-  end
-  return current_buffer
+  return assert(require('config.ui.window_state').file_buffer(vim.api.nvim_get_current_win()))
 end
 
 function M.project_name()
