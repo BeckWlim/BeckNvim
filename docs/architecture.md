@@ -41,7 +41,7 @@ lua/
 | `config/storage/sqlite.lua` | Low-level SQLite C API boundary shared by the main VM and libuv workers |
 | `config/storage/sqlite_store.lua` | Replaceable long-term SQLite storage backend, migrations, async workers, and writes |
 | `config/startup/logs.lua` | Direct native/plugin log destinations under the log subfolder |
-| `config/startup/` | Editor options, global autocmds, lazy.nvim bootstrap, and the single keymap assembly |
+| `config/startup/` | Editor options, global autocmds, lazy.nvim bootstrap, and global keymap assembly |
 | `config/ui/window_state.lua` | Window-owned editor intent and surface-option delivery, native transition reconciliation, live split proportions, and opt-in panel size memory |
 | `config/navigation.lua` | Shared launch context, native file/buffer opens and jump history, cancellable editor-pane selection, and owner-aware closing |
 | `config/navigation/write_guard.lua` | Optional transition boundary asking y/n to write unsaved destination contents before replacement |
@@ -422,7 +422,7 @@ context; the winbar accepts a completion only for the current selection, buffer 
 
 `plugins/extra.lua` selects `BeckWlim/render-markdown.nvim`, whose default pipeline provides the
 source-mapped preview. The plugin uses a managed install by default;
-`~/.nvim` can select `~/.config/render-markdown.nvim` through the standard development settings.
+`~/.nvim` can select `~/dev/render-markdown.nvim` through the standard development settings.
 The fork owns prose rendering, table projection, Mermaid jobs, source maps, incremental updates,
 preview buffers, source editing, save delegation, and hidden-source file checks. BeckNvim contains
 no second Markdown engine. See the fork's [preview architecture](https://github.com/BeckWlim/render-markdown.nvim/blob/main/doc/projected-preview.md)
@@ -462,6 +462,27 @@ visible through the renderer's existing fallback. Restart Neovim after adding ru
 An explicit `opts.preview.mermaid.command` overrides discovery; set
 `opts.preview.mermaid.enabled = false` to disable diagrams. Arrow placement is configured with
 `opts.preview.mermaid.arrow_position = 'middle'` (the default is `'end'`).
+
+## Visible Text Navigation
+
+`plugins/coding.lua` declares Flash.nvim with its native search integration disabled and owns
+its Lazy `keys` specifications: `<Space>s` (visible text jump) and `<Space>fn`
+(Treesitter selection) in Normal, Visual, and operator-pending modes. The first shortcut loads
+Flash; these bindings are inspectable in `:Lazy`. `config.search.flash` owns the special-buffer
+guard and Markdown source routing. Flash owns matching, labels, cancellation, and jumplist entries;
+highlights reuse the shared match and pane-label roles.
+The window filter uses `config.ui.window_state.file_buffer` to retain the current file pane,
+including rendered Markdown, while excluding panels and other panes. Text jumps match the
+preview directly; syntax selection uses the public `dispatch()` API to run Flash in source.
+The renderer owns source positions, semantic ranges,
+visibility, and cooperative operation lifecycle through its public interaction API; BeckNvim
+owns the shortcuts, including the global `<Space>mp` preview API binding. Link opening uses
+the renderer's source grammar when available. Standalone jump leaves the viewport in place
+while choosing a target; native `/` and `?`
+retain native incremental search across the entire current buffer without Flash labels. In
+projected Markdown, `/`, `?`, and `n`/`N` search the preview directly, including generated rows,
+without entering source. Panel search mappings retain their existing owners.
+Character-motion enhancements are disabled to preserve native editing and panel-local actions.
 
 ## Project Definition Search
 

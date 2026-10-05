@@ -9,7 +9,9 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 | `<Space>bt` | Toggle the file tree |
 | `<Space>h` | Open the project dashboard |
 | `o` / `Enter` on the homepage | Open the selected file or activate the selected project |
-| `<Space>s` | Search forward in the current buffer (`/`); `n` / `N` repeats forward/backward |
+| `/` / `?` | Native search forward/backward through the whole current buffer; `n` / `N` repeats |
+| `<Space>s` | Flash: type text, then a displayed label to jump to visible text in the current editor |
+| `<Space>fn` | Flash: select a Treesitter syntax region using its label |
 | `<Space>ff` | Find files |
 | `<Space>fg` | Search project text |
 | `<Space>fw` | Search project definitions |
@@ -21,6 +23,22 @@ The default leader is `\`. Names beginning with `<Space>` use the literal Space 
 
 Jump history starts fresh in each Neovim instance. Recent files, saved marks, registers, and
 search history remain available across restarts through ShaDa.
+
+Flash uses lowercase labels. Its shortcuts work in Normal, Visual, and operator-pending modes. For example,
+`d<Space>s` uses a labelled target as a delete motion, and `y<Space>fn` yanks a syntax region.
+`Esc` or `<C-q>` cancels the standalone Flash prompt. These actions work in ordinary files
+and rendered Markdown; panels keep their own interactions. The renderer's adapter lets
+`<Space>s` jump through visible text and `<Space>fn` select the original Markdown syntax,
+including wrapped tables. A syntax selection yanks or edits the original source range.
+Rendered links support backward, counted, and word motions without stopping inside hidden URLs.
+BeckNvim owns `<Space>mp`, which calls the renderer's public `preview()` toggle API.
+
+Ordinary `/` and `?` use native search without Flash labels. They search the whole
+buffer and may scroll during typing. In rendered Markdown they search the preview directly,
+including generated table rows and off-screen matches, and keep it open throughout the search.
+`n` / `N` repeat in that same buffer; source mode searches the original Markdown.
+`<Space>s` keeps the view in place while choosing visible matches. `s`, `S`, `r`, `R`, `f`, `F`, `t`, `T`, `;`, and `,`
+retain their existing behavior; panel searches remain owned by their panels.
 
 ## Command-line completion
 

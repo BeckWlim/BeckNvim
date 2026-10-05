@@ -21,6 +21,7 @@ local replaced_modules = {
   'config.search.workspace_symbols',
   'config.search.telescope',
   'telescope.builtin',
+  'render-markdown',
 }
 local original_modules = {}
 for _, module_name in ipairs(replaced_modules) do
@@ -30,6 +31,10 @@ end
 local function no_op() end
 local git_search_calls = 0
 local file_picker_calls = {}
+local preview_calls = 0
+package.loaded['render-markdown'] = {
+  preview = function() preview_calls = preview_calls + 1 end,
+}
 package.loaded['config.search.telescope'] = {
   open_file_picker = function(name, options, command)
     file_picker_calls[#file_picker_calls + 1] = { name = name, options = options, command = command }
@@ -85,6 +90,8 @@ package.loaded['telescope.builtin'] = setmetatable({}, {
 package.loaded['config.startup.keybindings'] = nil
 
 require('config.startup.keybindings').setup()
+vim.fn.maparg('<Space>mp', 'n', false, true).callback()
+assert(preview_calls == 1, 'BeckNvim preview shortcut bypassed the public toggle API')
 
 local expected_mappings = {
   '<Space>wh', '<Space>wj', '<Space>wk', '<Space>wl', '<Space>ww',
@@ -92,7 +99,7 @@ local expected_mappings = {
   '<Space>rh', '<Space>rj', '<Space>rk', '<Space>rl', '<Space>r=',
   '<Tab>', '<S-Tab>', '<Space>o', '<Space>p',
   '<Space>zz', '<Space>zc', '<Space>zo', '<Space>cc',
-  '<C-a>', '<C-e>', '<Space>s',
+  '<C-a>', '<C-e>',
   '<C-h>', '<C-j>', '<C-k>', '<C-l>',
   '<Space>gf', '<Space>gv', '<Space>gx', 'gx',
   '<Space>bt', '<Space>h', '<Space>mp', '<Space>t',

@@ -42,11 +42,11 @@ its repository in the selection:
 
 ```bash
 NVIM_DEV=true
-NVIM_DEV_PATH=~/.config
+NVIM_DEV_PATH=~/dev
 NVIM_DEV_PLUGINS=BeckWlim/termaid,BeckWlim/render-markdown.nvim
 ```
 
-This loads the renderer from `~/.config/render-markdown.nvim`. The plugin declaration leaves
+This loads the renderer from `~/dev/render-markdown.nvim`. The plugin declaration leaves
 development mode unset so personal settings control it; without opt-in it uses a managed install.
 Restart Neovim after editing the renderer. Preview, table, and Mermaid implementation and unit tests
 live in the fork; BeckNvim retains configuration and editor-integration tests. In the renderer checkout,
@@ -103,6 +103,9 @@ nvim --headless -u NONE -i NONE -l tests/ui/tmux_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/dashboard_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/window_state_installed.lua
 nvim --headless -u NONE -i NONE -l tests/search/telescope_installed.lua
+nvim --headless -u NONE -i NONE -l tests/search/flash_installed.lua
+nvim --headless -u NONE -i NONE -l tests/search/flash_markdown_installed.lua
+nvim --headless -u init.lua -i NONE '+luafile tests/search/flash_markdown_startup.lua'
 nvim --headless -u NONE -i NONE -l tests/search/workspace_symbols_installed.lua
 nvim --headless -u NONE -i NONE -l tests/search/file_selection_installed.lua
 nvim --headless -u NONE -i NONE -l tests/git/search_installed.lua

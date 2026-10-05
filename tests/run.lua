@@ -29,6 +29,7 @@ local test_files = {
   'tests/network/proxy.lua',
   'tests/python/environment.lua',
   'tests/python/missing_runtime.lua',
+  'tests/search/flash.lua',
   'tests/search/grep_preview.lua',
   'tests/search/lsp_locations.lua',
   'tests/search/telescope.lua',

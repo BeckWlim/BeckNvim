@@ -1,6 +1,7 @@
 local M = {}
 
--- Global maps are assembled here; config.keybindings owns reusable key families.
+-- Global maps are assembled here; plugin-owned maps live in Lazy specs.
+-- config.keybindings owns reusable key families.
 -- Telescope builtins are required lazily inside each callback to preserve
 -- telescope.nvim's lazy loading at startup.
 local function telescope_builtin(name)
@@ -99,7 +100,6 @@ local function map_line_movement()
 end
 
 local function map_finders()
-  map('<Space>s', '/', 'Search forward in current buffer', { silent = false })
   map('<Space>ff', telescope_file_picker('find_files'), 'Find files')
   map('<Space>fv', telescope_file_picker('find_files', 'vnew'), 'Find files (vertical split)')
   map('<Space>fg', telescope_file_picker('live_grep'), 'Live grep')
