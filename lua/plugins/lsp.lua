@@ -9,6 +9,7 @@ return {
         config = function() require('config.startup.logs').configure('mason') end,
       },
       'neovim/nvim-lspconfig',
+      'folke/neoconf.nvim',
       'hrsh7th/cmp-nvim-lsp',
     },
     config = function()

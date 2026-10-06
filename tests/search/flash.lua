@@ -1,4 +1,4 @@
--- Flash mappings belong to its Lazy spec; the adapter routes Markdown syntax.
+-- Flash loads with general UI tools; the adapter owns mappings and Markdown routing.
 local original_buffer = vim.api.nvim_get_current_buf()
 local buffer = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_set_current_buf(buffer)
@@ -6,6 +6,7 @@ local original_flash = package.loaded.flash
 local original_renderer = package.loaded['render-markdown']
 local calls, source_routes = {}, 0
 package.loaded.flash = {
+  setup = function(_) end,
   jump = function() calls[#calls + 1] = 'jump' end,
   treesitter = function() calls[#calls + 1] = 'treesitter' end,
 }
@@ -18,17 +19,12 @@ package.loaded['render-markdown'] = {
 }
 
 local spec = dofile('lua/plugins/coding.lua')[1]
-assert(spec[1] == 'folke/flash.nvim' and spec.event == nil,
-  'Flash should load through its declared shortcuts')
-assert(#spec.keys == 2, 'Flash should declare only jump and syntax shortcuts')
+assert(spec[1] == 'folke/flash.nvim'
+    and spec.event == 'VeryLazy' and spec.keys == nil,
+  'Flash should use UI readiness as its sole loading entry')
 assert(package.loaded['config.search.flash'] == nil,
   'Loading the plugin spec eagerly imported its adapter')
-for _, mapping in ipairs(spec.keys) do
-  vim.keymap.set(mapping.mode, mapping[1], mapping[2], {
-    silent = mapping.silent,
-    desc = mapping.desc,
-  })
-end
+spec.config(nil, spec.opts)
 
 local function invoke_shortcuts()
   for _, mode in ipairs({ 'n', 'x', 'o' }) do
@@ -62,7 +58,7 @@ for _, mode in ipairs({ 'n', 'x', 'o' }) do
     assert(vim.tbl_isempty(vim.fn.maparg(lhs, mode, false, true)),
       'Flash integration overrides an editing command: ' .. mode .. ' ' .. lhs)
   end
-  for _, mapping in ipairs(spec.keys) do vim.keymap.del(mode, mapping[1]) end
+  for _, lhs in ipairs({ '<Space>s', '<Space>fn' }) do vim.keymap.del(mode, lhs) end
 end
 package.loaded.flash = original_flash
 package.loaded['render-markdown'] = original_renderer

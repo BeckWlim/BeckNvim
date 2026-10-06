@@ -432,6 +432,14 @@ Markdown files open rendered in the existing pane. `<Space>mp` calls the plugin'
 to switch between source and rendered text. Tables wrap into real lines; selection and yanking
 copy displayed text. Edit keys return to the mapped source position; leaving the edit restores
 preview. Writes, undo, and redo operate on the source. Explicit source mode remains raw.
+The renderer rebuilds ordinary Markdown decorations as part of committing a preview
+frame and after delegated saves, preserving code language labels across edits.
+Source edits and provider completions post coalesced refresh messages. Mode,
+interaction, and preview-entry events release pending work, including unsaved edits;
+refresh readiness does not depend on an idle-time delay.
+Before preview highlighting starts, the renderer prepares the current Markdown query
+again, including replacements caused by later plugin loads. Native
+code-fence line concealment therefore cannot hide the virtual language labels.
 
 The host integrations use the plugin's public `source_location()`, `display_position()`, and
 `leave_preview()` APIs for link opening, pinned heading context, dashboard transitions, and file
@@ -465,11 +473,12 @@ An explicit `opts.preview.mermaid.command` overrides discovery; set
 
 ## Visible Text Navigation
 
-`plugins/coding.lua` declares Flash.nvim with its native search integration disabled and owns
-its Lazy `keys` specifications: `<Space>s` (visible text jump) and `<Space>fn`
-(Treesitter selection) in Normal, Visual, and operator-pending modes. The first shortcut loads
-Flash; these bindings are inspectable in `:Lazy`. `config.search.flash` owns the special-buffer
-guard and Markdown source routing. Flash owns matching, labels, cancellation, and jumplist entries;
+`plugins/coding.lua` declares Flash.nvim with its native search integration disabled and loads it
+on `VeryLazy`, alongside general UI tools and independently of file-opening events.
+`config.search.flash` registers `<Space>s` (visible text jump) and `<Space>fn` (Treesitter selection)
+in Normal, Visual, and operator-pending modes during plugin setup; shortcuts do not add loading
+triggers. The same module owns the special-buffer guard and Markdown source routing.
+Flash owns matching, labels, cancellation, and jumplist entries;
 highlights reuse the shared match and pane-label roles.
 The window filter uses `config.ui.window_state.file_buffer` to retain the current file pane,
 including rendered Markdown, while excluding panels and other panes. Text jumps match the
@@ -1030,7 +1039,11 @@ and returned files resolve the underlying editor settings.
 Startup-only modules remain small: keymaps retain deferred module callbacks for feature-owned
 actions, and plugins that serve files, insert mode, or explicit commands load on their first relevant
 event. LSP setup completes during plugin loading so Mason commands are registered before lazy.nvim
-dispatches them. Completion setup remains deferred until insert mode.
+dispatches them. Neoconf loads as an explicit dependency of that LSP setup and completes its
+configuration before servers are configured; it has no separate buffer-event triggers.
+Paired buffer events cover existing and new files. Command lists preserve each public command's
+availability before its plugin loads, while dependency entries describe prerequisite relationships.
+Completion setup remains deferred until insert mode.
 
 `config.ui.folder_picker` owns the shared project switcher used by `<Space>fp` and the homepage's
 folder action. Its Telescope finder searches direct child directories asynchronously within the

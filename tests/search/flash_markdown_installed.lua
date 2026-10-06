@@ -50,13 +50,7 @@ local function check()
     require('config.syntax.highlights').setup()
     for _, spec in ipairs(dofile(root .. '/lua/plugins/coding.lua')) do
       if spec[1] == 'folke/flash.nvim' then
-        require('flash').setup(spec.opts)
-        for _, mapping in ipairs(spec.keys) do
-          vim.keymap.set(mapping.mode, mapping[1], mapping[2], {
-            silent = mapping.silent,
-            desc = mapping.desc,
-          })
-        end
+        spec.config(nil, spec.opts)
       end
     end
     require('config.startup.keybindings').setup()

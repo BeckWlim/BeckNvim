@@ -1,22 +1,10 @@
 return {
   {
     'folke/flash.nvim',
-    keys = {
-      {
-        '<Space>s',
-        function() require('config.search.flash').jump() end,
-        mode = { 'n', 'x', 'o' },
-        silent = true,
-        desc = 'Flash jump to visible text',
-      },
-      {
-        '<Space>fn',
-        function() require('config.search.flash').treesitter() end,
-        mode = { 'n', 'x', 'o' },
-        silent = true,
-        desc = 'Flash select syntax region',
-      },
-    },
+    event = 'VeryLazy',
+    config = function(_, opts)
+      require('config.search.flash').setup(opts)
+    end,
     opts = {
       search = {
         -- Flash applies exclusion filters only with multi_window enabled.

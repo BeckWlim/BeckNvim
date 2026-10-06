@@ -535,6 +535,7 @@ local function check()
     vim.api.nvim_buf_set_lines(0, 0, -1, false, {
       '# Code sample', '', '```lua', 'local value = 1', 'print(value)', '```', '', 'End prose',
     })
+    vim.api.nvim_buf_set_name(0, vim.g.preview_test_project .. '/code-labels.md')
     vim.g.code_test_source = vim.api.nvim_get_current_buf()
     vim.bo.filetype = 'markdown'
   ]])
@@ -562,6 +563,61 @@ local function check()
       end
     ]])
   end
+  -- Unsaved edits must show their language label immediately after Escape,
+  -- preserve the dirty flags, and leave a new file absent from disk. Repeat
+  -- with writes to exercise command mode immediately after the same edit.
+  for iteration = 1, 6 do
+    local save = iteration > 3
+    evaluate([[
+      vim.api.nvim_win_set_cursor(0,
+        require('render-markdown.preview').display_position(vim.api.nvim_get_current_win(), { 8, 0 }))
+    ]])
+    vim.rpcnotify(child, 'nvim_input', 'iEdited <Esc>' .. (save and ':write<CR>' or ''))
+    assert(vim.wait(2000, function()
+      local state = evaluate([[
+        local source = vim.g.code_test_source
+        if vim.b.markdown_preview_source == source then
+          return { line = vim.api.nvim_buf_get_lines(source, 7, 8, false)[1],
+            modified = vim.bo[source].modified, preview_modified = vim.bo.modified }
+        end
+      ]])
+      return type(state) == 'table' and state.line == string.rep('Edited ', iteration) .. 'End prose'
+        and state.modified == not save and state.preview_modified == not save
+    end, 10), 'Prose edit did not return to preview with its correct unsaved state')
+    evaluate([[
+      local row = require('render-markdown.preview').display_position(vim.api.nvim_get_current_win(), { 3, 0 })[1]
+      vim.cmd('redraw!')
+      local position = vim.fn.screenpos(0, row, 1)
+      assert(position.row > 0, 'Code label left the visible preview')
+      local line = ''
+      for column = 1, 40 do line = line .. vim.fn.screenstring(position.row, column) end
+      assert(line:find('lua', 1, true), 'Prose edit hid the code language label')
+      local source = vim.g.code_test_source
+      local filename = vim.api.nvim_buf_get_name(source)
+      if vim.bo[source].modified then
+        assert(vim.fn.filereadable(filename) == 0, 'Unsaved preview wrote the new source file')
+      else
+        assert(vim.deep_equal(vim.fn.readfile(filename),
+          vim.api.nvim_buf_get_lines(source, 0, -1, false)), 'Saving wrote projected Markdown rows')
+      end
+    ]])
+  end
+  -- An explicit source refresh must commit its ordinary decorations before
+  -- any later cursor event, including when the visible language changes.
+  evaluate([[
+    local source = vim.g.code_test_source
+    vim.api.nvim_buf_set_lines(source, 2, 3, false, { '```text' })
+    require('render-markdown.preview').refresh(source)
+  ]])
+  assert(vim.wait(1000, function()
+    return evaluate([[
+      vim.cmd('redraw!')
+      local position = vim.fn.screenpos(0, 3, 1)
+      local line = ''
+      for column = 1, 40 do line = line .. vim.fn.screenstring(position.row, column) end
+      return line:find('text', 1, true) ~= nil and line:find('lua', 1, true) == nil
+    ]])
+  end, 10), 'Committed preview kept the old code language on screen')
   evaluate([[
     require('render-markdown.preview').toggle()
     assert(vim.wo.colorcolumn == '80,160', 'Returning to source lost column guides')

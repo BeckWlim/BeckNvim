@@ -1,18 +1,12 @@
 return {
   {
     'folke/neoconf.nvim',
-    event = { 'BufReadPre', 'BufNewFile' },
-    priority = 1000,
+    lazy = true,
     dependencies = { 'neovim/nvim-lspconfig' },
     opts = {
       import = {
         vscode = true,
       },
     },
-    config = function(_, opts)
-      vim.schedule(function()
-        require('neoconf').setup(opts)
-      end)
-    end,
   },
 }

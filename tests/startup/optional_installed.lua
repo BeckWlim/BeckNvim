@@ -1,11 +1,16 @@
 -- Installed-plugin smoke test; all writable editor data stays in a temporary directory.
 -- nvim --headless -u NONE -i NONE -l tests/startup/optional_installed.lua
+-- Optional argument: command (default), existing, or new tests the first LSP entry.
+local lsp_entry = arg[1] or 'command'
+assert(vim.list_contains({ 'command', 'existing', 'new' }, lsp_entry), 'Unknown LSP entry')
 local directory = vim.fn.tempname()
 local executable_directory = directory .. '/bin'
 local data_directory = directory .. '/data/nvim'
 vim.fn.mkdir(executable_directory, 'p')
 vim.fn.mkdir(data_directory, 'p')
 vim.fn.mkdir(directory .. '/project/.git', 'p')
+local first_file = directory .. '/project/first.lua'
+if lsp_entry == 'existing' then vim.fn.writefile({ 'local value = 1' }, first_file) end
 assert(vim.uv.fs_symlink(vim.fn.stdpath('data') .. '/lazy', data_directory .. '/lazy'))
 for _, command in ipairs({
   'sh', 'bash', 'git', 'rg', 'curl', 'cc', 'gcc', 'c++', 'g++', 'make', 'cmake',
@@ -31,6 +36,17 @@ vim.fn.writefile({
   "vim.opt.runtimepath:prepend(vim.fn.stdpath('data') .. '/lazy/mason.nvim')",
   "require('mason-registry').refresh = function(callback) callback(false, {}) end",
   'dofile(' .. string.format('%q', vim.fn.getcwd() .. '/init.lua') .. ')',
+  "local lsp = require('config.lsp')",
+  'local setup_lsp = lsp.setup',
+  'lsp.setup = function()',
+  "  local neoconf = package.loaded['neoconf.config']",
+  '  assert(neoconf and neoconf.options.import and neoconf.options.import.vscode,',
+  "    'Neoconf did not finish setup before LSP configuration')",
+  "  assert(#require('neoconf.plugins').plugins > 0, 'Neoconf did not register its integrations')",
+  '  setup_lsp()',
+  "  require('mason.settings').current.ui.check_outdated_packages_on_open = false",
+  '  vim.g.optional_test_lsp_ready = true',
+  'end',
 }, bootstrap)
 local child = vim.fn.jobstart({
   vim.v.progpath, '--headless', '--embed', '-n', '-u', bootstrap, '-i', 'NONE',
@@ -48,6 +64,21 @@ local function evaluate(source, ...)
 end
 local succeeded, failure = xpcall(function()
   vim.rpcrequest(child, 'nvim_ui_attach', 100, 30, { rgb = true })
+  evaluate([[
+    local entry, path = ...
+    assert(not require('lazy.core.config').plugins['mason-lspconfig.nvim']._.loaded,
+      'LSP loaded before its first relevant entry')
+    if entry == 'command' then
+      vim.cmd('Mason')
+      assert(vim.g.optional_test_lsp_ready, 'The first Mason command did not configure LSP synchronously')
+      assert(vim.wait(2500, function() return vim.bo.filetype == 'mason' end, 10),
+        'The first Mason command did not open its UI')
+      vim.cmd('close')
+    else
+      vim.cmd('edit ' .. vim.fn.fnameescape(path))
+    end
+    assert(vim.g.optional_test_lsp_ready, 'The first entry did not configure LSP synchronously')
+  ]], lsp_entry, first_file)
   evaluate([[
     for _, command in ipairs({ 'uv', 'node', 'npm', 'python3', 'nvm', 'pyenv', 'termaid' }) do
       assert(vim.fn.executable(command) == 0, command .. ' leaked into the isolated PATH')
@@ -97,4 +128,4 @@ pcall(vim.rpcnotify, child, 'nvim_command', 'qa!')
 vim.fn.jobwait({ child }, 3000)
 vim.fn.delete(directory, 'rf')
 assert(succeeded, failure)
-print('PASS: startup, file editing, and Markdown fallback without optional runtimes')
+print('PASS: ' .. lsp_entry .. ' LSP entry, startup, editing, and Markdown fallback without optional runtimes')

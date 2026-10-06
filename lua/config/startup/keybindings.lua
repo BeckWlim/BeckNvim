@@ -1,6 +1,6 @@
 local M = {}
 
--- Global maps are assembled here; plugin-owned maps live in Lazy specs.
+-- Global maps are assembled here; plugin-owned maps register during plugin setup.
 -- config.keybindings owns reusable key families.
 -- Telescope builtins are required lazily inside each callback to preserve
 -- telescope.nvim's lazy loading at startup.
