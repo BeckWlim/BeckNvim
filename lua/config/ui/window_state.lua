@@ -33,6 +33,29 @@ function M.file_buffer(winid)
   return buffer
 end
 
+-- Projected Markdown replaces a window's buffer. Only the ordinary file editor
+-- opts in implicitly here; integrations declare their own window permission.
+---@param source integer
+---@param winid integer
+---@return boolean
+function M.markdown_preview_allowed(source, winid)
+  if not vim.api.nvim_win_is_valid(winid) or not vim.api.nvim_buf_is_valid(source) then return false end
+  local permission = vim.w[winid].render_markdown_preview
+  if type(permission) == 'boolean' then return permission end
+  local diffview = package.loaded['diffview.lib']
+  if diffview and diffview.tabpage_to_view(vim.api.nvim_win_get_tabpage(winid)) then return false end
+  local name = vim.api.nvim_buf_get_name(source)
+  return vim.api.nvim_win_get_config(winid).relative == ''
+    and not vim.wo[winid].previewwindow
+    and not vim.wo[winid].winfixbuf
+    and not vim.wo[winid].diff
+    and vim.bo[source].buftype == ''
+    and (vim.bo[source].buflisted
+      or vim.b[vim.api.nvim_win_get_buf(winid)].markdown_preview_source == source)
+    and name ~= ''
+    and not name:match('^%a[%w+.-]*://')
+end
+
 -- Editor intent belongs to a window; a surface only borrows its presentation.
 -- Buffer transitions restore intent before the next surface applies its policy.
 function M.apply(winid, editor_options)

@@ -12,7 +12,7 @@ vim.fn.writefile({
   [[dofile('tests/markdown_runtime.lua')]],
   [[require('config.startup.options')]],
   [[require('config.ui.window_state').setup()]],
-  [[require('render-markdown').setup({ preview = { enabled = true } })]],
+  [[require('render-markdown').setup({ preview = { enabled = true, condition = function() return true end } })]],
   [[local opts = require('plugins.extra')[2].opts]],
   [[opts.git = { enable = false }; opts.filesystem_watchers = { enable = false }]],
   [[require('nvim-tree').setup(opts)]],

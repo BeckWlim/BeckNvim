@@ -21,7 +21,7 @@ vim.fn.writefile({
   [[require('config.startup.autocmds').setup()]],
   [[require('config.startup.keybindings').setup()]],
   [[require('config.search.telescope').setup()]],
-  [[require('render-markdown').setup({ preview = { enabled = true } })]],
+  [[require('render-markdown').setup({ preview = { enabled = true, condition = function() return true end } })]],
 }, init_path)
 local child = vim.fn.jobstart({ vim.v.progpath, '--embed', '-n', '-u', vim.env.NVIM_TEST_INIT or init_path, '-i', 'NONE' }, {
   rpc = true, env = { XDG_CACHE_HOME = root .. '/cache', XDG_STATE_HOME = root .. '/state',

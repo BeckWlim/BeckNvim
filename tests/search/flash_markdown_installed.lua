@@ -58,7 +58,8 @@ local function check()
     for _, spec in ipairs(dofile(root .. '/lua/plugins/extra.lua')) do
       if spec[1] == 'BeckWlim/render-markdown.nvim' then renderer_options = vim.deepcopy(spec.opts) end
     end
-    renderer_options.preview = { auto_open = false, mermaid = { enabled = false } }
+    renderer_options.preview.auto_open = false
+    renderer_options.preview.mermaid = { enabled = false }
     require('render-markdown').setup(renderer_options)
     require('render-markdown.core.colors').init()
     require('render-markdown.core.manager').init()

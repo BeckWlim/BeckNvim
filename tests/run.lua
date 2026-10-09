@@ -42,6 +42,7 @@ local test_files = {
   'tests/syntax/folds.lua',
   'tests/syntax/highlights.lua',
   'tests/syntax/markdown/configuration.lua',
+  'tests/syntax/markdown/contexts.lua',
   'tests/syntax/markdown/links.lua',
   'tests/syntax/treesitter.lua',
   'tests/syntax/treesitter_context.lua',

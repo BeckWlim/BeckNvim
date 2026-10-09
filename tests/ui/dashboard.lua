@@ -352,7 +352,7 @@ vim.bo.filetype = 'markdown'
 vim.wo.number = true
 vim.wo.relativenumber = true
 local source_lines_before = vim.api.nvim_buf_get_lines(markdown_source, 0, -1, false)
-require('render-markdown').setup({ preview = { enabled = true } })
+require('render-markdown').setup({ preview = { enabled = true, condition = function() return true end } })
 markdown_preview.open(markdown_source)
 local generated_buffer = vim.api.nvim_get_current_buf()
 local homepage_buffer

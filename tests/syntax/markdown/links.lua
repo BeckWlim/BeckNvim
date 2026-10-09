@@ -1,4 +1,7 @@
 local preview = require('render-markdown.preview')
+require('render-markdown').setup({
+  preview = { condition = require('config.ui.window_state').markdown_preview_allowed },
+})
 local open_target = require('config.ui.open_target')
 local original_buffer = vim.api.nvim_get_current_buf()
 local directory = vim.fn.tempname()

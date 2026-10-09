@@ -26,6 +26,28 @@ vim.lsp.config = function(server_name, server_config)
 end
 
 require('config.lsp').setup()
+local marksman_config = assert(configured_servers.marksman, 'marksman was not configured')
+local root_callback_count = 0
+local function accept_root()
+  root_callback_count = root_callback_count + 1
+end
+for _, name in ipairs({
+  'diffview:///tmp/repository/.git/:0:/docs/example.md',
+  'diffview:///tmp/repository/.git/abcdef/docs/example.md',
+  'markdown-preview://42/1001',
+}) do
+  local buffer = vim.api.nvim_create_buf(false, false)
+  vim.api.nvim_buf_set_name(buffer, name)
+  assert(vim.bo[buffer].buftype == '', 'Fixture must exercise the editable index boundary')
+  marksman_config.root_dir(buffer, accept_root)
+  vim.api.nvim_buf_delete(buffer, { force = true })
+end
+assert(root_callback_count == 0, 'Marksman accepted a virtual document')
+local markdown_buffer = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_name(markdown_buffer, vim.fn.tempname() .. '.md')
+marksman_config.root_dir(markdown_buffer, accept_root)
+assert(root_callback_count == 1, 'Marksman rejected an ordinary unsaved Markdown file')
+vim.api.nvim_buf_delete(markdown_buffer, { force = true })
 local clangd_config = assert(configured_servers.clangd, 'clangd was not configured')
 local clangd_command = clangd_config.cmd
 assert(vim.list_contains(clangd_command, 'clangd'), 'clangd command omitted the server executable')

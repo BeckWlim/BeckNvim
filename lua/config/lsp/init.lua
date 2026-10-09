@@ -115,6 +115,21 @@ local function configure_clangd()
   })
 end
 
+local function configure_marksman()
+  vim.lsp.config('marksman', {
+    root_dir = function(buffer, on_dir)
+      local name = vim.api.nvim_buf_get_name(buffer)
+      -- Diffview's editable index has an ordinary buftype, but its URI is
+      -- not a disk file. Marksman tries to reload it on didClose and exits.
+      if name:match('^%a[%w+.-]*://') then
+        return
+      end
+      -- Let Neovim apply the server's root_markers and single-file defaults.
+      on_dir()
+    end,
+  })
+end
+
 function M.setup()
   require('mason').setup({
     ui = {
@@ -130,6 +145,7 @@ function M.setup()
   })
   configure_basedpyright()
   configure_clangd()
+  configure_marksman()
   -- Mason owns server installation and activation. Keep its defaults here.
   require('mason-lspconfig').setup()
 end

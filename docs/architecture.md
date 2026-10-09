@@ -420,8 +420,8 @@ context; the winbar accepts a completion only for the current selection, buffer 
 
 ## Markdown Rendering
 
-`plugins/extra.lua` selects `BeckWlim/render-markdown.nvim`, whose default pipeline provides the
-source-mapped preview. The plugin uses a managed install by default;
+`plugins/extra.lua` selects `BeckWlim/render-markdown.nvim` and explicitly opts ordinary editor
+windows into its source-mapped preview. The plugin uses a managed install by default;
 `~/.nvim` can select `~/dev/render-markdown.nvim` through the standard development settings.
 The fork owns prose rendering, table projection, Mermaid jobs, source maps, incremental updates,
 preview buffers, source editing, save delegation, and hidden-source file checks. BeckNvim contains
@@ -450,6 +450,18 @@ in the renderer. Closing or replacing one pane preserves the other panes' render
 Project roots and relative paths resolve the source file, including searches launched from a preview.
 `config.syntax.highlights` retains BeckNvim's palette overrides for the plugin's semantic highlight
 groups. Read-only Markdown detail buffers continue to use the ordinary upstream renderer.
+
+Preview permission belongs to the viewing context. The renderer's default
+`preview.condition(source, window)` requires `w:render_markdown_preview = true`;
+BeckNvim supplies `config.ui.window_state.markdown_preview_allowed` to opt in ordinary,
+named file editors and retain their existing previews during return navigation.
+Floats, preview windows, protected windows, virtual documents, and Diffview tabs do not
+automatically opt in. A plugin integration can set `vim.w[window].render_markdown_preview`
+to `true` or `false` before showing its view and clear it when relinquishing the window.
+Both automatic entry and `<Space>mp` respect the permission. Diff windows remain blocked
+even with explicit approval. Two windows showing the same source can use different modes;
+the renderer rechecks permission before scheduled entry and restores source text when a
+view loses permission. See the fork's preview architecture for immediate synchronization.
 
 ## Optional Mermaid Dependency
 

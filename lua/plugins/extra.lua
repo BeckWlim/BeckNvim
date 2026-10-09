@@ -66,6 +66,9 @@ return {
     opts = {
       debounce = 1,
       preset = 'lazy',
+      preview = {
+        condition = require('config.ui.window_state').markdown_preview_allowed,
+      },
       render_modes = { 'n', 'c', 't', 'v', 'V', '\22' },
       win_options = {
         concealcursor = { default = '', rendered = 'nvic' },

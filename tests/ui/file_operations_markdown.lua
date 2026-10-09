@@ -9,7 +9,7 @@ vim.fn.mkdir(root, 'p')
 local markdown_path, target_path = root .. '/README.md', root .. '/target.txt'
 vim.fn.writefile({ '# Rendered file', '', 'Replace this file in its existing pane.' }, markdown_path)
 vim.fn.writefile({ 'replacement' }, target_path)
-renderer.setup({ preview = { enabled = true } })
+renderer.setup({ preview = { enabled = true, condition = function() return true end } })
 vim.cmd('tabnew')
 local editor = vim.api.nvim_get_current_win()
 local function open_preview()
