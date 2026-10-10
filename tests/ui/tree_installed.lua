@@ -3,6 +3,18 @@ vim.opt.runtimepath:prepend(vim.fn.getcwd())
 local lazy = vim.fn.stdpath('data') .. '/lazy/'
 vim.opt.runtimepath:append(lazy .. 'nvim-tree.lua')
 vim.opt.runtimepath:append(lazy .. 'nvim-web-devicons')
+local copied_lines = {}
+vim.g.clipboard = {
+  name = 'Tree path-copy test',
+  copy = {
+    ['+'] = function(lines) copied_lines = vim.deepcopy(lines) end,
+    ['*'] = function() end,
+  },
+  paste = {
+    ['+'] = function() return copied_lines, 'v' end,
+    ['*'] = function() return {}, 'v' end,
+  },
+}
 local root = vim.fn.tempname()
 vim.fn.mkdir(root .. '/alpha/deep', 'p')
 vim.fn.mkdir(root .. '/beta/deep', 'p')
@@ -22,6 +34,23 @@ local function check(group_empty)
   local api = require('nvim-tree.api')
   api.tree.open({ path = root })
   vim.cmd('lcd ' .. vim.fn.fnameescape(root))
+  local function check_copy(path, expected_path)
+    api.tree.find_file({ buf = path, open = false, focus = true })
+    local selected_node = api.tree.get_node_under_cursor()
+    local selected_cursor = vim.api.nvim_win_get_cursor(0)
+    local was_open = selected_node.open
+    input('Y')
+    assert(copied_lines[1] == expected_path,
+      'Y must copy the full filesystem path: expected ' .. expected_path .. ', got ' .. vim.inspect(copied_lines))
+    assert(vim.fn.getregtype('+') == 'v', 'Path copy must be characterwise')
+    assert(api.tree.get_node_under_cursor() == selected_node
+      and selected_node.open == was_open
+      and vim.deep_equal(vim.api.nvim_win_get_cursor(0), selected_cursor),
+      'Path copy changed the selected node or its expansion')
+  end
+  check_copy(root .. '/alpha', root .. (group_empty and '/alpha/deep/' or '/alpha/'))
+  check_copy(root .. '/alpha/deep/needle.txt', root .. '/alpha/deep/needle.txt')
+  input('zM')
   input('/needle<CR>')
   assert(api.tree.get_node_under_cursor().absolute_path == root .. '/alpha/deep/needle.txt', 'First hidden match missing')
   input('n')

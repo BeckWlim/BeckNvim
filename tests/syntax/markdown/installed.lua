@@ -410,9 +410,10 @@ local function check()
     local before = vim.g.preview_insert_line
     local edited = vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 16, 17, false)[1]
     assert(edited == before:sub(1, 7) .. 'EDIT' .. before:sub(8), 'Insert did not edit the source text')
-    assert(vim.b.markdown_preview_source == vim.g.preview_test_source and not vim.bo.modifiable,
-      'Escape did not automatically return to rendered Markdown')
-    assert(vim.bo[vim.g.preview_test_source].modified, 'Automatic preview lost unsaved changes')
+    assert(vim.api.nvim_get_current_buf() == vim.g.preview_test_source and vim.bo.modifiable,
+      'Escape automatically reopened rendered Markdown')
+    require('render-markdown').preview()
+    assert(vim.bo[vim.g.preview_test_source].modified, 'Manual preview lost unsaved changes')
     assert(vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview,
       'Quick edit recreated the preview buffer')
     assert(vim.g.quick_edit_render_jobs == 0, 'Prose-only quick edit restarted Termaid')
@@ -467,10 +468,11 @@ local function check()
     ]])
     vim.rpcnotify(child, 'nvim_input', vim.keycode(edit.keys))
     assert(vim.wait(1000, function()
-      return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview
+      return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.preview_test_source
         and not vim.deep_equal(vim.g.source_before_common_edit,
           vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 0, -1, false))]])
-    end, 10), 'Common edit did not change source and restore preview: ' .. edit.keys)
+    end, 10), 'Common edit did not change and retain source: ' .. edit.keys)
+    evaluate([[require('render-markdown').preview()]])
     local edited_line = evaluate([[return vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 16, 17, false)[1] ]])
     if edit.prefix then
       assert(edited_line:sub(1, #edit.prefix) == edit.prefix, 'Edit lost its register/motion: ' .. edit.keys)
@@ -495,17 +497,19 @@ local function check()
   ]])
   vim.rpcnotify(child, 'nvim_input', 'x')
   vim.wait(100)
-  assert(evaluate([[return vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview
+  assert(evaluate([[return vim.api.nvim_get_current_buf() == vim.g.preview_test_source
     and vim.deep_equal(vim.g.source_before_common_edit,
       vim.api.nvim_buf_get_lines(vim.g.preview_test_source, 0, -1, false))]]),
-    'An edit with no change left the source exposed')
+    'An edit with no change reopened preview')
+  evaluate([[require('render-markdown').preview()]])
   vim.rpcnotify(child, 'nvim_input', 'd')
   assert(vim.wait(1000, function() return vim.rpcrequest(child, 'nvim_get_mode').mode == 'no' end, 10),
     'Preview interrupted a pending source operator')
   vim.rpcnotify(child, 'nvim_input', vim.keycode('<Esc>'))
   assert(vim.wait(1000, function()
-    return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.quick_edit_preview]])
-  end, 10), 'Cancelling an operator did not restore preview')
+    return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.preview_test_source]])
+  end, 10), 'Cancelling an operator reopened preview')
+  evaluate([[require('render-markdown').preview()]])
   vim.rpcnotify(child, 'nvim_input', 'i')
   assert(vim.wait(1000, function() return vim.rpcrequest(child, 'nvim_get_mode').mode == 'i' end, 10))
   vim.rpcnotify(child, 'nvim_input', vim.keycode('<C-o>'))
@@ -517,8 +521,9 @@ local function check()
   assert(vim.wait(1000, function() return vim.rpcrequest(child, 'nvim_get_mode').mode == 'i' end, 10))
   vim.rpcnotify(child, 'nvim_input', vim.keycode('<C-c>'))
   assert(vim.wait(1000, function()
-    return evaluate([[return vim.b.markdown_preview_source == vim.g.preview_test_source]])
-  end, 10), 'Ctrl-C did not return the quick edit to preview')
+    return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.preview_test_source]])
+  end, 10), 'Ctrl-C reopened preview')
+  evaluate([[require('render-markdown').preview()]])
   vim.rpcnotify(child, 'nvim_input', vim.keycode('<Space>mp'))
   assert(vim.wait(1000, function()
     return evaluate([[return vim.api.nvim_get_current_buf() == vim.g.preview_test_source]])
@@ -563,7 +568,7 @@ local function check()
       end
     ]])
   end
-  -- Unsaved edits must show their language label immediately after Escape,
+  -- Explicitly rendered edits must show their language label immediately,
   -- preserve the dirty flags, and leave a new file absent from disk. Repeat
   -- with writes to exercise command mode immediately after the same edit.
   for iteration = 1, 6 do
@@ -572,7 +577,7 @@ local function check()
       vim.api.nvim_win_set_cursor(0,
         require('render-markdown.preview').display_position(vim.api.nvim_get_current_win(), { 8, 0 }))
     ]])
-    vim.rpcnotify(child, 'nvim_input', 'iEdited <Esc>' .. (save and ':write<CR>' or ''))
+    vim.rpcnotify(child, 'nvim_input', 'iEdited <Esc> mp' .. (save and ':write<CR>' or ''))
     assert(vim.wait(2000, function()
       local state = evaluate([[
         local source = vim.g.code_test_source
@@ -644,6 +649,7 @@ local function check()
       })
     end
     vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
+    vim.api.nvim_buf_set_name(0, vim.g.preview_test_project .. '/refresh-stress.md')
     vim.bo.filetype = 'markdown'
   ]])
   for step = 1, 30 do

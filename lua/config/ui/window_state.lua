@@ -50,7 +50,9 @@ function M.markdown_preview_allowed(source, winid)
     and not vim.wo[winid].winfixbuf
     and not vim.wo[winid].diff
     and vim.bo[source].buftype == ''
-    and (vim.bo[source].buflisted
+    -- Native history can restore a file retired from the buffer list. Its
+    -- visible source must remain eligible after toggling out of a projection.
+    and (vim.bo[source].buflisted or vim.api.nvim_win_get_buf(winid) == source
       or vim.b[vim.api.nvim_win_get_buf(winid)].markdown_preview_source == source)
     and name ~= ''
     and not name:match('^%a[%w+.-]*://')

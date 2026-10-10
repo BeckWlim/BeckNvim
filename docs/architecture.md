@@ -430,8 +430,9 @@ for the provider contract, lifecycle, limits, and standalone tests.
 
 Markdown files open rendered in the existing pane. `<Space>mp` calls the plugin's `preview()` API
 to switch between source and rendered text. Tables wrap into real lines; selection and yanking
-copy displayed text. Edit keys return to the mapped source position; leaving the edit restores
-preview. Writes, undo, and redo operate on the source. Explicit source mode remains raw.
+copy displayed text. Edit keys return to the mapped source position and keep source selected;
+`<Space>mp` explicitly restores preview. Source-routed syntax selections also stay in source.
+Writes, undo, and redo operate on the source. Explicit source mode remains raw.
 The renderer rebuilds ordinary Markdown decorations as part of committing a preview
 frame and after delegated saves, preserving code language labels across edits.
 Source edits and provider completions post coalesced refresh messages. Mode,
@@ -455,6 +456,7 @@ Preview permission belongs to the viewing context. The renderer's default
 `preview.condition(source, window)` requires `w:render_markdown_preview = true`;
 BeckNvim supplies `config.ui.window_state.markdown_preview_allowed` to opt in ordinary,
 named file editors and retain their existing previews during return navigation.
+Sources restored through native history remain eligible while displayed, even when unlisted.
 Floats, preview windows, protected windows, virtual documents, and Diffview tabs do not
 automatically opt in. A plugin integration can set `vim.w[window].render_markdown_preview`
 to `true` or `false` before showing its view and clear it when relinquishing the window.

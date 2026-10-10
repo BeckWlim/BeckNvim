@@ -24,6 +24,7 @@ local function check()
     end
   end
   local source = vim.api.nvim_get_current_buf()
+  vim.api.nvim_buf_set_name(source, vim.fn.tempname() .. '.md')
   vim.api.nvim_buf_set_lines(source, 0, -1, false, { '# Markdown', '', '[github](https://github.com)' })
   vim.bo[source].filetype = 'markdown'
   local toggle = vim.fn.maparg('<Space>mp', 'n', false, true)

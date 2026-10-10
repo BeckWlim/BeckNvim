@@ -9,7 +9,7 @@ system while keeping native Neovim and plugin behavior wherever practical.
 - **Symbol search:** find functions and types across a project, explore source previews, and jump to definitions.
 - **Visible text jumps:** use Flash labels with `<Space>s`; `<Space>fn` selects source syntax regions, including in rendered Markdown. `/` and `?` keep native whole-buffer search, directly in Markdown preview.
 - **Git review:** explore merge-aware commit graphs, inspect branches and local changes, and resume repository reviews within a Neovim session. Search and guarded checkout work in both graph and detail views.
-- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, move through links without stepping through hidden URLs, and edit source in place with refreshes when external file changes are detected.
+- **Markdown and Mermaid:** read tables and complex diagrams that adapt to the pane width, move through links without stepping through hidden URLs, and edit source in place. Press `<Space>mp` to render again after editing; external file changes refresh visible previews.
 - **Project workspace:** browse recent projects and files from the homepage, with live [light and dark theme previews](themes/README.md).
 
 ## See it in action

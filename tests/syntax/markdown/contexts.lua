@@ -6,6 +6,13 @@ local source = vim.api.nvim_get_current_buf()
 vim.api.nvim_buf_set_name(source, vim.fn.tempname() .. '.md')
 vim.bo[source].filetype = 'markdown'
 assert(policy(source, window), 'Ordinary Markdown editor did not opt in')
+vim.bo[source].buflisted = false
+assert(policy(source, window), 'Source restored through history lost manual preview permission')
+local hidden_source = vim.api.nvim_create_buf(false, false)
+vim.api.nvim_buf_set_name(hidden_source, vim.fn.tempname() .. '.md')
+vim.bo[hidden_source].filetype = 'markdown'
+assert(not policy(hidden_source, window), 'Hidden unlisted file implicitly opted in')
+vim.api.nvim_buf_delete(hidden_source, { force = true })
 vim.w[window].render_markdown_preview = false
 assert(not policy(source, window), 'Plugin window could not opt out')
 vim.w[window].render_markdown_preview = nil

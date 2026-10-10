@@ -197,6 +197,9 @@ function M.on_attach(bufnr)
   local api = require('nvim-tree.api')
   local navigation = require('config.navigation')
   api.map.on_attach.default(bufnr)
+  vim.keymap.set('n', 'Y', api.fs.copy.absolute_path, {
+    buffer = bufnr, nowait = true, silent = true, desc = 'nvim-tree: Copy Absolute Path',
+  })
   navigation.register_close(bufnr, function() api.tree.close() end)
   local function displayed_node(node)
     -- A grouped directory's final component owns its visible open state.

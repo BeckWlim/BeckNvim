@@ -19,7 +19,12 @@ local parent_change_count = 0
 local node_change_count = 0
 local synchronized_roots = {}
 local active_activation
+local absolute_path_copy_count = 0
+local function copy_absolute_path()
+  absolute_path_copy_count = absolute_path_copy_count + 1
+end
 package.loaded['nvim-tree.api'] = {
+  fs = { copy = { absolute_path = copy_absolute_path } },
   events = { Event = { TreeOpen = 'TreeOpen' }, subscribe = function() end },
   node = {
     open = {
@@ -54,6 +59,7 @@ package.loaded['nvim-tree.api'] = {
         vim.keymap.set('n', '-', '<cmd>echo "root up"<CR>', { buffer = bufnr })
         vim.keymap.set('n', '<C-]>', '<cmd>echo "root in"<CR>', { buffer = bufnr })
         vim.keymap.set('n', '<CR>', '<cmd>echo "open"<CR>', { buffer = bufnr })
+        vim.keymap.set('n', 'Y', function() error('Default relative-path copy was retained') end, { buffer = bufnr })
       end,
     },
   },
@@ -118,6 +124,7 @@ assert(
 )
 
 local enter_mapping
+local copy_path_mapping
 local root_back_mapping
 local root_ahead_mapping
 local escape_mapping
@@ -125,6 +132,7 @@ local legacy_parent_mapping
 local legacy_child_mapping
 vim.api.nvim_buf_call(tree_buffer, function()
   enter_mapping = vim.fn.maparg('<CR>', 'n', false, true)
+  copy_path_mapping = vim.fn.maparg('Y', 'n', false, true)
   root_back_mapping = vim.fn.maparg('gh', 'n', false, true)
   root_ahead_mapping = vim.fn.maparg('gl', 'n', false, true)
   escape_mapping = vim.fn.maparg('<Esc>', 'n', false, true)
@@ -135,6 +143,9 @@ assert(vim.tbl_isempty(escape_mapping), 'file tree retained Escape as root-up na
 assert(vim.tbl_isempty(legacy_parent_mapping), 'file tree retained the default - root-up mapping')
 assert(vim.tbl_isempty(legacy_child_mapping), 'file tree retained the default <C-]> root-in mapping')
 assert(type(enter_mapping.callback) == 'function', 'file tree did not override <CR> safely')
+assert(copy_path_mapping.callback == copy_absolute_path, 'Y did not use the native absolute-path copy action')
+copy_path_mapping.callback()
+assert(absolute_path_copy_count == 1, 'Y did not copy the absolute path')
 enter_mapping.callback()
 assert(opened_node == nil, '<CR> still opened the parent entry')
 

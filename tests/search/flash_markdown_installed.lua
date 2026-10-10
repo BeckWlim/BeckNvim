@@ -41,7 +41,7 @@ end
 local function check()
   vim.rpcrequest(child, 'nvim_ui_attach', 100, 30, { rgb = true })
   evaluate([=[
-    local root, renderer, flash = ...
+    local root, renderer, flash, directory = ...
     vim.opt.runtimepath:prepend(root)
     vim.opt.runtimepath:prepend(renderer)
     vim.opt.runtimepath:append(renderer .. '/after')
@@ -73,6 +73,7 @@ local function check()
       'needle target', '', 'needle other',
     })
     vim.bo.filetype = 'markdown'
+    vim.api.nvim_buf_set_name(source, directory .. '/navigation.md')
     vim.g.test_source = source
     vim.g.test_display = require('render-markdown.preview').open(source)
     vim.api.nvim_win_set_cursor(0, { 1, 0 })
@@ -80,7 +81,7 @@ local function check()
     vim.cmd('redraw')
     vim.g.test_view = vim.fn.winsaveview()
     vim.g.test_tick = vim.api.nvim_buf_get_changedtick(source)
-  ]=], { root, renderer_path, flash_path })
+  ]=], { root, renderer_path, flash_path, directory })
   input(' sneedle')
   wait_for([=[
     local state = require('flash.repeat')._states.jump
@@ -135,8 +136,11 @@ local function check()
   wait_for([=[return vim.api.nvim_get_mode().mode == 'v'
     and vim.api.nvim_get_current_buf() == vim.g.test_source]=], 'Syntax label did not select source range')
   input('"ay')
-  wait_for([=[return vim.api.nvim_get_current_buf() == vim.g.test_display and vim.fn.mode() == 'n']=],
-    'Semantic yank did not return to projection')
+  wait_for([=[return vim.api.nvim_get_current_buf() == vim.g.test_source and vim.fn.mode() == 'n']=],
+    'Source selection did not remain in source')
+  input(' mp')
+  wait_for([=[return vim.api.nvim_get_current_buf() == vim.g.test_display]=],
+    'Manual render after syntax selection failed')
   evaluate([=[
     assert(vim.fn.getreg('a') == '[github](https://example.com/a_(b))', 'Yank lost original link syntax')
     assert(vim.api.nvim_buf_get_changedtick(vim.g.test_source) == vim.g.test_tick, 'Read-only actions changed source')
@@ -154,8 +158,11 @@ local function check()
     error('Native source link node missing')
   ]=])
   input(operator_label)
-  wait_for([=[return vim.api.nvim_get_current_buf() == vim.g.test_display and vim.fn.mode() == 'n']=],
-    'Syntax operator did not restore the manually opened preview')
+  wait_for([=[return vim.api.nvim_get_current_buf() == vim.g.test_source and vim.fn.mode() == 'n']=],
+    'Source selection did not remain in source')
+  input(' mp')
+  wait_for([=[return vim.api.nvim_get_current_buf() == vim.g.test_display]=],
+    'Manual render after syntax selection failed')
   evaluate([=[assert(vim.fn.getreg('a') == '[github](https://example.com/a_(b))', 'Syntax operator did not yank source')]=])
   -- Real host link opening uses the source adapter and leaves cursor/view intact.
   evaluate([=[
@@ -185,8 +192,11 @@ local function check()
   input(table_label)
   wait_for([=[return vim.fn.mode() == 'v']=], 'Source table node did not select')
   input('"ay')
-  wait_for([=[return vim.fn.mode() == 'n' and vim.api.nvim_get_current_buf() == vim.g.test_display]=],
-    'Source table yank did not restore rendered view')
+  wait_for([=[return vim.fn.mode() == 'n' and vim.api.nvim_get_current_buf() == vim.g.test_source]=],
+    'Source selection did not remain in source')
+  input(' mp')
+  wait_for([=[return vim.api.nvim_get_current_buf() == vim.g.test_display]=],
+    'Manual render after syntax selection failed')
   evaluate([=[
     local text = vim.fn.getreg('a')
     assert(text:find('| Name | Description |', 1, true) and text:find('|---|---|', 1, true),
@@ -276,6 +286,19 @@ local function check()
   wait_for([=[return vim.api.nvim_get_current_buf() == vim.g.test_source]=], 'Host toggle did not restore source')
   input(' mp')
   wait_for([=[return vim.b.markdown_preview_source == vim.g.test_source]=], 'Host toggle did not reopen rendered view')
+  -- Returning through native history may leave the underlying source unlisted.
+  evaluate([=[vim.bo[vim.g.test_source].buflisted = false]=])
+  for iteration = 1, 50 do
+    input('iX<Esc> sneedle<Esc>')
+    wait_for([=[return vim.fn.mode() == 'n' and vim.api.nvim_get_current_buf() == vim.g.test_source]=],
+      'Rapid edit/Flash reopened preview at iteration ' .. iteration)
+    input(' mp')
+    wait_for([=[return vim.b.markdown_preview_source == vim.g.test_source]=],
+      'Manual render failed after rapid edit/Flash at iteration ' .. iteration)
+    input(' sneedle<Esc>')
+    wait_for([=[return vim.b.markdown_preview_source == vim.g.test_source and vim.fn.mode() == 'n']=],
+      'Flash text jump left preview at iteration ' .. iteration)
+  end
 end
 local succeeded, failure = xpcall(check, debug.traceback)
 pcall(vim.fn.jobstop, child)

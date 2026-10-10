@@ -36,11 +36,14 @@ end
 local function edit(keys)
   local tick = evaluate([[return vim.api.nvim_buf_get_changedtick(vim.g.flash_label_source)]])
   input(keys or 'iEdited <Esc>')
+  wait_for([[return vim.api.nvim_get_current_buf() == vim.g.flash_label_source and vim.fn.mode() == 'n']],
+    'Native edit did not stay in source')
+  input(' mp')
   wait_for([[
     return vim.b.markdown_preview_source == vim.g.flash_label_source
       and vim.fn.mode() == 'n'
       and vim.api.nvim_buf_get_changedtick(vim.g.flash_label_source) > ...
-  ]], 'Native edit did not return to its preview', { tick })
+  ]], 'Manual render did not reopen its preview', { tick })
 end
 local function check()
   vim.rpcrequest(child, 'nvim_ui_attach', 100, 30, { rgb = true })

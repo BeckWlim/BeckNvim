@@ -57,6 +57,8 @@ Git history, Diffview's file panel, NvimTree, and the project picker preview sha
 | `zR` / `zM` | Expand / collapse all available parents |
 
 In NvimTree, `o` / `Enter` opens a file while keeping focus and selection in the tree.
+`Y` copies the selected file or folder's full filesystem path to the system clipboard;
+folder paths include a trailing separator.
 Telescope searches launched from the tree, such as `<Space>fw`, jump into a code pane with
 its line-number settings preserved; cancelling returns to the tree.
 
@@ -146,13 +148,14 @@ Markdown punctuation for editing. `Enter` moves to the next line while keeping t
 Common Normal-mode edit keys (`i`/`I`, `a`/`A`, `o`/`O`, `c`, `d`, `s`, `x`, `r` and their uppercase
 forms, `p`/`P`, `J`, `~`, `.`, `>`, `<`, `=`, `gu`, `gU`, `g~`) first restore the source at the mapped
 cursor position. Counts, registers, and operator motions apply to raw Markdown. Returning to Normal
-mode restores preview, keeping edits unsaved; this includes `Esc` or `<C-c>` after Insert mode.
+mode keeps source visible and edits unsaved; press `<Space>mp` to render again. This also applies
+after `Esc`, `<C-c>`, a cancelled operator, or an edit that makes no change.
 Use `u` / `<C-r>` to undo/redo source edits while remaining in preview, and `:w` or `:update` to save
 the underlying Markdown file. Visual selections and yanks refer to displayed text; switch to raw
 source with `<Space>mp` before editing a visual selection or using other source Ex commands.
 Temporary Normal mode with `<C-o>` stays in the editing buffer.
 `q`, `<C-q>`, or `<Space>mp` returns to source in the same pane; `<Space>mp` renders it again.
-Explicit source mode stays raw after editing until you toggle it back.
+Source mode stays raw after editing and Flash syntax selection until you toggle it back.
 Movement, selection, scrolling,
 and copying displayed text use normal Neovim behavior. Tables and diagrams refresh after source edits
 and preview resizing, applying background updates after navigation pauses briefly. Pinned section
