@@ -17,6 +17,9 @@ read-only preview colors the full subject without the 50-column commit-compositi
 current branch stays in the list header. Commits do not expand or collapse in this view. `<Tab>`
 moves between windows.
 
+In the commit list, Normal-mode `y` copies the cursor commit's full hash to the clipboard.
+The synthetic `[WORKTREE]` row has no commit hash and leaves the clipboard unchanged.
+
 When the checkout has staged, unstaged, or untracked changes, a `[WORKTREE]` item appears directly
 above its HEAD commit. It is absent from clean checkouts and histories that do not contain HEAD.
 `o`/`Enter` previews the changed paths and index/worktree status; `<Space>dv` opens Diffview's native
@@ -52,6 +55,14 @@ Neovim. A removed review branch falls back to the current checkout's history.
 Use `<Space>df` for file history, `<Space>ds` for symbol history, `<Space>dr` for repository history,
 and `<Space>de` for branch/commit/issue search. Diffview owns file rendering and selection.
 File and symbol histories retain their commit/file hierarchy and native folding.
+
+In Diffview's changed-file lists and file/symbol history file rows, `y` copies the file or folder name and
+`Y` copies the full absolute filesystem path to the clipboard. For example,
+`/home/user/project/src/main.lua` copies as `main.lua` with `y` and
+`/home/user/project/src/main.lua` with `Y`. These keys use the file under the cursor, including
+deleted files and the destination path of renames. On history commit rows, `y` retains native
+commit-hash copying and `Y` does nothing. Folder rows follow the same rule: `y` copies the folder name
+and `Y` its full path, resolved from the repository root. Empty rows leave the clipboard unchanged.
 
 Only one root Git history can be active. The history entry keys refuse to mount another Git pane
 until `:q` closes the current mode; use `<Space>de` for temporary search inside Git mode.

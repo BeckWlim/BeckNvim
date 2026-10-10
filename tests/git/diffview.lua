@@ -27,6 +27,7 @@ local history_calls = {}
 local opened_views = {}
 local search_calls = {}
 local commit_detail_calls = 0
+local copy_hash_calls = 0
 local disposed_views = {}
 local checkout_call
 local native_history_selection
@@ -126,6 +127,7 @@ package.loaded['config.git.footer_loader'] = {
   end,
 }
 package.loaded['diffview.actions'] = {
+  copy_hash = function() copy_hash_calls = copy_hash_calls + 1 end,
   open_commit_log = function()
     commit_detail_calls = commit_detail_calls + 1
   end,
@@ -274,6 +276,80 @@ local function find_mapping(context, lhs)
       return mapping
     end
   end
+end
+
+do
+  local original_clipboard = vim.g.clipboard
+  local original_clipboard_option = vim.o.clipboard
+  local copied_lines = {}
+  vim.o.clipboard = ''
+  vim.g.clipboard = {
+    name = 'Git path-copy test',
+    copy = { ['+'] = function(lines) copied_lines = vim.deepcopy(lines) end,
+      ['*'] = function() end },
+    paste = { ['+'] = function() return { copied_lines, 'v' } end,
+      ['*'] = function() return { {}, 'v' } end },
+    cache_enabled = 0,
+  }
+  local cursor_item
+  local focused = true
+  current_view = {
+    git_repository_root = '/repository',
+    panel = {
+      is_focused = function() return focused end,
+      get_item_at_cursor = function() return cursor_item end,
+      cur_file = { path = 'different/opened.lua' },
+    },
+  }
+  for _, context in ipairs({ 'file_panel', 'file_history_panel' }) do
+    local copy_name = assert(find_mapping(context, 'y'))[3]
+    local copy_path = assert(find_mapping(context, 'Y'))[3]
+    for _, directory in ipairs({ 'src', 'nested/a folder', 'deleted/directory' }) do
+      cursor_item = { path = directory, name = vim.fs.basename(directory), _node = {} }
+      copy_name()
+      assert(copied_lines[1] == vim.fs.basename(directory), 'Copy name ignored the cursor folder')
+      copy_path()
+      assert(copied_lines[1] == '/repository/' .. directory,
+        'Folder path must resolve against the repository, not the editor working directory')
+    end
+    for _, file in ipairs({
+      { path = 'src/a file.lua', status = 'M' },
+      { path = 'removed/missing.lua', status = 'D' },
+      { path = 'new/name.lua', oldpath = 'old/name.lua', status = 'R' },
+      { path = 'untracked/new.lua', status = '?' },
+    }) do
+      file.absolute_path = '/repository/' .. file.path
+      file._node = {}
+      cursor_item = file
+      copy_name()
+      assert(copied_lines[1] == vim.fs.basename(file.path), 'Copy name ignored the cursor file')
+      assert(vim.fn.getregtype('+') == 'v', 'Filename copy must be characterwise')
+      copy_path()
+      assert(copied_lines[1] == file.absolute_path, 'Copy path must use the absolute destination path')
+    end
+    for _, heading in ipairs({ { files = {} }, { path = '' } }) do
+      cursor_item = heading
+      copy_name()
+      copy_path()
+      assert(copied_lines[1] == '/repository/untracked/new.lua', 'Non-file row changed the clipboard')
+    end
+    assert(copy_hash_calls == (context == 'file_panel' and 1 or 2),
+      'Commit rows must retain the native hash-copy action only on y')
+    cursor_item = nil
+    copy_path()
+    assert(copied_lines[1] == '/repository/untracked/new.lua', 'Empty row copied the open file')
+    cursor_item = { path = 'other.lua', absolute_path = '/repository/other.lua' }
+    focused = false
+    copy_name()
+    assert(copied_lines[1] == '/repository/untracked/new.lua', 'Unfocused panel changed the clipboard')
+    focused = true
+  end
+  assert(not find_mapping('view', 'y') and not find_mapping('view', 'Y'),
+    'Path copy must not override yanks in code panes')
+  current_view = nil
+  find_mapping('file_panel', 'y')[3]()
+  vim.g.clipboard = original_clipboard
+  vim.o.clipboard = original_clipboard_option
 end
 
 for _, key in ipairs({ 'h', 'j', 'k', 'l' }) do

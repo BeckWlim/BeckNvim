@@ -1,6 +1,15 @@
 -- nvim --headless -u init.lua -i NONE '+luafile tests/git/worktree_installed.lua' '+qa!'
 local graph = require('config.git.graph')
 local diffview = require('config.git.diffview')
+local copied_lines = {}
+vim.g.clipboard = {
+  name = 'Git copy integration test',
+  copy = { ['+'] = function(lines) copied_lines = vim.deepcopy(lines) end,
+    ['*'] = function() end },
+  paste = { ['+'] = function() return { copied_lines, 'v' } end,
+    ['*'] = function() return { {}, 'v' } end },
+  cache_enabled = 0,
+}
 local root = vim.fn.tempname()
 vim.fn.mkdir(root, 'p')
 local function git(...)
@@ -16,7 +25,8 @@ end
 git('init', '--initial-branch=main')
 git('config', 'user.name', 'Worktree Test')
 git('config', 'user.email', 'worktree@example.invalid')
-vim.fn.writefile({ 'base' }, root .. '/base.txt')
+vim.fn.mkdir(root .. '/src', 'p')
+vim.fn.writefile({ 'base' }, root .. '/src/base.txt')
 vim.fn.writefile({ 'stage' }, root .. '/staged.txt')
 git('add', '.')
 git('commit', '-m', 'feat: base')
@@ -24,7 +34,7 @@ local base = git('rev-parse', 'HEAD')
 git('branch', 'other')
 git('commit', '--allow-empty', '-m', 'feat: main')
 local head = git('rev-parse', 'HEAD')
-vim.fn.writefile({ 'unstaged' }, root .. '/base.txt')
+vim.fn.writefile({ 'unstaged' }, root .. '/src/base.txt')
 vim.fn.writefile({ 'staged' }, root .. '/staged.txt')
 git('add', 'staged.txt')
 vim.fn.writefile({ 'new' }, root .. '/new file.txt')
@@ -33,11 +43,18 @@ local before = git('status', '--porcelain')
 assert(graph.open(root, 'WORKTREE'))
 wait_for(function() return vim.api.nvim_get_current_line():find('Working tree changes', 1, true) end,
   'Worktree item did not become selectable')
+vim.fn.setreg('+', 'unchanged', 'v')
+vim.cmd('normal y')
+assert(copied_lines[1] == 'unchanged', 'Synthetic worktree row copied a fake hash')
+vim.api.nvim_win_set_cursor(0, { 2, 0 })
+vim.cmd('normal y')
+assert(copied_lines[1] == head, 'Graph y did not copy the full cursor commit hash')
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
 local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
 assert(lines[2]:find(head:sub(1, 8), 1, true), 'Worktree is not directly above HEAD')
 assert(graph.focus_preview())
 local preview = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
-assert(preview:find('# .M base.txt', 1, true) and preview:find('# M. staged.txt', 1, true)
+assert(preview:find('# .M src/base.txt', 1, true) and preview:find('# M. staged.txt', 1, true)
   and preview:find('# ?? new file.txt', 1, true), 'Worktree preview omitted file states')
 assert(graph.open_detail())
 local view = require('diffview.lib').get_current_view()
@@ -48,6 +65,41 @@ local rev_type = require('diffview.vcs.rev').RevType
 assert(view.left.type == rev_type.STAGE and view.right.type == rev_type.LOCAL
   and view.git_detail_commit.kind == 'worktree'
   and view.git_history_options.revision == 'HEAD', 'Worktree detail used a synthetic Git revision')
+vim.api.nvim_set_current_win(view.panel.winid)
+local cursor_file
+for row = 1, vim.api.nvim_buf_line_count(view.panel.bufid) do
+  vim.api.nvim_win_set_cursor(view.panel.winid, { row, 0 })
+  local item = view.panel:get_item_at_cursor()
+  if item and item.path == 'new file.txt' then
+    cursor_file = item
+    break
+  end
+end
+assert(cursor_file, 'Untracked file row was not selectable')
+local opened_file = view.cur_entry
+vim.cmd('normal y')
+assert(copied_lines[1] == 'new file.txt', 'Real file-panel y did not copy the cursor filename')
+vim.cmd('normal Y')
+assert(copied_lines[1] == root .. '/new file.txt', 'Real file-panel Y did not copy the absolute path')
+assert(view.cur_entry == opened_file and view.panel:get_item_at_cursor() == cursor_file,
+  'Copy changed the opened diff or cursor selection')
+vim.cmd('normal i')
+local cursor_folder
+for row = 1, vim.api.nvim_buf_line_count(view.panel.bufid) do
+  vim.api.nvim_win_set_cursor(view.panel.winid, { row, 0 })
+  local item = view.panel:get_item_at_cursor()
+  if item and item.path == 'src' then
+    cursor_folder = item
+    break
+  end
+end
+assert(cursor_folder, 'Tree view did not expose the changed-file folder')
+vim.cmd('normal y')
+assert(copied_lines[1] == 'src', 'Folder y did not copy its name')
+vim.cmd('normal Y')
+assert(copied_lines[1] == root .. '/src', 'Folder Y did not copy its full filesystem path')
+assert(view.cur_entry == opened_file and view.panel:get_item_at_cursor() == cursor_folder,
+  'Folder copy changed the opened diff or cursor selection')
 assert(diffview.checkout_selected_commit() == false, 'Worktree item allowed synthetic checkout')
 assert(git('status', '--porcelain') == before and git('rev-parse', 'HEAD') == head,
   'Worktree review mutated the checkout')

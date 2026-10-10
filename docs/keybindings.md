@@ -118,6 +118,8 @@ already active.
 | Branch `o` / `Enter` | Review the selected local or remote branch without switching |
 | Branch `f` | Fetch remotes explicitly |
 | `<Space>dn` | Open native commit details in Diffview |
+| `y` / `Y` in a Diffview file list | Copy the cursor file or folder's name / full absolute path to the clipboard |
+| `y` on a commit row | Copy the full commit hash in the graph or Diffview history list |
 | `<Space>dm` | Guarded checkout of the list/preview commit in graph or detail; switch/track in the branch pane |
 | `<Space>dp` | Hide or restore the Diffview history list |
 | `<Space>dv` | From commit list or message preview, open that commit's file diffs; toggle back to graph |

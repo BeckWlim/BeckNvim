@@ -1077,6 +1077,14 @@ function M.open(root, selected_hash, open_branches, history_ref, saved)
   end
   map(view.list_buffer, 'o', M.focus_preview, 'Preview selected commit')
   map(view.list_buffer, '<CR>', M.focus_preview, 'Preview selected commit')
+  map(view.list_buffer, 'y', function()
+    if active ~= view then return end
+    local cursor_row = vim.api.nvim_win_get_cursor(view.list_window)[1]
+    local commit = view.commits[cursor_row]
+    if not commit or commit.kind == 'worktree' then return end
+    vim.fn.setreg('+', commit.hash, 'v')
+    vim.notify('Copied ' .. commit.hash .. ' to clipboard')
+  end, 'Copy selected commit hash')
   view.autocmds[#view.autocmds + 1] = vim.api.nvim_create_autocmd('CursorMoved', {
     buffer = view.list_buffer,
     callback = function() select_cursor(view) end,

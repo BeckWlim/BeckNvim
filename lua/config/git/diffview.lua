@@ -54,6 +54,38 @@ local function active_view()
   return diffview_lib and diffview_lib.get_current_view()
 end
 
+local function copy_entry_path(name_only)
+  local view = active_view()
+  local file_panel = view and view.panel
+  if not file_panel or not file_panel:is_focused() then
+    return
+  end
+  local cursor_item = file_panel:get_item_at_cursor()
+  if cursor_item and cursor_item.files then
+    if name_only then require('diffview.actions').copy_hash() end
+    return
+  end
+  -- Use the cursor row, not the file currently open in the code panes.
+  if not cursor_item or type(cursor_item.path) ~= 'string' or cursor_item.path == '' then
+    return
+  end
+  local repository_root = view.git_repository_root
+    or (view.adapter and view.adapter.ctx and view.adapter.ctx.toplevel)
+  local absolute_path = cursor_item.absolute_path
+    or (repository_root and vim.fs.joinpath(repository_root, cursor_item.path))
+  local copied_path = name_only and vim.fs.basename(cursor_item.path) or absolute_path
+  if type(copied_path) ~= 'string' or copied_path == '' then return end
+  vim.fn.setreg('+', copied_path, 'v')
+  vim.notify('Copied ' .. copied_path .. ' to clipboard')
+end
+
+local function copy_path_mapping(key, name_only, history)
+  return { 'n', key, function() copy_entry_path(name_only) end, {
+    desc = name_only and (history and 'Copy file/folder name or commit hash' or 'Copy file/folder name')
+      or 'Copy absolute path',
+  } }
+end
+
 local function current_editor_line_number_options()
   local current_window = vim.api.nvim_get_current_win()
   local resolved_options = assert(
@@ -2538,6 +2570,8 @@ function M.setup()
         ignored_search_repeat_mapping(),
       },
       file_panel = vim.list_extend({
+        copy_path_mapping('y', true),
+        copy_path_mapping('Y', false),
         checkout_commit_mapping(),
         commit_details_mapping(),
         next_window_mapping(),
@@ -2550,6 +2584,8 @@ function M.setup()
         select = native_actions.select_entry,
       }))),
       file_history_panel = vim.list_extend({
+        copy_path_mapping('y', true, true),
+        copy_path_mapping('Y', false),
         history_entry_mapping('<2-LeftMouse>'),
         checkout_commit_mapping(),
         commit_details_mapping(),
