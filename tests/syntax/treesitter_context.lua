@@ -173,10 +173,22 @@ vim.api.nvim_buf_delete(cpp_buffer, { force = true })
 local original_context_plugin = package.loaded['treesitter-context']
 local original_context_provider = package.loaded['treesitter-context.context']
 local configured_context_options
+local context_enabled = true
+local attached_buffer
+local unrelated_filetype_events = 0
+local attachment_group = vim.api.nvim_create_augroup('treesitter_context_update', { clear = true })
+vim.api.nvim_create_autocmd('FileType', {
+  group = attachment_group,
+  callback = function(event) attached_buffer = event.buf end,
+})
+local unrelated_filetype_handler = vim.api.nvim_create_autocmd('FileType', {
+  callback = function() unrelated_filetype_events = unrelated_filetype_events + 1 end,
+})
 package.loaded['treesitter-context'] = {
   setup = function(options)
     configured_context_options = options
   end,
+  enabled = function() return context_enabled end,
 }
 package.loaded['treesitter-context.context'] = {
   get = function()
@@ -188,6 +200,16 @@ assert(
   configured_context_options and configured_context_options.on_attach == nil,
   'Pinned code context still excludes Diffview buffers instead of reusing the editor renderer'
 )
+vim.api.nvim_exec_autocmds('BufEnter', { buffer = 0, modeline = false })
+assert(attached_buffer == vim.api.nvim_get_current_buf(), 'Returning to a buffer did not reattach context')
+assert(unrelated_filetype_events == 0, 'Context attachment reran unrelated FileType handlers')
+context_enabled = false
+attached_buffer = nil
+vim.api.nvim_exec_autocmds('BufEnter', { buffer = 0, modeline = false })
+assert(attached_buffer == nil, 'Returning to a buffer attached context while disabled')
+vim.api.nvim_del_augroup_by_name('beck_treesitter_context_attach')
+vim.api.nvim_del_augroup_by_id(attachment_group)
+vim.api.nvim_del_autocmd(unrelated_filetype_handler)
 package.loaded['treesitter-context'] = original_context_plugin
 package.loaded['treesitter-context.context'] = original_context_provider
 

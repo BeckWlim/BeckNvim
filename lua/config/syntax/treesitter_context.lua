@@ -622,11 +622,27 @@ function M.enclosing_structure_async(source_buffer, source_row, source_column, c
 end
 
 function M.setup()
-  require('treesitter-context').setup({
+  local context_plugin = require('treesitter-context')
+  context_plugin.setup({
     enable = true,
     max_lines = 0,
     multiline_threshold = 2,
     mode = 'cursor',
+  })
+
+  vim.api.nvim_create_autocmd('BufEnter', {
+    group = vim.api.nvim_create_augroup('beck_treesitter_context_attach', { clear = true }),
+    callback = function(event)
+      if not context_plugin.enabled() then return end
+      -- Retiring a file from the buffer list emits BufDelete, which detaches
+      -- context even though the buffer remains loaded for native jump history.
+      -- Reuse only the plugin's attachment handler on return: FileType and
+      -- BufReadPost do not fire again for these retained buffers.
+      vim.api.nvim_exec_autocmds('FileType', {
+        group = 'treesitter_context_update', buffer = event.buf, modeline = false,
+      })
+    end,
+    desc = 'Reattach pinned context when returning to a retained file',
   })
 
   local context_provider = require('treesitter-context.context')

@@ -167,6 +167,10 @@ mode on the next loop turn when closing a prompt has already emitted `ModeChange
 file/symbol navigation, and preserve live split proportions. Counts and the selected pane remain
 native; a file already visible elsewhere does not redirect history. `<Space>o` and `<Space>p`
 dispatch through this manager. There is no additional history store.
+`config.syntax.treesitter_context` reattaches pinned context on `BufEnter` through the
+context plugin's scoped attachment handler. Unlisting a retained file emits `BufDelete`,
+which detaches the plugin; returning through native history does not repeat `FileType` or
+`BufReadPost`. The adapter respects disabled context and does not replay other FileType handlers.
 `register_boundary(name, callback)` is the manager's optional policy extension point; it returns
 an unregister function and passes the transition's action, destination window, underlying file,
 and target buffer. A veto cancels before the view or jump index changes. The manager contains no
