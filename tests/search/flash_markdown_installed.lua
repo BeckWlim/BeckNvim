@@ -299,6 +299,36 @@ local function check()
     wait_for([=[return vim.b.markdown_preview_source == vim.g.test_source and vim.fn.mode() == 'n']=],
       'Flash text jump left preview at iteration ' .. iteration)
   end
+  -- A source can acquire inline-renderer callbacks before its window opts into
+  -- preview (for example, before the file receives its editor context).
+  input(' mp')
+  evaluate([=[
+    vim.w.render_markdown_preview = false
+    local manager = require('render-markdown.core.manager')
+    manager.attach(vim.g.test_source)
+    assert(manager.attached(vim.g.test_source), 'Fixture did not attach inline rendering')
+    vim.w.render_markdown_preview = true
+  ]=])
+  input(' mp')
+  evaluate([=[vim.api.nvim_win_set_cursor(0, { 1, 0 })]=])
+  input(' sneedle')
+  wait_for([=[return require('flash.repeat')._states.jump.visible]=], 'Flash jump did not activate')
+  local edit_target = evaluate([=[return require('render-markdown').display_position(0, { 9, 0 })[1]]=])
+  input(label_at(edit_target))
+  input('iEdited <Esc>')
+  wait_for([=[return vim.fn.mode() == 'n' and vim.api.nvim_get_current_buf() == vim.g.test_source]=],
+    'Flash edit did not stay in source')
+  evaluate([=[
+    vim.api.nvim_exec_autocmds('CursorMoved', { buffer = vim.g.test_source })
+    vim.wait(100)
+    local namespace = vim.api.nvim_create_namespace('render-markdown.nvim')
+    assert(#vim.api.nvim_buf_get_extmarks(vim.g.test_source, namespace, 0, -1, {}) == 0,
+      'Inline renderer added formatting to source after Flash and InsertLeave')
+    assert(vim.wo.conceallevel == 0, 'Source Markdown syntax was concealed after editing')
+  ]=])
+  input(' mp')
+  wait_for([=[return vim.b.markdown_preview_source == vim.g.test_source]=],
+    'Suppressing inline source formatting broke manual preview')
 end
 local succeeded, failure = xpcall(check, debug.traceback)
 pcall(vim.fn.jobstop, child)
