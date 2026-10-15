@@ -27,6 +27,13 @@ local function check()
   vim.api.nvim_buf_set_name(source, vim.fn.tempname() .. '.md')
   vim.api.nvim_buf_set_lines(source, 0, -1, false, { '# Markdown', '', '[github](https://github.com)' })
   vim.bo[source].filetype = 'markdown'
+  vim.wait(50)
+  assert(vim.api.nvim_get_current_buf() == source and not vim.b.markdown_preview_source,
+    'Markdown opened a preview without an explicit request')
+  assert(vim.bo.modifiable and vim.wo.conceallevel == 0,
+    'Markdown source must remain editable with punctuation visible')
+  assert(not require('render-markdown.core.manager').attached(source),
+    'Source Markdown attached the inline renderer')
   local toggle = vim.fn.maparg('<Space>mp', 'n', false, true)
   assert(toggle.callback and toggle.buffer == 0, 'Host preview shortcut is missing')
   toggle.callback()

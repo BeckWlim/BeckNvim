@@ -65,9 +65,10 @@ local function check()
   vim.wait(100)
   assert(not client:is_stopped(), 'Closing the virtual index killed Marksman')
   vim.api.nvim_cmd({ cmd = 'edit', args = { directory .. '/sample.md' } }, {})
+  require('render-markdown').preview()
   assert(vim.wait(1000, function()
     return vim.b.markdown_preview_source == source
-  end, 10), 'Ordinary Markdown preview did not resume after Diffview')
+  end, 10), 'Explicit Markdown preview did not open after Diffview')
 end
 local passed, failure = xpcall(check, debug.traceback)
 for _, client in ipairs(vim.lsp.get_clients({ name = 'marksman' })) do client:stop(true) end

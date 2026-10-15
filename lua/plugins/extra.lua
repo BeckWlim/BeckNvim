@@ -67,6 +67,7 @@ return {
       debounce = 1,
       preset = 'lazy',
       preview = {
+        auto_open = false,
         condition = require('config.ui.window_state').markdown_preview_allowed,
       },
       render_modes = { 'n', 'c', 't', 'v', 'V', '\22' },

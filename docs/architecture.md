@@ -432,10 +432,11 @@ preview buffers, source editing, save delegation, and hidden-source file checks.
 no second Markdown engine. See the fork's [preview architecture](https://github.com/BeckWlim/render-markdown.nvim/blob/main/doc/projected-preview.md)
 for the provider contract, lifecycle, limits, and standalone tests.
 
-Markdown files open rendered in the existing pane. `<Space>mp` calls the plugin's `preview()` API
-to switch between source and rendered text. Tables wrap into real lines; selection and yanking
-copy displayed text. Edit keys return to the mapped source position and keep source selected;
-`<Space>mp` explicitly restores preview. Source-routed syntax selections also stay in source.
+Markdown files open in source mode (`preview.auto_open = false`). `<Space>mp` calls the plugin's
+`preview()` API to switch the existing pane between source and rendered text. Tables wrap into real
+lines; selection and yanking copy displayed text. Edit keys return to the mapped source position
+and keep source selected; `<Space>mp` explicitly restores preview. Source-routed syntax selections
+also stay in source.
 Writes, undo, and redo operate on the source. Explicit source mode remains raw.
 The renderer rebuilds ordinary Markdown decorations as part of committing a preview
 frame and after delegated saves, preserving code language labels across edits.

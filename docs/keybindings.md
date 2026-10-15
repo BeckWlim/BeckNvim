@@ -143,8 +143,8 @@ already active.
 | `:Theme` | Preview bundled and personal themes; Enter saves, `<C-q>` cancels in every mode |
 | `:Theme {name}` | Apply a theme immediately and save it for the next startup |
 
-Markdown files open with prose, tables, and diagrams rendered by default. Source mode shows all
-Markdown punctuation for editing. `Enter` moves to the next line while keeping the preview rendered.
+Markdown files open in source mode with all punctuation visible for editing. Press `<Space>mp`
+to render prose, tables, and diagrams. In preview, `Enter` moves to the next line while keeping it rendered.
 Common Normal-mode edit keys (`i`/`I`, `a`/`A`, `o`/`O`, `c`, `d`, `s`, `x`, `r` and their uppercase
 forms, `p`/`P`, `J`, `~`, `.`, `>`, `<`, `=`, `gu`, `gU`, `g~`) first restore the source at the mapped
 cursor position. Counts, registers, and operator motions apply to raw Markdown. Returning to Normal

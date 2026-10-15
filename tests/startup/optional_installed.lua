@@ -100,7 +100,9 @@ local succeeded, failure = xpcall(function()
   evaluate([[
     require('lazy').load({ plugins = { 'render-markdown.nvim' } })
     -- Simulate a fresh machine with no built Termaid, even if the shared checkout has a .venv.
-    require('render-markdown').setup({ preview = { mermaid = { command = '/nonexistent/becknvim-termaid' } } })
+    require('render-markdown').setup(vim.tbl_deep_extend('force',
+      require('render-markdown.state').config,
+      { preview = { mermaid = { command = '/nonexistent/becknvim-termaid' } } }))
     assert(not require('render-markdown.preview.mermaid').find_executable())
     vim.cmd.edit(vim.fn.fnameescape(...))
     vim.api.nvim_buf_set_lines(0, 0, -1, false, {
@@ -108,6 +110,7 @@ local succeeded, failure = xpcall(function()
     })
     vim.cmd.write()
     vim.bo.filetype = 'markdown'
+    require('render-markdown').preview()
   ]], directory .. '/project/sample.md')
   assert(vim.wait(5000, function()
     return evaluate([[return vim.b.markdown_preview_source ~= nil]])

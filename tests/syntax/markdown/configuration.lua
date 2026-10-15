@@ -7,6 +7,7 @@ assert(spec and not spec.opts.custom_handlers and not spec.opts.on, 'Source Mark
 assert(spec.dev == nil and spec.dir == nil, 'Markdown fork must leave development selection to personal settings')
 assert(spec.opts.preview.condition == require('config.ui.window_state').markdown_preview_allowed,
   'Markdown preview must explicitly select ordinary editor contexts')
+assert(spec.opts.preview.auto_open == false, 'Markdown files must open in source mode')
 assert(spec.dependencies[1][1] == 'BeckWlim/termaid' and spec.dependencies[1].optional,
   'Termaid must remain an optional renderer dependency')
 assert(spec.opts.ignore == nil and spec.opts.pipe_table == nil,

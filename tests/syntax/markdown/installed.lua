@@ -57,6 +57,7 @@ local function check()
     vim.g.preview_test_windows = #vim.api.nvim_list_wins()
     vim.api.nvim_buf_set_name(0, vim.g.preview_test_project .. '/docs/production/report.md')
     vim.bo.filetype = 'markdown'
+    require('render-markdown').preview()
   ]])
   assert(vim.wait(10000, function()
     return evaluate([[
@@ -138,15 +139,14 @@ local function check()
   ]])
   assert(vim.wait(1000, function()
     return evaluate([[
-      local source = vim.b.markdown_preview_source
-      return vim.bo.filetype ~= 'TelescopePrompt' and source
-        and vim.api.nvim_buf_get_name(source) == vim.g.preview_test_project .. '/docs/production/replicas.md'
+      return vim.bo.filetype == 'markdown' and not vim.b.markdown_preview_source
+        and vim.api.nvim_buf_get_name(0) == vim.g.preview_test_project .. '/docs/production/replicas.md'
     ]])
   end, 20), 'Installed gx did not open the source-relative Markdown link')
   evaluate([[
-    local _, source_position = require('render-markdown').source_location(vim.api.nvim_get_current_win())
-    assert(source_position and source_position[1] == 2, 'Installed gx lost its source line anchor: '
-      .. vim.inspect({ cursor = vim.api.nvim_win_get_cursor(0), source = source_position,
+    local source_position = vim.api.nvim_win_get_cursor(0)
+    assert(source_position[1] == 2, 'Installed gx lost its source line anchor: '
+      .. vim.inspect({ cursor = source_position,
         lines = vim.api.nvim_buf_get_lines(0, 0, -1, false), messages = vim.api.nvim_exec2('messages', { output = true }).output }))
     vim.api.nvim_feedkeys(vim.keycode('<Space>o'), 'xt', false)
   ]])
@@ -543,6 +543,7 @@ local function check()
     vim.api.nvim_buf_set_name(0, vim.g.preview_test_project .. '/code-labels.md')
     vim.g.code_test_source = vim.api.nvim_get_current_buf()
     vim.bo.filetype = 'markdown'
+    require('render-markdown').preview()
   ]])
   assert(vim.wait(2000, function()
     return evaluate([[return vim.b.markdown_preview_source == vim.g.code_test_source]])
@@ -651,6 +652,7 @@ local function check()
     vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
     vim.api.nvim_buf_set_name(0, vim.g.preview_test_project .. '/refresh-stress.md')
     vim.bo.filetype = 'markdown'
+    require('render-markdown').preview()
   ]])
   for step = 1, 30 do
     local started_at = vim.uv.hrtime()
@@ -694,10 +696,11 @@ local function check()
     local intent = require('config.ui.window_state').resolve(0, { 'number' })
     assert(intent.number, 'Homepage lost the underlying editor line-number setting')
     vim.api.nvim_set_current_buf(vim.g.homepage_test_source)
+    require('render-markdown').preview()
   ]])
   assert(vim.wait(500, function()
     return evaluate([[return vim.b.markdown_preview_source == vim.g.homepage_test_source]])
-  end, 20), 'Revisiting Markdown from the homepage lost the rendered preference')
+  end, 20), 'Explicit preview after the homepage did not open')
   evaluate([[
     assert(vim.wo.number, 'Revisiting Markdown lost line numbers')
     vim.api.nvim_feedkeys(vim.keycode('i'), 'xt', false)
@@ -714,6 +717,7 @@ local function check()
   vim.rpcrequest(child, 'nvim_exec_lua', [[
     vim.api.nvim_cmd({ cmd = 'edit', args = { ... }, bang = true }, {})
     vim.g.external_test_source = vim.api.nvim_get_current_buf()
+    require('render-markdown').preview()
   ]], { external_path })
   local function diagram_contains(label)
     return vim.rpcrequest(child, 'nvim_exec_lua', [[
