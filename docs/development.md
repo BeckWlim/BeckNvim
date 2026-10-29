@@ -112,6 +112,8 @@ nvim --headless -u NONE -i NONE -l tests/git/search_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/file_operations_installed.lua
 nvim --headless -u NONE -i NONE -l tests/ui/shared_markdown_installed.lua
 nvim --headless -u init.lua -i NONE '+luafile tests/ui/filetree_navigation_installed.lua'
+nvim --headless -u init.lua -i NONE -l tests/lsp/lifecycle_installed.lua
+nvim --headless -u init.lua -i NONE -l tests/lsp/lifecycle_servers_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/visuals_installed.lua
 nvim --headless -u NONE -i NONE -l tests/syntax/treesitter_installed.lua
 ```

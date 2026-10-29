@@ -25,6 +25,7 @@ local test_files = {
   'tests/git/settings.lua',
   'tests/lsp/diagnostics.lua',
   'tests/lsp/init.lua',
+  'tests/lsp/lifecycle.lua',
   'tests/lsp/type_information.lua',
   'tests/network/proxy.lua',
   'tests/python/environment.lua',

@@ -2,6 +2,7 @@
 local replaced_modules = {
   'cmp_nvim_lsp',
   'config.lsp',
+  'config.lsp.lifecycle',
   'mason',
   'mason-lspconfig',
 }
@@ -19,6 +20,10 @@ package.loaded['cmp_nvim_lsp'] = {
   end,
 }
 package.loaded.mason = { setup = function() end }
+local lifecycle_setup_count = 0
+package.loaded['config.lsp.lifecycle'] = { setup = function()
+  lifecycle_setup_count = lifecycle_setup_count + 1
+end }
 package.loaded['mason-lspconfig'] = { setup = function(options) mason_options = options end }
 package.loaded['config.lsp'] = nil
 vim.lsp.config = function(server_name, server_config)
@@ -26,6 +31,7 @@ vim.lsp.config = function(server_name, server_config)
 end
 
 require('config.lsp').setup()
+assert(lifecycle_setup_count == 1, 'LSP setup did not install unused-server cleanup')
 local marksman_config = assert(configured_servers.marksman, 'marksman was not configured')
 local root_callback_count = 0
 local function accept_root()
@@ -55,10 +61,10 @@ assert(
   vim.list_contains(clangd_command, '--background-index')
     and vim.list_contains(clangd_command, '--background-index-priority=background')
     and vim.list_contains(clangd_command, '-j=1')
-    and vim.list_contains(clangd_command, '--pch-storage=memory')
+    and vim.list_contains(clangd_command, '--pch-storage=disk')
     and not vim.list_contains(clangd_command, '-j=2')
-    and not vim.list_contains(clangd_command, '--pch-storage=disk'),
-  'clangd command did not retain indexing with bounded CPU and disk pressure'
+    and not vim.list_contains(clangd_command, '--pch-storage=memory'),
+  'clangd must retain background indexing and bounded CPU while storing precompiled headers on disk'
 )
 if vim.fn.executable('ionice') == 1 then
   assert(
@@ -95,6 +101,32 @@ for _, scenario in ipairs({
     'BeckNvim duplicated Mason installation or activation policy')
 end
 vim.fn.executable = original_executable
+
+local original_node_options = vim.env.NODE_OPTIONS
+for _, scenario in ipairs({
+  { inherited = false, expected = '--max-old-space-size=4096' },
+  { inherited = '', expected = '--max-old-space-size=4096' },
+  {
+    inherited = '--trace-warnings',
+    expected = '--max-old-space-size=4096 --trace-warnings',
+  },
+  {
+    inherited = '--max-old-space-size=3072 --trace-warnings',
+    expected = '--max-old-space-size=4096 --max-old-space-size=3072 --trace-warnings',
+  },
+}) do
+  vim.env.NODE_OPTIONS = scenario.inherited or nil
+  local parent_node_options = vim.env.NODE_OPTIONS
+  require('config.lsp').setup()
+  local basedpyright_config = assert(configured_servers.basedpyright)
+  assert(basedpyright_config.cmd_env.NODE_OPTIONS == scenario.expected,
+    'BasedPyright must add heap headroom and preserve inherited Node options')
+  assert(vim.env.NODE_OPTIONS == parent_node_options,
+    'BasedPyright configuration changed the parent process environment')
+  assert(configured_servers.clangd.cmd_env == nil and configured_servers.marksman.cmd_env == nil,
+    'BasedPyright heap settings leaked into another language server')
+end
+vim.env.NODE_OPTIONS = original_node_options
 
 vim.lsp.config = original_lsp_config
 for _, module_name in ipairs(replaced_modules) do

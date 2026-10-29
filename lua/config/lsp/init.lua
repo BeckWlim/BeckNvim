@@ -51,7 +51,14 @@ local function filtered_diagnostics_handler(error, result, context, handler_conf
 end
 
 local function configure_basedpyright()
+  -- Large dependency graphs can exceed Node's default ~2 GiB heap even with
+  -- openFilesOnly. Scope the extra headroom to this server; explicit inherited
+  -- Node options come last so a user-supplied heap limit still takes precedence.
+  local inherited_node_options = vim.env.NODE_OPTIONS or ''
   vim.lsp.config('basedpyright', {
+    cmd_env = {
+      NODE_OPTIONS = vim.trim('--max-old-space-size=4096 ' .. inherited_node_options),
+    },
     handlers = {
       ['textDocument/publishDiagnostics'] = filtered_diagnostics_handler,
     },
@@ -98,7 +105,9 @@ local function configure_clangd()
     '--background-index',
     '--background-index-priority=background',
     '-j=1',
-    '--pch-storage=memory',
+    -- Keep precompiled headers on disk; the background index already persists
+    -- its own shards and validates them when a project is reopened.
+    '--pch-storage=disk',
   })
   vim.lsp.config('clangd', {
     cmd = clangd_command,
@@ -131,6 +140,7 @@ local function configure_marksman()
 end
 
 function M.setup()
+  require('config.lsp.lifecycle').setup()
   require('mason').setup({
     ui = {
       icons = {

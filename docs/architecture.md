@@ -76,6 +76,7 @@ lua/
 | `config/network/proxy.lua` | Validated persistent proxy state and static environment/`~/.bashrc` discovery shared by network consumers |
 | `config/network/ui.lua` | Unified proxy status, candidate selection, direct mode, and custom session input |
 | `config/lsp/init.lua` | Language-server configuration and BasedPyright diagnostic policy |
+| `config/lsp/lifecycle.lua` | Graceful server shutdown after the last attached buffer closes |
 | `config/lsp/completion.lua` | nvim-cmp completion behavior |
 | `config/lsp/type_information.lua` | Toggleable hover inference and type-definition preview for LSP languages |
 | `config/lsp/diagnostics.lua` | Diagnostic float and document diagnostic picker wiring |
@@ -1028,6 +1029,28 @@ their own runtime. Native clangd, Lua, and Markdown servers retain normal activa
 installation. Python hierarchy indexing reports a
 feature-level error when neither system Python nor a project virtual environment exists, preserving
 any completed index.
+
+Clangd keeps precompiled headers on disk and runs background indexing with one low-priority
+worker. Its native background-index cache stores validated shards under `.cache/clangd/index/`
+beside the compilation database, with shared external headers in the user cache. Reopening a
+project reuses unchanged shards, reducing parsing work. The active server still holds its query
+index in memory; disk precompiled headers are temporary and are not a persistent AST cache.
+
+`config/lsp/lifecycle.lua` listens for `LspDetach`, then checks the client's remaining attachments
+on the next event-loop turn. A client with no attached buffers gets five seconds to shut down
+gracefully and flush native caches, then is terminated if it remains alive. Neovim 0.12 owns this
+deadline; on 0.11, a deferred check confirms the client still has no buffers before termination.
+Hidden buffers and buffers in other tabs keep their server alive; closing
+a window alone does not release it. Delete or unload all of a server's buffers to release its RAM.
+Normal LSP activation starts the server again when a file is reopened. Checks from an earlier
+setup generation are discarded, and buffers attached before a pending check prevent shutdown.
+This policy applies to every native LSP client, including all Mason-enabled servers, rather than
+only clangd. Client reuse and root selection remain with Neovim and each server's configuration:
+windows and tabs displaying the same project reuse compatible clients; different roots normally
+start separate clients. If a client serves several workspace folders, every attached buffer counts
+before shutdown. Separate Neovim processes own separate clients. Server-specific caching, indexing,
+and memory limits remain with the server; Mason does not provide a shared persistent analysis cache.
+
 The statusline resolves Markdown previews to their source buffer before requesting the project
 identity and project-relative file path. Modified and read-only indicators also follow that source,
 so changing between rendered and editable views preserves the file's footer identity.

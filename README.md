@@ -49,7 +49,7 @@ See [Recording the highlights](examples/README.md) for demo generation, setup, a
 | `config/ui/` | Theme selection and palette, dashboard, file tree, statusline, terminal, shared floats, and window state |
 | `config/search/` | Telescope configuration, project search, previews, and LSP location results |
 | `config/git/` | Git history workflows, Diffview lifecycle, repository data, and GitHub details |
-| `config/lsp/` | Language-server setup, completion, diagnostics, and type-information views |
+| `config/lsp/` | Language-server lifecycle, completion, diagnostics, and type-information views |
 | `config/syntax/` | Tree-sitter setup, Markdown rendering, folds, highlights, and syntax context |
 | `config/type_hierarchy/` | Recursive class hierarchy and implementation discovery |
 | `config/python/` | Python environment resolution and hierarchy indexing |
